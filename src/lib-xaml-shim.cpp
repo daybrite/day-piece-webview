@@ -1,10 +1,10 @@
 // The web-view piece's OWN C++/WinRT shim — parallel to src/lib-qt-shim.cpp.
 //
-// day-winui hosts UWP system XAML (winrt::Windows::UI::Xaml, base Windows SDK, no WinAppSDK) inside a
+// day-xaml hosts UWP system XAML (winrt::Windows::UI::Xaml, base Windows SDK, no WinAppSDK) inside a
 // Win32 window via XAML Islands. The system-XAML web view, Windows.UI.Xaml.Controls.WebView (EdgeHTML),
 // is UNSUPPORTED in that host: it renders blank, never raises NavigationCompleted, and crashes on
 // navigation. The supported engine is WebView2, hosted here in WINDOWLESS / VISUAL-HOSTING mode — the
-// same technique the official WinUI WebView2 controls use internally:
+// same technique the official XAML WebView2 controls use internally:
 //
 //   * make() boxes a plain XAML Border (transparent, hit-testable, with a faint URL label) as the day
 //     handle. day lays it out like any leaf.
@@ -56,11 +56,11 @@ namespace WUXI = winrt::Windows::UI::Xaml::Input;
 namespace WUXM = winrt::Windows::UI::Xaml::Media;
 namespace wrl = Microsoft::WRL;
 
-// Seams exported by day-winui-sys (already linked into the app). The host HWND is the composition
+// Seams exported by day-xaml-sys (already linked into the app). The host HWND is the composition
 // controller's parentWindow (for DPI / IME / input association) — the page still renders windowless.
-extern "C" void *day_winui_box(void *iinspectable_abi);
-extern "C" void *day_winui_unbox(void *handle);
-extern "C" void *day_winui_host_hwnd();
+extern "C" void *day_xaml_box(void *iinspectable_abi);
+extern "C" void *day_xaml_unbox(void *handle);
+extern "C" void *day_xaml_host_hwnd();
 
 static winrt::hstring hs(const char *s) {
     if (!s || !*s)
@@ -358,7 +358,7 @@ static void create_webview2(void *handle) {
 
 extern "C" {
 
-void *day_webview_winui_new(const char *url, uint64_t id, void (*cb)(uint64_t, const char *)) {
+void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, const char *)) {
     // The boxed element day lays out: a transparent (hit-testable) Border carrying a faint URL label.
     // The browser's render visual is spliced in as the Border's child visual and covers the label;
     // if the WebView2 Runtime is absent, the label remains as the graceful, no-crash fallback.
@@ -369,10 +369,10 @@ void *day_webview_winui_new(const char *url, uint64_t id, void (*cb)(uint64_t, c
     label.Margin(WUX::Thickness{8, 8, 8, 8});
     label.Opacity(0.6);
     placeholder.Child(label);
-    void *handle = day_winui_box(winrt::get_abi(placeholder));
+    void *handle = day_xaml_box(winrt::get_abi(placeholder));
 
     auto *c = new WebViewCtx{};
-    c->parent = reinterpret_cast<HWND>(day_winui_host_hwnd());
+    c->parent = reinterpret_cast<HWND>(day_xaml_host_hwnd());
     c->placeholder = placeholder;
     c->id = id;
     c->cb = cb;
@@ -394,7 +394,7 @@ void *day_webview_winui_new(const char *url, uint64_t id, void (*cb)(uint64_t, c
     return handle;
 }
 
-void day_webview_winui_load(void *handle, const char *url) {
+void day_webview_xaml_load(void *handle, const char *url) {
     auto *c = find_ctx(handle);
     if (!c)
         return;
@@ -404,7 +404,7 @@ void day_webview_winui_load(void *handle, const char *url) {
     else
         c->pending_url = w;
 }
-void day_webview_winui_back(void *handle) {
+void day_webview_xaml_back(void *handle) {
     auto *c = find_ctx(handle);
     if (c && c->webview) {
         BOOL can = FALSE;
@@ -413,7 +413,7 @@ void day_webview_winui_back(void *handle) {
             c->webview->GoBack();
     }
 }
-void day_webview_winui_forward(void *handle) {
+void day_webview_xaml_forward(void *handle) {
     auto *c = find_ctx(handle);
     if (c && c->webview) {
         BOOL can = FALSE;
@@ -422,12 +422,12 @@ void day_webview_winui_forward(void *handle) {
             c->webview->GoForward();
     }
 }
-void day_webview_winui_stop(void *handle) {
+void day_webview_xaml_stop(void *handle) {
     auto *c = find_ctx(handle);
     if (c && c->webview)
         c->webview->Stop();
 }
-void day_webview_winui_reload(void *handle) {
+void day_webview_xaml_reload(void *handle) {
     auto *c = find_ctx(handle);
     if (c && c->webview)
         c->webview->Reload();
