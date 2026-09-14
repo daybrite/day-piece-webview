@@ -12,6 +12,9 @@
 //! history — each `watch`ed to a `WebPatch`. The bound URL is two-way: `.go()` loads it, and native
 //! navigation reports the current URL back so a bound text field follows along.
 
+#[cfg(feature = "dom")]
+mod browser;
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::future::Future;
@@ -413,13 +416,13 @@ struct EvalShared {
     waker: RefCell<Option<std::task::Waker>>,
 }
 
-thread_local! {
+day_core::tls_group! {
     /// Request ids start at 1 so 0 stays free for the URL report, which shares this channel.
     static NEXT_REQ: Cell<u64> = const { Cell::new(1) };
     static PENDING: RefCell<HashMap<u64, Rc<EvalShared>>> = RefCell::new(HashMap::new());
     /// Callback-shaped requests (the dayscript `web_eval` step, via day-core's seam) — same
     /// req space and reply channel as the futures above, different completion shape.
-    static PENDING_CB: RefCell<HashMap<u64, day_core::WebviewEvalDone>> =
+    static PENDING_CB: RefCell<HashMap<u64, day_core::PieceOperationDone>> =
         RefCell::new(HashMap::new());
 }
 
@@ -447,8 +450,9 @@ fn resolve(req: u64, payload: &str) {
 /// whose arm answers `eval_support() != Native` it fails the callback immediately rather
 /// than letting the step wait out its retry window.
 fn register_script_eval() {
-    day_core::register_webview_eval(
+    day_core::register_piece_operation(
         KIND,
+        "day.webview.eval",
         std::rc::Rc::new(|node, script, done| {
             if eval_support() != day_spec::Support::Native {
                 done(Err(EvalError::Unsupported.to_string()));

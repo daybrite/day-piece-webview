@@ -55,6 +55,12 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo clippy --features ${{ matrix.features }} -- -D warnings
       - run: cargo test
+      - uses: actions/setup-node@v6
+        if: matrix.features == 'gtk'
+        with:
+          node-version: '22'
+      - run: node --test tests/browser.mjs
+        if: matrix.features == 'gtk'
 
   # The mobile and web arms compile for their targets. A link is not attempted here — the demo
   # below does that inside a real app — but an objc2 call that no longer type-checks, a JNI

@@ -56,11 +56,11 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the bundled site deploys under `assets/data/` beside
         // the host page (web.rs), so a RELATIVE src is same-origin and the browser resolves
-        // the site's internal references natively. The base attribute arms the shim's
+        // the site's internal references natively. The crate's browser bridge arms its
         // same-origin click hook BEFORE the first load: links leaving the site are cancelled
         // in-frame and reported (num -1), and the front-end runs the app's LinkPolicy.
         let base = format!("assets/data/{}/", p.inline_root);
-        backend.set_attr(&h, "data-day-inline-base", &base);
+        super::browser::attach(h.0 as i32, &base);
         load(backend, &h, &format!("{base}{}", p.inline_start));
     } else if !p.url.is_empty() {
         load(backend, &h, &p.url);
@@ -98,8 +98,12 @@ fn measure(_backend: &mut Dom, _h: &DomHandle, p: Proposal) -> Size {
     Size::new(p.width.unwrap_or(320.0), p.height.unwrap_or(240.0))
 }
 
+fn release(_backend: &mut Dom, h: &DomHandle) {
+    LAST_SRC.with(|m| m.borrow_mut().remove(h));
+}
+
 // Defines `register()`, which `web_view()` calls — web-dom's registry is populated at runtime,
 // unlike the link-time `renderer!` the native arms use (wasm has no `linkme` slice).
 day_pieces::dom_renderer!(day_dom::register_renderer, Dom,
     kind: KIND, props: WebProps, patch: WebPatch,
-    make: make, update: update, measure: measure);
+    make: make, update: update, measure: measure, release: release);

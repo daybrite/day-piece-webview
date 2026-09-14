@@ -7,6 +7,7 @@
 //! (MSVC) + the Windows SDK cppwinrt projection, mirroring day-xaml-sys.
 
 fn main() {
+    day_build::bridge::generate().expect("webview browser bridge");
     println!("cargo:rerun-if-changed=src/lib-qt-shim.cpp");
     println!("cargo:rerun-if-changed=src/lib-xaml-shim.cpp");
     println!("cargo:rerun-if-changed=build.rs");

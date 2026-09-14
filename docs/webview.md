@@ -154,7 +154,7 @@ Per backend (gate on `inline_support()`):
 | XAML | `SetVirtualHostNameToFolderMapping` maps the exe-relative assets dir under `day-assets.example`; `NewWindowRequested` is swallowed and reported as external | `NavigationStarting` |
 | GTK (linux) | extract-to-cache; WebKitGTK cannot browse a GResource, so `prepare_site()` (or realize, on the lazy path) copies the tree to the user cache once per process and the view loads the canonical `file://` URL | `decide-policy` |
 | ArkWeb | `resource://rawfile/day/<dir>/…` over the rawfile staging; the inline marker crosses in the piece's props string and the ArkTS side composes and polices the URL | `onLoadIntercept` |
-| web-dom | the deployed `assets/data/<dir>/…` URL, same origin as the host page, so the browser resolves the site and the shim's capture-phase click hook (armed by the `data-day-inline-base` attribute) polices leaving links | in-frame click hook → `day_dom_piece_event` |
+| web-dom | the deployed `assets/data/<dir>/…` URL, same origin as the host page, so the browser resolves the site and the crate's capture-phase click hook in `src/browser.rs` polices leaving links | in-frame click hook → `dayHost.dom.emit` |
 
 Every backend with a web engine reports `Native`; `Unsupported` remains only where there is no
 engine at all (macos-gtk / windows-gtk, which have no WebKitGTK build). The Qt, XAML, GTK and
@@ -262,3 +262,32 @@ day's [extending.md](https://github.com/daybrite/day/blob/main/docs/extending.md
 Two more findings handled within existing contracts: native→URL reporting uses `Custom("webview:url", …)`
 on Apple/Qt but the public `TextChanged` kind on Android (its `Custom` kind is reserved for deep links);
 and `text_field`'s `Submitted` event is currently a no-op, so loading is driven by a **Go** button.
+
+## Browser implementation
+
+`src/lib-dom.rs` creates the iframe and applies Rust property updates. For bundled sites, it calls
+`src/browser.rs` through `day-bridge` before assigning the first URL. That JavaScript arm installs
+a click listener on each loaded same-origin document. Links within the bundled directory navigate
+normally; links outside it become custom events for the Rust `LinkPolicy`.
+
+`build.rs` uses `day-build` to generate the bridge. The Day CLI includes its JavaScript module in
+the web build alongside the app's Wasm. The shared browser shim contains no webview URL policy or
+special iframe attributes: the piece uses the generic `dayHost.dom` interface for element access,
+events, and release callbacks. Reloading detaches the previous document listener; releasing the
+piece removes both document and frame listeners and clears the remembered source URL.
+
+This hook handles anchor clicks in same-origin bundled pages. It cannot observe cross-origin
+frame content, redirects, form submissions, or navigation initiated by page scripts. It is a
+navigation convenience for trusted bundled content, not a sandbox.
+
+## Automation and packaging
+
+The constructors register `day.webview.eval` for this piece's kind using
+`day_core::register_piece_operation`. The input is raw JavaScript; the successful result is JSON
+text. Both `JsHandle::eval` and dayscript use the same envelope and native reply handling.
+See [JavaScript evaluation](webview-eval.md) for platform details. Core Day owns only the generic
+operation registry; its `web_eval` script command preserves existing scripts.
+
+`Cargo.toml` declares the Qt WebEngine Flatpak base and the library prefix that requires it.
+Day's generic packer matches this against the built executable, coalesces identical requirements,
+and rejects conflicting bases. There is no WebEngine-specific selection logic in the packer.

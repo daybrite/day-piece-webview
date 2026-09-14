@@ -55,6 +55,7 @@ compat = "0.4"
 backends = ["appkit", "gtk", "qt", "uikit", "mdc", "xaml", "arkui", "dom"]
 
 [dependencies]
+day-bridge = { git = "https://github.com/daybrite/day.git" }
 log = "0.4"
 day-spec = { git = "https://github.com/daybrite/day.git" }
 day-core = { git = "https://github.com/daybrite/day.git" }
@@ -70,7 +71,7 @@ day-xaml = { git = "https://github.com/daybrite/day.git", optional = true }
 day-xaml-sys = { git = "https://github.com/daybrite/day.git", optional = true }
 day-arkui = { git = "https://github.com/daybrite/day.git", optional = true }
 day-dom = { git = "https://github.com/daybrite/day.git", optional = true }
-# Apple completion handlers for evaluateJavaScript: (day's docs/webview-eval.md).
+# Apple completion handlers for evaluateJavaScript (docs/webview-eval.md).
 block2 = { version = "0.6", optional = true }
 gtk4 = { version = "0.11", optional = true }
 objc2 = { version = "0.6", optional = true }
@@ -88,6 +89,7 @@ objc2-web-kit = { version = "0.3", optional = true, features = ["WKWebView", "WK
 webkit6 = { version = "0.6", optional = true }
 
 [build-dependencies]
+day-build = { git = "https://github.com/daybrite/day.git" }
 day-toolchain = { git = "https://github.com/daybrite/day.git" }
 cc = "1"
 
@@ -132,3 +134,11 @@ frameworks = ["WebKit"]
 # nothing else (demo/) panics with "class WKWebView could not be found" without this line.
 [package.metadata.day.macos]
 frameworks = ["WebKit"]
+
+# Qt's Flatpak runtime does not include its browser engine. Only bundle this base when
+# the executable actually links the engine; builds using the URL-label fallback stay small.
+[[package.metadata.day.flatpak.bases]]
+toolkit = "qt"
+library-prefix = "libQt6WebEngine"
+id = "io.qt.qtwebengine.BaseApp"
+# The base version follows Day's selected Qt runtime version.

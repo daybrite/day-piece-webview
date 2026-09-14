@@ -72,6 +72,27 @@ app, runs JavaScript in it, and receives a link the site sends to the app. From 
 `day launch -p macos-appkit --script dayscript/webview.yaml`, or the same command with
 `-p ios-uikit`, `-p android-mdc`, or `-p web-dom`.
 
+## Implementation and dependencies
+
+Each renderer and its supporting code live in this repository: Rust bindings for Apple and GTK,
+C++ for Qt and Windows, Java for Android, ArkTS for HarmonyOS, and JavaScript for web-dom.
+The browser's bundled-page link handler is in [src/browser.rs](src/browser.rs); Day supplies only
+generic element, event, and cleanup hooks.
+
+`day-bridge` declares the Rust/JavaScript boundary and `day-build` generates its module at build
+time. `day build` discovers and stages the module automatically. This checkout requires Day's `dayHost.dom` bridge and named piece-operation APIs. Update the CLI,
+framework dependencies, and this crate together.
+The crate also uses Day's core, reactive, piece, and toolkit APIs, `linkme` for native renderer
+registration, and `log` for diagnostics. Platform dependencies include `objc2` and `block2` on
+Apple, `gtk4` and `webkit6` on Linux GTK, and the engines listed above. `cc` and `day-toolchain`
+support native compilation. See [Cargo.toml](Cargo.toml) for versions and feature gates, and
+[the implementation guide](docs/webview.md#browser-implementation) for browser behavior and limits.
+
+For Flatpak, this crate declares the Qt WebEngine BaseApp in
+`package.metadata.day.flatpak.bases`. Day includes it when the binary links `libQt6WebEngine*`;
+the base version follows the selected Qt runtime. The requirement is owned here, so engine
+packaging changes do not require editing Day's packer.
+
 ## Compatibility and development
 
 This checkout requires Rust 1.89 or newer and declares compatibility with Day 0.4 in
@@ -83,11 +104,11 @@ refs can introduce duplicate framework crates and incompatible types.
 For a local framework checkout, run `day patch --local ../day` from this repository, or
 `day patch --local ../../day` from `demo/`. The demo depends on this crate by path, so it builds
 against your working copy. `cargo test` runs the host tests for the JavaScript codec and the
-front end.
+front end. `node --test tests/browser.mjs` checks bundled-page navigation and listener cleanup.
 
 The crate moved out of the [day repository](https://github.com/daybrite/day) with its history in
-2026-09. The JavaScript evaluation contract stays there, in `docs/webview-eval.md`, because the
-`web_eval` dayscript step and the day-core hook it drives live in day.
+2026-09. The [JavaScript evaluation guide](docs/webview-eval.md) lives here too. Dayscript keeps its
+`web_eval` syntax and calls the piece through Day's general named-operation registry.
 
 ## Part of Day
 
