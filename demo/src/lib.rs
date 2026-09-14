@@ -51,7 +51,10 @@ pub fn root() -> impl Piece {
             .id("webview-title"),
         label(res::str::caption()).font(Font::Footnote),
         section((
-            labeled(res::str::support_remote(), support_label(support(), "webview-support")),
+            labeled(
+                res::str::support_remote(),
+                support_label(support(), "webview-support"),
+            ),
             labeled(
                 res::str::support_inline(),
                 support_label(inline_support(), "webview-inline-support"),

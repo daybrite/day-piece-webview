@@ -76,9 +76,8 @@ define_class!(
                         .map(|s| s.to_string())
                         .unwrap_or_default();
                     let inside = url.starts_with(base.as_str()) || url == "about:blank";
-                    if !main_frame && unsafe { action.targetFrame() }.is_some() {
-                        WKNavigationActionPolicy::Allow
-                    } else if inside {
+                    let subframe = !main_frame && unsafe { action.targetFrame() }.is_some();
+                    if subframe || inside {
                         WKNavigationActionPolicy::Allow
                     } else {
                         day_appkit::emit(self.ivars().node.get(), Event::Custom {
