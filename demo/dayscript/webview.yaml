@@ -1,0 +1,53 @@
+# The demo's walkthrough (https://daybrite.dev/docs/dayscript), and the crate's on-device test. CI
+# runs it on macOS, the iOS Simulator, the Android emulator, and a headless browser, and the same
+# command runs it here:
+#
+#     day launch -p macos-appkit --script dayscript/webview.yaml
+#     day launch -p ios-uikit --script dayscript/webview.yaml
+#     day launch -p android-mdc --script dayscript/webview.yaml
+#     day launch -p web-dom --script dayscript/webview.yaml
+#
+# Every page the view shows ships in resource/assets/site/, so no step waits on a network.
+name: webview
+description: Check the support the piece reports, load the bundled site, run JavaScript in it, and follow the site's link back to the app.
+flow:
+  - wait_for: { id: webview-support }
+  - assert_visible: { id: webview-title }
+  # The support rows are the piece's own answers for this target. Remote browsing on web-dom is
+  # an <iframe>, which the browser keeps from reporting history or its URL, so it reads Emulated.
+  - assert_text: { id: webview-support, key: support_native, only_on: [appkit, uikit, mdc] }
+  - assert_text: { id: webview-support, key: support_emulated, only_on: [dom] }
+  - assert_text: { id: webview-inline-support, key: support_native, only_on: [appkit, uikit, mdc, dom] }
+  - assert_text: { id: webview-eval-support, key: support_native, only_on: [appkit, uikit, mdc] }
+  - assert_text: { id: webview-eval-support, key: support_unsupported, only_on: [dom] }
+  - assert_visible: { id: webview }
+  - assert_text: { id: webview-link, key: link_none }
+
+  # The page rendered with its relative script and stylesheet. `web_eval` retries until the page
+  # answers, so a slow first load settles within the step's wait.
+  - web_eval:
+      id: webview
+      script: "document.getElementById('script-status').textContent"
+      text: "The bundled script ran."
+      only_on: [appkit, uikit, mdc]
+  - web_eval:
+      id: webview
+      script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()"
+      text: "yes"
+      only_on: [appkit, uikit, mdc]
+  - screenshot: webview
+
+  # The console: the page's answer comes back as JSON, so a string arrives quoted.
+  - input: { id: webview-js, text: "document.title", only_on: [appkit, uikit, mdc] }
+  - tap: { id: webview-js-run, only_on: [appkit, uikit, mdc] }
+  - assert_text: { id: webview-js-result, text: '"Bundled site"', only_on: [appkit, uikit, mdc] }
+
+  # A webviewdemo:// link leaves the site, so the view cancels it and the link policy hands the
+  # route to the app, which records it and keeps the system browser closed.
+  - web_eval:
+      id: webview
+      script: "document.getElementById('app-link').click(); 'clicked'"
+      text: "clicked"
+      only_on: [appkit, uikit, mdc]
+  - assert_text: { id: webview-link, key: link_received, args: { route: "greeting" }, only_on: [appkit, uikit, mdc] }
+  - screenshot: webview-link

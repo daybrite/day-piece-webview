@@ -10,10 +10,11 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # Web view (external piece)
 
-> **Status: implemented** as `day-piece-webview`, an external Day Piece (like `day-piece-combobox`)
-> registered link-time into each backend's renderer slice without touching day. It wraps each
-> toolkit's native web view and fills the space it's offered. It is a reference for pieces whose native
-> backend is heavier than a control: a whole embedded browser, with commands in and URL events out.
+> **Status: implemented** as `day-piece-webview`, an external Day Piece in its own repository
+> (moved out of `daybrite/day` with its history in 2026-09), registered link-time into each
+> backend's renderer slice without touching day. It wraps each toolkit's native web view and fills
+> the space it's offered. It is a reference for pieces whose native backend is heavier than a
+> control: a whole embedded browser, with commands in and URL events out.
 
 ## Authoring
 
@@ -63,11 +64,11 @@ the exception with no filesystem at all: a `file://` URL renders nothing there, 
 app wants shown on web too must arrive as content rather than as a file (an open gap; the piece has no
 direct-HTML API yet).
 
-Evaluating JavaScript and reading a value back is covered in [docs/webview-eval.md](webview-eval.md), which keeps the per-platform support list current:
+Evaluating JavaScript and reading a value back is covered in day's [docs/webview-eval.md](https://github.com/daybrite/day/blob/main/docs/webview-eval.md), which keeps the per-platform support list current:
 `JsHandle::eval(script).await` returns the value as JSON, or the error the script threw. Ask
 `eval_support()` before offering it: AppKit, UIKit, Qt, XAML, Android and ArkWeb have working
 arms; GTK has an engine but no arm yet, windows-qt ships no engine, and web-dom can never have
-one (`contentWindow.eval` throws across origins). See [webview-eval.md](./webview-eval.md) for
+one (`contentWindow.eval` throws across origins). See [webview-eval.md](https://github.com/daybrite/day/blob/main/docs/webview-eval.md) for
 the per-platform research, the JavaScript envelope, and what each arm does.
 
 ### Sessions (surviving navigation)
@@ -114,7 +115,8 @@ Qt needed.
 ## Inline sites: `web_view_inline` (app-embedded content)
 
 A directory under `resource/assets/` can ship a whole site (pages, stylesheets, scripts,
-images, structure preserved, per [docs/resources.md](resources.md)'s asset tree), and the view serves it from
+images, structure preserved, per the asset tree in day's
+[docs/resources.md](https://github.com/daybrite/day/blob/main/docs/resources.md)), and the view serves it from
 inside the app without a network:
 
 ```rust
@@ -160,7 +162,9 @@ ArkWeb arms are compile-verified from this host and behavior-verified by their C
 additionally exercised live on macos-qt.
 
 The showcase's Web View page shows both modes as tabs: **Remote** (the browsing demo above) and
-**Embedded** (`resource/assets/web/minisite/`, with all three link dispositions live).
+**Embedded** (`resource/assets/web/minisite/`, with all three link dispositions live). This
+repository's [demo/](../demo/) loads a bundled site, runs JavaScript in it, and follows its app
+link from `dayscript/webview.yaml`.
 
 ## Per-backend native realization
 
@@ -187,7 +191,7 @@ gallery.
   `webview.WebviewController`; `onPageEnd` reports each committed URL back. **The x86_64 emulator cannot
   run it**: its `ArkWebCore.hap` carries arm64-only native libs (`bm install` answers "the Abi type
   supported by the device does not match"), so the engine loads as null and the component's surface
-  wedges the window's compositor; the walkthrough skips this page there ([docs/harmonyos.md](harmonyos.md)).
+  wedges the window's compositor; the walkthrough skips this page there (day's [docs/harmonyos.md](https://github.com/daybrite/day/blob/main/docs/harmonyos.md)).
 - **web-dom**: an `<iframe>`, the one backend with no engine to embed, because the host page already
   is one. `Load` and `Reload` work. `Back`, `Forward` and `Stop` are no-ops, and navigation does not
   report back into the bound signal, because the same-origin policy forbids a parent document from
@@ -235,7 +239,7 @@ produced a capture, with no list to maintain on either side.
 ## What this piece taught the extension system
 
 Building `day-piece-webview` as a fully self-contained piece surfaced (and fixed) three things; see
-[extending.md](extending.md):
+day's [extending.md](https://github.com/daybrite/day/blob/main/docs/extending.md):
 
 1. **Android manifest permissions.** A web view needs `INTERNET`, but a piece can't edit the app manifest.
    `[package.metadata.day.android]` gained a `permissions = [...]` key; `day build` writes them to a

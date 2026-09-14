@@ -1,0 +1,22 @@
+<!doctype html>
+<!--
+Copyright © The Daybrite Project
+SPDX-License-Identifier: MPL-2.0
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bundled site</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <h1>Hello from the bundled site</h1>
+  <p>This page, its stylesheet, and its script ship inside the app under
+    <code>resource/assets/site/</code>, so it loads without a network.</p>
+  <p id="script-status">The bundled script has not run.</p>
+  <p><a id="app-link" href="webviewdemo://greeting">Send the app a link</a></p>
+  <p><a id="web-link" href="https://daybrite.dev">daybrite.dev</a> opens in the system browser.</p>
+  <script src="js/app.js"></script>
+</body>
+</html>

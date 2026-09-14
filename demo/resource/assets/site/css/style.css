@@ -1,0 +1,27 @@
+/*
+ * Copyright © The Daybrite Project
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
+/* The demo's bundled site. dayscript/webview.yaml reads `--site-loaded` to confirm this file
+   loaded through its relative link. */
+:root {
+  --site-loaded: yes;
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  padding: 16px 20px;
+  font: 16px/1.5 -apple-system, system-ui, sans-serif;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  color: #2563eb;
+}
+
+code {
+  font-size: 14px;
+}

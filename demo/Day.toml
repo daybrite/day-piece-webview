@@ -1,0 +1,19 @@
+# The Day project manifest (https://daybrite.dev/docs/cli). `name`/`version` come from
+# Cargo.toml; any [app] property may be overridden per platform, toolkit, or target.
+schema = 1
+
+[app]
+id = "dev.daybrite.webviewdemo"
+title = "Web View Demo"
+build = 1
+targets = ["macos-appkit", "linux-gtk", "linux-qt", "windows-xaml", "ios-uikit", "android-mdc", "web-dom", "harmony-arkui"]
+
+# The window's geometry in points (https://daybrite.dev/docs/size-classes). `width`/`height` are
+# the desktop default and the size a desktop-windowing Android window opens at; the minimum is
+# how small the system may make it. `day build` carries all four into the Android manifest's
+# <layout> element and the iOS Info.plist, so declare them here rather than in either.
+[window]
+width = 800
+height = 680
+min_width = 360
+min_height = 480
