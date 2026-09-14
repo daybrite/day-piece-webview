@@ -40,7 +40,7 @@ jobs:
           - { os: windows-latest, features: xaml }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Install the toolkit and web engine libraries
         if: runner.os == 'Linux'
@@ -73,7 +73,7 @@ jobs:
     env:
       RUSTFLAGS: ${{ matrix.rustflags }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
