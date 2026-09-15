@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // ---------------------------------------------------------------------------
-// XAML: this crate's OWN C++/WinRT shim (src/lib-xaml-shim.cpp) wrapping the UWP-XAML WebView,
+// XAML: this crate's C++/WinRT shim (src/lib-xaml-shim.cpp) wrapping the UWP-XAML WebView,
 // boxed into Day handles via the `day_xaml_box`/`day_xaml_unbox` seam day-xaml-sys exports (like
 // the Qt renderer's own shim). The shim reports url changes through a C callback →
 // `Event::custom("webview:url", …)`. Windows-only, built + verified in CI (not on this host).
