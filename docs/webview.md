@@ -171,7 +171,7 @@ link from `dayscript/webview.yaml`.
 | | AppKit | UIKit | Qt | Android | GTK | XAML |
 |---|---|---|---|---|---|---|
 | control | `WKWebView` | `WKWebView` | `QWebEngineView` | `android.webkit.WebView` | WebKitGTK `WebView` | UWP-XAML `WebView` |
-| native code | objc2-web-kit | hand-rolled `extern_class!` + `msg_send!` | `src/lib-qt-shim.cpp` (+ links `Qt6WebEngineWidgets`) | `platform/android/java/…/DayWebView.java` | `webkit6` crate | `src/lib-xaml-shim.cpp` |
+| native code | objc2-web-kit | hand-rolled `extern_class!` + `msg_send!` | `src/lib-qt-shim.cpp` (+ links `Qt6WebEngineWidgets`) | `src/DayWebView.java` | `webkit6` crate | `src/lib-xaml-shim.cpp` |
 | URL-back event | `Custom("webview:url", …)` | `Custom("webview:url", …)` | `Custom("webview:url", …)` | `TextChanged` (kind 1) | `Custom("webview:url", …)` | `Custom("webview:url", …)` |
 
 Rendering, two-way URL binding, and controls are verified on AppKit, Qt, UIKit (iOS sim), and Android.

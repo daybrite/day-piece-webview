@@ -5,6 +5,13 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # Changelog
 
+## Unreleased
+
+- Changed: the Android factory moved from `platform/android/java/…/DayWebView.java` to
+  `src/DayWebView.java`, beside the Rust arms. Building for Android now needs a `day` CLI that
+  links single-file `java` entries; an older one skips the file, and the app fails when it first
+  creates the view.
+
 ## 0.4.3
 
 The first release from its own repository. The crate moved out of `daybrite/day`
