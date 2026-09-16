@@ -13,7 +13,7 @@ build = "build.rs"
 
 # An EXTERNAL Day Piece (https://daybrite.dev/docs/extending) wrapping each toolkit's NATIVE web
 # view: WKWebView on AppKit/UIKit, QWebEngineView on Qt, android.webkit.WebView on Android, WebKitGTK
-# on GTK, WebView2 on XAML, ArkWeb on HarmonyOS, and an <iframe> on the web. It carries BOTH its
+# on GTK, WebView2 on XAML, ArkWeb on HarmonyOS, and an <iframe> on the web. It carries both its
 # cross-platform front-end (Rust) and its per-toolkit backend (objc2 / C++ shims / Android Java /
 # ArkTS / gtk-rs) without touching any day crate. See docs/webview.md.
 #
@@ -28,7 +28,7 @@ appkit = ["dep:day-appkit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundat
 # WebKitGTK 6 via the webkit6 crate, scoped to Linux (non-macOS, non-Windows): Homebrew's webkitgtk
 # vends the GTK3 API and isn't viable on macOS-quartz, and MSYS2/MINGW64 has no WebKitGTK package at
 # all. `dep:webkit6` is a no-op where the dependency is target-gated out (macOS + Windows), so on
-# macos-gtk AND windows-gtk the webview kind falls back to a placeholder (lib.rs gates lib-gtk.rs to
+# macos-gtk and windows-gtk the webview kind falls back to a placeholder (lib.rs gates lib-gtk.rs to
 # match).
 gtk = ["dep:day-gtk", "dep:gtk4", "dep:webkit6"]
 qt = ["dep:day-qt"]                 # + build.rs compiles src/lib-qt-shim.cpp, linking Qt6WebEngineWidgets when present (else a URL-label fallback)
@@ -98,7 +98,7 @@ day-mock = { git = "https://github.com/daybrite/day.git" }
 
 # Standalone-piece Android contribution (https://daybrite.dev/docs/extending). The day CLI reads
 # this from `cargo metadata` and folds it into the app's Gradle build — the piece carries its own
-# backend Java AND declares the Android permissions it needs, without touching day-android or the
+# backend Java and declares the Android permissions it needs, without touching day-android or the
 # scaffold.
 [package.metadata.day.android]
 # Java/Kotlin sources, relative to this crate root: dirs, or single files linked in by package.

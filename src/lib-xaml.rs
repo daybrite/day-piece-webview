@@ -3,8 +3,8 @@
 
 // ---------------------------------------------------------------------------
 // XAML: this crate's C++/WinRT shim (src/lib-xaml-shim.cpp) wrapping the UWP-XAML WebView,
-// boxed into Day handles via the `day_xaml_box`/`day_xaml_unbox` seam day-xaml-sys exports (like
-// the Qt renderer's own shim). The shim reports url changes through a C callback →
+// boxed into Day handles via the `day_xaml_box`/`day_xaml_unbox` functions day-xaml-sys
+// exports (like the Qt renderer's shim). The shim reports url changes through a C callback →
 // `Event::custom("webview:url", …)`. Windows-only, built + verified in CI (not on this host).
 // ---------------------------------------------------------------------------
 
@@ -33,8 +33,8 @@ unsafe extern "C" {
     fn day_webview_xaml_eval(handle: *mut c_void, req: u64, script: *const c_char);
 }
 
-/// One evaluation reply, keyed by request id. The shim calls this exactly once per request —
-/// including from the no-engine path — so a pending future can never be stranded.
+/// One evaluation reply, keyed by request id. The shim calls this exactly once per request
+/// (including from the no-engine path), so a pending future can never be stranded.
 extern "C" fn on_eval(id: u64, req: u64, payload: *const c_char) {
     let text = if payload.is_null() {
         String::new()
@@ -95,7 +95,7 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
     EVAL_CB.call_once(|| unsafe { day_webview_xaml_set_eval_cb(on_eval) });
     // Inline mode (docs/webview.md): the shim maps the exe-relative assets tree under a virtual
     // host (Windows ships assets as loose files beside the exe, resources/xaml.rs) and browses
-    // `https://day-assets.example/<root>/<start>` — the engine resolves the site's relative
+    // `https://day-assets.example/<root>/<start>`; the engine resolves the site's relative
     // references itself, and the shim polices top-level navigations against that prefix.
     WinHandle(unsafe {
         day_webview_xaml_new(

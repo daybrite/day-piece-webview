@@ -62,8 +62,8 @@ jobs:
       - run: node --test tests/browser.mjs
         if: matrix.features == 'gtk'
 
-  # The mobile and web arms compile for their targets. A link is not attempted here — the demo
-  # below does that inside a real app — but an objc2 call that no longer type-checks, a JNI
+  # The mobile and web arms compile for their targets. A link is not attempted here (the demo
+  # below does that inside a real app), but an objc2 call that no longer type-checks, a JNI
   # signature drift in the Android arm, or a wasm-only API change fails here in a minute.
   cross-check:
     strategy:

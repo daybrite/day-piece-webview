@@ -134,7 +134,7 @@ static std::string eval_engine_error(const char *name, const char *message) {
     return s;
 }
 
-/// Deliver exactly one reply for `req`. Every path out of an eval MUST reach this, or the Rust
+/// Deliver exactly one reply for `req`. Every path out of an eval must reach this, or the Rust
 /// future waits forever: WebView2 releases pending handlers on `Close()`, so a dropped callback
 /// is a stranded request rather than a late one.
 static void eval_reply(uint64_t id, uint64_t req, std::string const &payload) {
@@ -417,7 +417,7 @@ static void create_webview2(void *handle) {
 
                             if (c2->webview && !c2->inline_prefix.empty()) {
                                 // Inline mode: map the exe-relative assets tree under the virtual
-                                // host BEFORE the first Navigate, then police top-level
+                                // host before the first Navigate, then police top-level
                                 // navigations against the site prefix — leaving ones are
                                 // CANCELLED and reported (the Rust side runs the LinkPolicy;
                                 // events are enqueue-only, so the verdict can't come back here).

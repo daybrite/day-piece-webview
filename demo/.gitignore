@@ -4,7 +4,7 @@
 # Cargo.lock too, unlike a real app. This demo exists to prove the crate beside it against day's
 # newest main, so CI resolves a fresh lock on every run (the shared `dayapp` workflow generates
 # one when none is committed, and `update-day-deps` moves every leg to one tip revision). A
-# committed lock would pin the framework at whatever it was generated against — or, after
+# committed lock would pin the framework at whatever it was generated against or, after
 # `day patch --local`, record the paths of one developer's machine.
 Cargo.lock
 
@@ -18,7 +18,7 @@ Cargo.lock
 # why the include is optional.
 platform/*/DayApp.local.xcconfig
 
-# Xcode local state. The .xcodeproj itself is source; what Xcode writes inside it is not —
+# Xcode local state. The .xcodeproj itself is source; what Xcode writes inside it is not:
 # project.xcworkspace holds the SwiftPM resolution for the pieces package day generates under
 # build/, and cannot be relocated out of the project.
 xcuserdata/

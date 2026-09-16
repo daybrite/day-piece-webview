@@ -4,7 +4,7 @@
 // The web-view piece's own Qt shim behind a flat C ABI. When Qt6WebEngineWidgets is available
 // (build.rs probes pkg-config and defines DAY_WEBVIEW_QT_ENGINE) this wraps a real QWebEngineView
 // and forwards `urlChanged` to a C callback so a bound text field follows navigation. When it is
-// NOT — e.g. MSYS2/MINGW64, which does not package Qt6 WebEngine (Chromium won't build with MinGW
+// Not — e.g. MSYS2/MINGW64, which does not package Qt6 WebEngine (Chromium won't build with MinGW
 // GCC) — it degrades to a QLabel showing the URL, so windows-qt still builds/launches/screenshots
 // (mirrors day-piece-webview's xaml EdgeHTML degrade). The C ABI is identical either way, so
 // lib-qt.rs is unchanged. The callback's `const char*` is only valid for the call (Rust copies it).
@@ -41,7 +41,7 @@ static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 
 // Session id -> the retained engine view. Qt is the one backend whose `release` DELETES the handle
 // (day_qt_delete -> deleteLater), so a second pointer to the container would dangle. What is
-// retained instead is the QWebEngineView INSIDE it: ~DayWebView re-parents it out before ~QWidget
+// retained instead is the QWebEngineView inside it: ~DayWebView re-parents it out before ~QWidget
 // deletes its children, and the next container adopts it. The page, history and JS context live in
 // the QWebEnginePage the view owns, so re-parenting is lossless.
 static std::map<uint64_t, QWebEngineView *> g_sessions;
@@ -82,7 +82,7 @@ public:
     uint64_t id = 0;
     uint64_t session = 0;
     ~DayWebView() override {
-        // Runs BEFORE ~QWidget deletes children — the only window in which the engine view can be
+        // Runs before ~QWidget deletes children — the only window in which the engine view can be
         // rescued from the container's destruction.
         if (session != 0 && view)
             view->setParent(nullptr);

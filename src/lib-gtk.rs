@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // ---------------------------------------------------------------------------
-// GTK: WebKitGTK 6.0 via the `webkit6` crate — a `WebView` widget (a `gtk4::Widget`). Written blind
+// GTK: WebKitGTK 6.0 via the `webkit6` crate, a `WebView` widget (a `gtk4::Widget`). Written blind
 // (WebKitGTK isn't installed on the reference host); it builds+runs where `webkitgtk-6.0` is present
 // (the CI gtk jobs install it). The `uri` property notify reports navigation back via
 // `Event::custom("webview:url", …)`, matching the AppKit/Qt renderers.
@@ -19,7 +19,7 @@ use webkit6::prelude::*;
 /// loose files and the view loads a `file://` URL. Returns the extracted site root.
 ///
 /// Called from `prepare_site()` (the checked, pre-warming route) and lazily from `make` (the
-/// direct route). Synchronous — it runs inside a day task poll or at realize, not on a render
+/// direct route). Synchronous: it runs inside a day task poll or at realize, not on a render
 /// path; moving large-site extraction to a thread is the noted upgrade.
 pub(crate) fn extract_site(root: &str) -> Result<std::path::PathBuf, String> {
     use std::cell::RefCell;
@@ -75,9 +75,9 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
         }
     });
     if !p.inline_root.is_empty() {
-        // Inline mode (docs/webview.md): extract-to-cache (above), then a file URL — WebKit
+        // Inline mode (docs/webview.md): extract-to-cache (above), then a file URL; WebKit
         // resolves the site's relative references natively. The policy handler polices by the
-        // canonical file-URL prefix; navigations leaving the site are IGNORED here and
+        // canonical file-URL prefix; navigations leaving the site are ignored here and
         // reported, and the Rust front-end runs the app's LinkPolicy (events are enqueue-only,
         // so the verdict cannot come back through this signal).
         match extract_site(&p.inline_root) {
@@ -95,8 +95,8 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                             .and_then(|a| a.request())
                             .and_then(|r| r.uri())
                             .map(|u| u.to_string()),
-                        // target=_blank / window.open: no new window exists in day's tree —
-                        // external by definition.
+                        // target=_blank / window.open: no new window exists in day's tree, so
+                        // the request is external by definition.
                         PolicyDecisionType::NewWindowAction => decision
                             .downcast_ref::<webkit6::NavigationPolicyDecision>()
                             .and_then(|d| d.navigation_action())
@@ -151,7 +151,7 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
         WebPatch::Reload => wv.reload(),
         // Not implemented on this backend yet (docs/webview-eval.md). `eval_support()`
         // reports Unsupported, so the front-end resolves the future without dispatching
-        // and this arm is unreachable — it exists to keep the match exhaustive.
+        // and this arm is unreachable; it exists to keep the match exhaustive.
         WebPatch::Eval { .. } => {}
     }
 }

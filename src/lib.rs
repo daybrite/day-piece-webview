@@ -1,16 +1,16 @@
 // Copyright © The Daybrite Project
 // SPDX-License-Identifier: MPL-2.0
 
-//! day-piece-webview — an EXTERNAL Day Piece (DESIGN.md §15) wrapping each toolkit's NATIVE web view:
-//! WKWebView on AppKit/UIKit, QWebEngineView on Qt, `android.webkit.WebView` on Android. One Rust API
-//! registered link-time into each backend's renderer slice without touching day. Alongside the
-//! picker it's a reference for pieces that carry both a front-end AND their own native backend — here
-//! including an Android manifest permission contribution (INTERNET), see docs/extending.md.
+//! day-piece-webview, an external Day Piece (DESIGN.md §15) wrapping each toolkit's native web
+//! view: WKWebView on AppKit/UIKit, QWebEngineView on Qt, `android.webkit.WebView` on Android. One
+//! Rust API registered link-time into each backend's renderer slice without touching day. Alongside
+//! the picker it's a reference for pieces that carry both a front-end and their own native backend,
+//! here including an Android manifest permission contribution (INTERNET), see docs/extending.md.
 //!
-//! The view is a growing leaf that fills its space. Navigation is imperative and modeled with `Copy`
-//! `Trigger`s — `.go()` loads the bound URL, `.back()`/`.forward()`/`.stop()`/`.reload()` drive
-//! history — each `watch`ed to a `WebPatch`. The bound URL is two-way: `.go()` loads it, and native
-//! navigation reports the current URL back so a bound text field follows along.
+//! The view is a growing leaf that fills its space. Navigation is imperative and modeled with
+//! `Copy` `Trigger`s (`.go()` loads the bound URL, `.back()`/`.forward()`/`.stop()`/`.reload()`
+//! drive history), each `watch`ed to a `WebPatch`. The bound URL is two-way: `.go()` loads it, and
+//! native navigation reports the current URL back so a bound text field follows along.
 
 #[cfg(feature = "dom")]
 mod browser;
@@ -46,7 +46,7 @@ pub struct WebProps {
     pub inline_start: String,
 }
 
-/// A retained browsing session — the thing that outlives the view showing it.
+/// A retained browsing session: the thing that outlives the view showing it.
 ///
 /// Day rebuilds a page's whole subtree on every navigation, so a plain `web_view` gets a brand-new
 /// native view each visit and reloads from scratch. A session moves the *engine* out of that
@@ -54,15 +54,16 @@ pub struct WebProps {
 /// bound to the same session re-attaches it with its page, scroll position, history and JavaScript
 /// context intact.
 ///
-/// This is the shape Apple settled on for the same problem — `WebPage` holds the session and
-/// `WebView` renders it — and the reason it works is the same: a web view's content lives in the
+/// This is the shape Apple settled on for the same problem (`WebPage` holds the session and
+/// `WebView` renders it), and the reason it works is the same: a web view's content lives in the
 /// object and its content process, not in its attachment to a parent view.
 ///
-/// Sessions are keyed by a `&'static str`, so [`WebSession::global`] is idempotent and safe to call
-/// from a page function that runs again on every navigation. There is deliberately no way to mint an
-/// anonymous one: an id that changed per build would retain a new view each visit and leak them all.
+/// Sessions are keyed by a `&'static str`, so [`WebSession::global`] is idempotent and safe to
+/// call from a page function that runs again on every navigation. There is no way to mint an
+/// anonymous one: an id that changed per build would retain a new view each visit and leak them
+/// all.
 ///
-/// The retained view is never freed — one session is one live web view for the process's lifetime.
+/// The retained view is never freed: one session is one live web view for the process's lifetime.
 /// Use them for pages a user returns to, not per-item.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct WebSession(u64);
@@ -93,19 +94,19 @@ impl WebSession {
 }
 
 // ---------------------------------------------------------------------------
-// Inline (app-embedded) sites — docs/webview.md. A directory under `resource/assets/` ships a
+// Inline (app-embedded) sites (docs/webview.md). A directory under `resource/assets/` ships a
 // whole site (html/css/js/images, structure preserved, §18.5); the view loads it through the
 // backend's own local-content channel (a file URL into the bundle on Apple,
 // `file:///android_asset/` on Android, the same-origin `assets/data/` URL on web-dom), so the
-// page's RELATIVE references resolve natively. Navigations that leave the site are cancelled
-// in-view and dispatched per [`LinkPolicy`] — the system browser by default.
+// page's relative references resolve natively. Navigations that leave the site are cancelled
+// in-view and dispatched per [`LinkPolicy`], the system browser by default.
 // ---------------------------------------------------------------------------
 
 /// The `num` the arms tag an external-link report with on the shared `Event::Custom` channel:
 /// navigation reports are `0`, eval replies are `≥ 1`, link reports are this.
 const LINK_REPORT: f64 = -1.0;
 
-/// What to do with a navigation that leaves an inline site — the answer an
+/// What to do with a navigation that leaves an inline site: the answer an
 /// [`WebView::on_external_link`] handler returns. Without a handler, every external link is
 /// [`LinkPolicy::OpenSystem`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,7 +121,7 @@ pub enum LinkPolicy {
     Ignore,
 }
 
-/// A bundled site ready for [`web_view_inline`] — the marker [`AssetDirSiteExt::prepare_site`]
+/// A bundled site ready for [`web_view_inline`], the marker [`AssetDirSiteExt::prepare_site`]
 /// resolves to (or an unchecked one via `From`-style [`IntoInlineSite`] on the raw directory).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InlineSite {
@@ -175,7 +176,7 @@ impl Future for PrepareSite {
     }
 }
 
-/// `res::assets::<dir>.prepare_site()` — validate and prepare a bundled directory as an inline
+/// `res::assets::<dir>.prepare_site()`: validate and prepare a bundled directory as an inline
 /// site (docs/webview.md).
 pub trait AssetDirSiteExt {
     fn prepare_site(self) -> PrepareSite;
@@ -202,7 +203,7 @@ impl AssetDirSiteExt for day_core::AssetDir {
     }
 }
 
-/// The per-backend half of `prepare_site` — where a backend whose engine cannot read the
+/// The per-backend half of `prepare_site`: where a backend whose engine cannot read the
 /// embedded store in place gets the site onto loose files ahead of the view (docs/webview.md).
 #[cfg(not(target_arch = "wasm32"))]
 fn prepare_backend(root: String) -> Result<InlineSite, PrepareError> {
@@ -217,7 +218,7 @@ fn prepare_backend(root: String) -> Result<InlineSite, PrepareError> {
 }
 
 /// What [`web_view_inline`] accepts: a prepared [`InlineSite`], or the raw generated
-/// `res::assets::…` directory constant for the lazy path (no ahead-of-time index check — a
+/// `res::assets::…` directory constant for the lazy path (no ahead-of-time index check; a
 /// missing page surfaces in the view itself).
 pub trait IntoInlineSite {
     fn into_inline_site(self) -> InlineSite;
@@ -237,8 +238,8 @@ impl IntoInlineSite for day_core::AssetDir {
     }
 }
 
-/// Whether this backend can show an INLINE (app-embedded) site. A separate axis from
-/// [`support`]: web-dom's iframe is `Emulated` for REMOTE browsing but fully capable here —
+/// Whether this backend can show an inline (app-embedded) site. A separate axis from
+/// [`support`]: web-dom's iframe is `Emulated` for remote browsing but fully capable here:
 /// the bundled site is same-origin, so loading, relative navigation and the link policy all
 /// work. `Unsupported` remains only where there is no web engine at all (macos-gtk and
 /// windows-gtk have no WebKitGTK build), and the view realizes the placeholder.
@@ -255,7 +256,7 @@ pub fn inline_support() -> day_spec::Support {
         // (degrades to the URL label when the WebView2 Runtime is absent, like `support()`).
         all(feature = "xaml", windows),
         // WebKitGTK reads the site from the cache extraction `prepare_site`/realize performs
-        // (linux only — macos-gtk/windows-gtk have no WebKitGTK and realize the placeholder).
+        // (linux only; macos-gtk/windows-gtk have no WebKitGTK and realize the placeholder).
         all(feature = "gtk", not(target_os = "macos"), not(windows)),
         // ArkWeb browses the rawfile-staged tree through `resource://rawfile/` URLs.
         all(feature = "arkui", target_env = "ohos"),
@@ -293,9 +294,9 @@ pub enum WebPatch {
 // JavaScript evaluation (docs/webview-eval.md)
 // ---------------------------------------------------------------------------
 
-/// Field separator inside an evaluation reply. A raw 0x1F can never appear inside JSON text —
-/// `JSON.stringify` escapes control characters as the six ASCII chars `\u001f` — so splitting on it
-/// is unambiguous and needs no JSON parser on the Rust side.
+/// Field separator inside an evaluation reply. A raw 0x1F can never appear inside JSON text
+/// (`JSON.stringify` escapes control characters as the six ASCII chars `\u001f`), so splitting on
+/// it is unambiguous and needs no JSON parser on the Rust side.
 const SEP: char = '\u{1f}';
 
 /// Why an evaluation did not produce a value.
@@ -308,7 +309,7 @@ pub enum EvalError {
     Threw { name: String, message: String },
     /// The web view was never realized, or went away before the reply arrived.
     ViewGone,
-    /// The engine ran but the reply did not decode — the raw payload is included.
+    /// The engine ran but the reply did not decode; the raw payload is included.
     Engine(String),
 }
 
@@ -350,8 +351,8 @@ fn js_string_literal(s: &str) -> String {
 
 /// Wrap a user script so every backend reports errors the same way.
 ///
-/// Qt and Android have no error channel at all — a throw, a syntax error and a genuine `null` all
-/// arrive identically — so the channel is built in JavaScript instead, and every backend then
+/// Qt and Android have no error channel at all (a throw, a syntax error and a `null` result all
+/// arrive identically), so the channel is built in JavaScript instead, and every backend then
 /// behaves like the ones with real errors. The reply is `1␟<json>` or `0␟<name>␟<message>`.
 ///
 /// The script is passed to `eval` as a **string literal** rather than spliced in as source. That
@@ -383,10 +384,10 @@ fn wrap_script(script: &str) -> String {
     )
 }
 
-/// Build a reply an arm can send when the ENGINE failed rather than the script — a dead content
+/// Build a reply an arm can send when the engine failed rather than the script: a dead content
 /// process, a missing web view, a reply of the wrong type. Shaped like the wrapper's own error arm
 /// so [`decode`] needs only one format.
-// Used by the per-backend arms, each of which is `#[cfg]`-gated to one toolkit — so on any single
+// Used by the per-backend arms, each of which is `#[cfg]`-gated to one toolkit, so on any single
 // build all but one caller is compiled out, and on a build whose backend has no eval arm yet there
 // are none. Which callers exist is a build-configuration accident, not a sign this is unused.
 #[allow(dead_code)]
@@ -395,7 +396,7 @@ pub(crate) fn engine_error(name: &str, message: &str) -> String {
 }
 
 /// Decode one reply produced by [`wrap_script`]. `undefined` and values `JSON.stringify` drops
-/// (a function, a symbol) both arrive as `null` — the wrapper normalizes them so the payload is
+/// (a function, a symbol) both arrive as `null`; the wrapper normalizes them so the payload is
 /// always valid JSON.
 fn decode(payload: &str) -> Result<String, EvalError> {
     match payload.split_once(SEP) {
@@ -420,13 +421,14 @@ day_core::tls_group! {
     /// Request ids start at 1 so 0 stays free for the URL report, which shares this channel.
     static NEXT_REQ: Cell<u64> = const { Cell::new(1) };
     static PENDING: RefCell<HashMap<u64, Rc<EvalShared>>> = RefCell::new(HashMap::new());
-    /// Callback-shaped requests (the dayscript `web_eval` step, via day-core's seam) — same
-    /// req space and reply channel as the futures above, different completion shape.
+    /// Callback-shaped requests (the dayscript `web_eval` step, via day-core's
+    /// `register_piece_operation`): same req space and reply channel as the futures above,
+    /// different completion shape.
     static PENDING_CB: RefCell<HashMap<u64, day_core::PieceOperationDone>> =
         RefCell::new(HashMap::new());
 }
 
-/// Deliver a reply to whichever request is waiting on `req` — an awaited [`EvalFuture`] or a
+/// Deliver a reply to whichever request is waiting on `req`: an awaited [`EvalFuture`] or a
 /// `web_eval` step callback. A reply for a dropped future finds nothing pending and is
 /// discarded.
 fn resolve(req: u64, payload: &str) {
@@ -444,8 +446,8 @@ fn resolve(req: u64, payload: &str) {
 }
 
 /// Register this piece's evaluator with day-core, for the dayscript `web_eval` step
-/// (docs/webview-eval.md). Called from the constructors — idempotent, and an app that never
-/// builds a web view never registers, which the step reports honestly. The provider applies
+/// (docs/webview-eval.md). Called from the constructors; idempotent, and an app that never
+/// builds a web view never registers, which the step then reports. The provider applies
 /// the same [`wrap_script`] envelope and reply channel as [`JsHandle::eval`]; on a backend
 /// whose arm answers `eval_support() != Native` it fails the callback immediately rather
 /// than letting the step wait out its retry window.
@@ -504,7 +506,7 @@ impl JsHandle {
     /// Evaluate `script` and resolve with its result as JSON text.
     ///
     /// Nothing is dispatched until the future is polled. Dropping it deregisters the request, so a
-    /// late reply is discarded — but the script keeps running: no backend can cancel one.
+    /// late reply is discarded, but the script keeps running: no backend can cancel one.
     pub fn eval(&self, script: impl AsRef<str>) -> EvalFuture {
         EvalFuture {
             req: NEXT_REQ.with(|c| {
@@ -539,7 +541,7 @@ impl Future for EvalFuture {
         if let Some(result) = self.shared.result.borrow_mut().take() {
             return Poll::Ready(result);
         }
-        // Dispatch on first poll, not at construction — an eval that is never awaited never runs.
+        // Dispatch on first poll, not at construction, so an eval that is never awaited never runs.
         if !self.sent {
             self.sent = true;
             if eval_support() != day_spec::Support::Native {
@@ -580,7 +582,7 @@ pub fn eval_support() -> day_spec::Support {
         day_spec::Support::Native
     } else {
         // GTK has an engine and an equivalent call; its arm is not written yet
-        // (docs/webview-eval.md). web-dom cannot ever do this for REMOTE pages —
+        // (docs/webview-eval.md). web-dom cannot ever do this for remote pages:
         // `contentWindow.eval` throws across origins.
         day_spec::Support::Unsupported
     }
@@ -605,14 +607,14 @@ pub struct WebView {
     on_link: Option<LinkDecider>,
 }
 
-/// `web_view(url)` — a native web view showing `url`. The initial value loads on creation; call
+/// `web_view(url)`: a native web view showing `url`. The initial value loads on creation; call
 /// `.go(trigger)` and fire the trigger to (re)load whatever `url` currently holds.
 pub fn web_view(url: Signal<String>) -> WebView {
     // Self-register the web renderer. wasm has no link-time renderer slice, and a constructor is
-    // the earliest point the piece is known to be in play — always before its node is realized.
+    // the earliest point the piece is known to be in play, always before its node is realized.
     #[cfg(all(feature = "dom", target_arch = "wasm32"))]
     dom_impl::register();
-    // Same earliest-point reasoning for the dayscript `web_eval` seam: a step can only target
+    // Same earliest-point reasoning for the dayscript `web_eval` registration: a step can only target
     // a webview some constructor built, so registration here is always in time.
     register_script_eval();
     WebView {
@@ -630,13 +632,13 @@ pub fn web_view(url: Signal<String>) -> WebView {
     }
 }
 
-/// `web_view_inline(site)` — a web view showing a site bundled INSIDE the app
+/// `web_view_inline(site)`: a web view showing a site bundled inside the app
 /// (docs/webview.md): a directory under `resource/assets/`, shipped whole. Relative references
 /// within the site resolve natively; navigations that leave it are cancelled and dispatched
-/// per [`LinkPolicy`] — the system browser unless [`WebView::on_external_link`] says otherwise.
+/// per [`LinkPolicy`], the system browser unless [`WebView::on_external_link`] says otherwise.
 ///
 /// Takes a prepared [`InlineSite`] (`res::assets::<dir>.prepare_site().await?`, the checked
-/// route) or the raw `res::assets::<dir>` constant (lazy — a missing page surfaces in the view).
+/// route) or the raw `res::assets::<dir>` constant (lazy; a missing page surfaces in the view).
 /// Gate on [`inline_support`].
 pub fn web_view_inline(site: impl IntoInlineSite) -> WebView {
     let mut v = web_view(Signal::new(String::new()));
@@ -750,7 +752,7 @@ impl Piece for WebView {
                 String::new()
             },
         };
-        // A web view has no intrinsic size — it fills whatever space its container offers.
+        // A web view has no intrinsic size; it fills whatever space its container offers.
         let node = cx.leaf(
             KIND,
             &initial,
@@ -794,14 +796,14 @@ impl Piece for WebView {
         // Two kinds of report share this node's `Event::Custom` channel, told apart by `num`:
         // 0 is navigation (the URL, so a bound text field follows along), anything else is an
         // evaluation reply keyed by its request id. In-process backends also tag them, but a
-        // cross-boundary Custom (JNI, C-ABI) carries only `num`/`text` — so `num` is the
+        // cross-boundary Custom (JNI, C-ABI) carries only `num`/`text`, so `num` is the
         // discriminator that works everywhere (§8.2's opened event channel).
         cx.on(node, move |ev| {
             if let Event::Custom { num, text, .. } = ev {
                 if *num >= 1.0 {
                     resolve(*num as u64, text);
                 } else if *num == LINK_REPORT {
-                    // An inline site's navigation left the site: the arm already CANCELLED it
+                    // An inline site's navigation left the site: the arm already canceled it
                     // (§8.3 events are enqueue-only, so the native side can't ask), and the
                     // policy runs here. `InView` re-issues the load as a command.
                     let policy = on_link
@@ -827,7 +829,7 @@ impl Piece for WebView {
 }
 
 // ---------------------------------------------------------------------------
-// Per-toolkit native renderers — one file per backend (this crate is a reference implementation,
+// Per-toolkit native renderers, one file per backend (this crate is a reference implementation,
 // so each toolkit is split out for clarity). Each module registers a `Renderer` link-time into its
 // backend's `RENDERERS` slice; `#[cfg]` gates each to its feature + target, and `#[path]` keeps the
 // files grouped next to lib.rs.
@@ -835,15 +837,16 @@ impl Piece for WebView {
 
 day_pieces::glue_modules!(appkit, qt, uikit, mdc, xaml, arkui, dom);
 
-// GTK web view is Linux only — WebKitGTK 6 (webkit6) isn't viable on macOS and has no MSYS2 package
-// on Windows, so both fall back to Day's placeholder leaf (see Cargo.toml's webkit6 target gate).
+// GTK web view is Linux only: WebKitGTK 6 (webkit6) isn't viable on macOS and has no MSYS2
+// package on Windows, so both fall back to Day's placeholder leaf (see Cargo.toml's webkit6 target
+// gate).
 #[cfg(all(feature = "gtk", not(target_os = "macos"), not(windows)))]
 #[path = "lib-gtk.rs"]
 mod gtk_impl;
 
 // --- Typed builders, forwarded through `Decorated` (docs/api-style.md) ---
 
-/// [`WebView`]'s own builders, reachable THROUGH a decoration (§5.2): `day_pieces::Decorated` forwards them
+/// [`WebView`]'s own builders, reachable through a decoration (§5.2): `day_pieces::Decorated` forwards them
 /// to the piece it wraps, so generic modifiers and typed ones chain in any order.
 pub trait WebViewBuilder: Sized {
     fn go(self, trigger: Trigger) -> Self;
@@ -947,7 +950,7 @@ mod tests {
         );
     }
 
-    /// Only the FIRST separator splits the name off, so a message carrying more stays intact.
+    /// Only the first separator splits the name off, so a message carrying more stays intact.
     #[test]
     fn a_message_may_contain_the_separator() {
         assert_eq!(
@@ -959,8 +962,8 @@ mod tests {
         );
     }
 
-    /// JSON text can never hold a RAW separator — `JSON.stringify` escapes control characters as
-    /// six ASCII chars — so splitting on it cannot corrupt a value. This pins that.
+    /// JSON text can never hold a raw separator (`JSON.stringify` escapes control characters as
+    /// six ASCII chars), so splitting on it cannot corrupt a value. This pins that.
     #[test]
     fn an_escaped_separator_inside_json_survives() {
         let json = r#""a\u001fb""#;
@@ -987,7 +990,7 @@ mod tests {
     }
 
     /// The script rides inside a string literal, so nothing in it can reach the wrapper's own
-    /// tokens — a trailing line comment, an unbalanced brace, a quote, a newline.
+    /// tokens: a trailing line comment, an unbalanced brace, a quote, a newline.
     #[test]
     fn the_wrapper_is_lexically_sealed() {
         for hostile in [

@@ -3,7 +3,7 @@
 
 // ---------------------------------------------------------------------------
 // Qt: this crate's shim (src/lib-qt-shim.cpp) wrapping QWebEngineView behind a flat C ABI.
-// build.rs compiles it AND links Qt6WebEngineWidgets (which day-qt-sys does not). The shim reports
+// build.rs compiles it and links Qt6WebEngineWidgets (which day-qt-sys does not). The shim reports
 // url changes through a C callback → `Event::custom("webview:url", …)`.
 // ---------------------------------------------------------------------------
 
@@ -33,7 +33,7 @@ unsafe extern "C" {
 }
 
 /// One evaluation reply, keyed by request id. The shim always calls this exactly once per request
-/// — including from the no-engine fallback — so a pending future can never be stranded.
+/// (including from the no-engine fallback), so a pending future can never be stranded.
 extern "C" fn on_eval(id: u64, req: u64, payload: *const c_char) {
     let text = if payload.is_null() {
         String::new()
@@ -91,7 +91,7 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
     static EVAL_CB: std::sync::Once = std::sync::Once::new();
     EVAL_CB.call_once(|| unsafe { day_webview_set_eval_cb(on_eval) });
     // Inline mode (docs/webview.md): the asset tree is compiled into the qrc blob
-    // (`:/day/assets/<path>`, resources/qt.rs), and QWebEngine reads the qrc scheme natively —
+    // (`:/day/assets/<path>`, resources/qt.rs), and QWebEngine reads the qrc scheme natively,
     // so the load is one URL and the engine resolves the site's relative references itself.
     // The shim polices navigation by (scheme, path-prefix), not by raw string: Chromium
     // normalizes qrc URL spellings, and a string compare would cancel the site's own first

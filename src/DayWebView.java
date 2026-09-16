@@ -38,7 +38,7 @@ public final class DayWebView {
      * API 30 flipped {@link android.webkit.WebSettings#setAllowFileAccess} to {@code false},
      * refusing even the app's OWN {@code loadUrl("file://...")} with net::ERR_ACCESS_DENIED —
      * which broke every day app that renders a locally written document (a feed reader's
-     * article file). Re-enable it ONLY when the app itself asks for a {@code file://} URL, so
+     * article file). Re-enable it only when the app itself asks for a {@code file://} URL, so
      * a WebView that never leaves http(s) keeps the modern lockdown. The dangerous switches
      * stay at their defaults regardless: scripts inside a file page still cannot read other
      * {@code file://} content (setAllowFileAccessFromFileURLs) or reach other origins from the

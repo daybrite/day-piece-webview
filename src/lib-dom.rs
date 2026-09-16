@@ -57,7 +57,7 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
         // Inline mode (docs/webview.md): the bundled site deploys under `assets/data/` beside
         // the host page (web.rs), so a RELATIVE src is same-origin and the browser resolves
         // the site's internal references natively. The crate's browser bridge arms its
-        // same-origin click hook BEFORE the first load: links leaving the site are cancelled
+        // same-origin click hook before the first load: links leaving the site are cancelled
         // in-frame and reported (num -1), and the front-end runs the app's LinkPolicy.
         let base = format!("assets/data/{}/", p.inline_root);
         super::browser::attach(h.0 as i32, &base);

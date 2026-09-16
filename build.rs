@@ -3,7 +3,7 @@
 
 //! Compiles this piece's OWN native shims per feature — a standalone Day Piece carrying native C++
 //! without touching Day's toolkit crates (like day-piece-picker). Qt uses `cc` + pkg-config, and
-//! (unlike the picker) links Qt6WebEngineWidgets, which day-qt-sys does NOT link. XAML uses `cc`
+//! (unlike the picker) links Qt6WebEngineWidgets, which day-qt-sys does not link. XAML uses `cc`
 //! (MSVC) + the Windows SDK cppwinrt projection, mirroring day-xaml-sys.
 
 fn main() {
@@ -52,7 +52,7 @@ fn build_qt() {
     build.flag_if_supported("-Wno-unused-parameter");
     build.compile("daywebviewqtshim");
 
-    // day-qt-sys already links Qt6Core/Qt6Widgets, but NOT the WebEngine modules — emit those.
+    // day-qt-sys already links Qt6Core/Qt6Widgets, but not the WebEngine modules — emit those.
     // Duplicates with day-qt-sys's flags are harmless (the linker dedups). The label fallback needs
     // nothing beyond Qt6Widgets (already linked), so emit no extra libs there.
     if has_webengine {
@@ -73,7 +73,7 @@ fn build_xaml() {
     // blank and crashes on navigation. The supported engine is WebView2, hosted WINDOWLESS: the page
     // renders into a composition visual spliced into the XAML tree, because a child window over the
     // island receives no pointer input (see the header of src/lib-xaml-shim.cpp). WebView2.h + the
-    // loader ship in the Microsoft.Web.WebView2 NuGet package (NOT the base SDK); we statically link
+    // loader ship in the Microsoft.Web.WebView2 NuGet package (Not the base SDK); we statically link
     // WebView2LoaderStatic.lib so there is no DLL to bundle (the WebView2 Runtime itself is a
     // system-wide install, present on Win11 and the CI runners).
     let webview2 = webview2_sdk_root();

@@ -44,7 +44,7 @@ class DayWebViewParams {
 
 // The component. `onPageEnd` fires for every committed navigation — including in-page link taps —
 // which is what keeps the URL bar honest. `onLoadIntercept` sees each main-document request
-// BEFORE it loads, which is where an inline site's link policy runs (subresources go through a
+// Before it loads, which is where an inline site's link policy runs (subresources go through a
 // different callback and are never policed).
 @Builder
 function dayWebViewBuilder(params: DayWebViewParams) {

@@ -138,7 +138,7 @@ fn load_url(web: &WKWebView, url: &str) {
 
 fn make(backend: &mut AppKit, p: &WebProps, id: NodeId) -> Retained<NSView> {
     // A session already holding a view: re-attach it rather than build a new one. Only the node
-    // changes — point the delegate at the node now showing it, and do NOT reload, since the whole
+    // changes — point the delegate at the node now showing it, and do not reload, since the whole
     // purpose is to come back to the page as it was left.
     if p.session != 0
         && let Some(view) = SESSIONS.with(|m| m.borrow().get(&p.session).cloned())
