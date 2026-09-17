@@ -4,10 +4,11 @@
 // The web-view piece's own Qt shim behind a flat C ABI. When Qt6WebEngineWidgets is available
 // (build.rs probes pkg-config and defines DAY_WEBVIEW_QT_ENGINE) this wraps a real QWebEngineView
 // and forwards `urlChanged` to a C callback so a bound text field follows navigation. When it is
-// Not — e.g. MSYS2/MINGW64, which does not package Qt6 WebEngine (Chromium won't build with MinGW
-// GCC) — it degrades to a QLabel showing the URL, so windows-qt still builds/launches/screenshots
-// (mirrors day-piece-webview's xaml EdgeHTML degrade). The C ABI is identical either way, so
-// lib-qt.rs is unchanged. The callback's `const char*` is only valid for the call (Rust copies it).
+// not (e.g. MSYS2/MINGW64, which does not package Qt6 WebEngine because Chromium won't build with
+// MinGW GCC), it degrades to a QLabel showing the URL, so windows-qt still builds, launches and
+// screenshots (mirrors day-piece-webview's xaml EdgeHTML degrade). The C ABI is identical either
+// way, so lib-qt.rs is unchanged. The callback's `const char*` is only valid for the call (Rust
+// copies it).
 
 #include <QUrl>
 #include <QVBoxLayout>
@@ -18,7 +19,7 @@
 #include <string>
 
 // A JavaScript-evaluation reply, in the 0x1F-separated form the Rust front-end decodes
-// (docs/webview-eval.md). Only used for ENGINE failures — a script that merely throws is caught by
+// (docs/webview-eval.md). Only used for engine failures; a script that merely throws is caught by
 // the front-end's JS wrapper and arrives as an ordinary result string.
 static std::string day_webview_eval_error(const char *msg) {
     std::string s = "0";
@@ -29,8 +30,8 @@ static std::string day_webview_eval_error(const char *msg) {
     return s;
 }
 
-// Set once from Rust. Qt has NO error channel on runJavaScript — a throw, a syntax error and a
-// genuine null all arrive as the same invalid QVariant — which is why the front-end wraps every
+// Set once from Rust. Qt has no error channel on runJavaScript (a throw, a syntax error and a
+// null result all arrive as the same invalid QVariant), which is why the front-end wraps every
 // script in try/catch before it gets here.
 static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 
@@ -47,8 +48,8 @@ static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 static std::map<uint64_t, QWebEngineView *> g_sessions;
 
 // Inline mode's link policy (docs/webview.md): a page that polices main-frame navigations
-// against the bundled site's (scheme, path-prefix). Anything leaving the site is CANCELLED and
-// reported through `link_cb` — the Rust side runs the app's LinkPolicy (events are enqueue-only,
+// against the bundled site's (scheme, path-prefix). Anything leaving the site is canceled and
+// reported through `link_cb`; the Rust side runs the app's LinkPolicy (events are enqueue-only,
 // so the decision cannot come back through this override). Remote views keep the default page.
 class DayWebPage : public QWebEnginePage {
 public:
@@ -82,7 +83,7 @@ public:
     uint64_t id = 0;
     uint64_t session = 0;
     ~DayWebView() override {
-        // Runs before ~QWidget deletes children — the only window in which the engine view can be
+        // Runs before ~QWidget deletes children, the only window in which the engine view can be
         // rescued from the container's destruction.
         if (session != 0 && view)
             view->setParent(nullptr);
@@ -117,12 +118,12 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
 
     auto known = session != 0 ? g_sessions.find(session) : g_sessions.end();
     if (known != g_sessions.end()) {
-        // Re-attach the retained engine: addWidget re-parents it. Deliberately NO load() — the
-        // point is to return to the page as it was left. An inline page's link reports must
-        // follow the node now showing it, like the url reports below.
+        // Re-attach the retained engine: addWidget re-parents it. No load() here, so the page
+        // comes back as it was left. An inline page's link reports must follow the node now
+        // showing it, like the url reports below.
         QWebEngineView *v = known->second;
         // dynamic_cast, not qobject_cast: the shim compiles without moc, so DayWebPage carries
-        // no Q_OBJECT metadata — plain RTTI is what identifies an inline page here.
+        // no Q_OBJECT metadata; plain RTTI is what identifies an inline page here.
         if (DayWebPage *p = dynamic_cast<DayWebPage *>(v->page()))
             p->id = id;
         day_webview_connect_url(v, id, cb);
@@ -164,8 +165,8 @@ void day_webview_eval(void *w, uint64_t req, const char *script) {
     // The main world (the default), matching WKWebView's `evaluateJavaScript`, so a script sees the
     // page's own globals on every backend alike.
     //
-    // Capture PODs ONLY. Qt guarantees this callback runs even while the page is being destroyed,
-    // and touching the page or view from there is undefined behavior — the guarantee is what keeps
+    // Capture PODs only. Qt guarantees this callback runs even while the page is being destroyed,
+    // and touching the page or view from there is undefined behavior; the guarantee is what keeps
     // the Rust future from leaking, and the constraint is the price of it.
     self->view->page()->runJavaScript(QString::fromUtf8(script), [id, req](const QVariant &v) {
         if (!g_eval_cb)
@@ -202,7 +203,7 @@ void day_webview_reload(void *w) {
 
 } // extern "C"
 
-#else // no Qt6WebEngineWidgets — degrade to a URL label (QtWidgets only, already linked by day-qt-sys)
+#else // no Qt6WebEngineWidgets: degrade to a URL label (QtWidgets only, already linked by day-qt-sys)
 
 #include <QLabel>
 
@@ -223,7 +224,7 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
                       void (*link_cb)(uint64_t, const char *)) {
     (void)cb;                 // no navigation to report without a real engine
     (void)session;            // nothing to retain either
-    (void)inline_path_prefix; // and no engine to police — the label shows the qrc URL
+    (void)inline_path_prefix; // and no engine to police; the label shows the qrc URL
     (void)link_cb;
     DayWebView *w = new DayWebView();
     w->id = id;

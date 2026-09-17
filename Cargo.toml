@@ -11,13 +11,13 @@ license = "MPL-2.0"
 publish = false
 build = "build.rs"
 
-# An EXTERNAL Day Piece (https://daybrite.dev/docs/extending) wrapping each toolkit's NATIVE web
+# An external Day Piece (https://daybrite.dev/docs/extending) wrapping each toolkit's native web
 # view: WKWebView on AppKit/UIKit, QWebEngineView on Qt, android.webkit.WebView on Android, WebKitGTK
 # on GTK, WebView2 on XAML, ArkWeb on HarmonyOS, and an <iframe> on the web. It carries both its
 # cross-platform front-end (Rust) and its per-toolkit backend (objc2 / C++ shims / Android Java /
 # ArkTS / gtk-rs) without touching any day crate. See docs/webview.md.
 #
-# Every day dependency names the BARE canonical URL — no branch, tag, or rev. Cargo unifies a git
+# Every day dependency names the bare canonical URL: no branch, tag, or rev. Cargo unifies a git
 # dependency only when URL and ref match, so an app on `git = "…/day.git"` and a piece pinned to
 # a tag would carry two copies of every day crate; leaving the ref off lets the app's Cargo.lock
 # choose one revision for the whole graph. No lock is committed here (see .gitignore), and
@@ -37,9 +37,10 @@ uikit = ["dep:day-uikit", "dep:objc2", "dep:objc2-ui-kit", "dep:objc2-foundation
 mdc = ["dep:day-android"]        # + [package.metadata.day.android]
 xaml = ["dep:day-xaml", "dep:day-xaml-sys"]     # + build.rs compiles src/lib-xaml-shim.cpp
 # The ArkUI C node API has no Web node, so this backend is the crate's ArkTS half
-# (platform/harmony/ets/Index.ets) staged by `day build` — no extra Rust dependency beyond the toolkit.
+# (platform/harmony/ets/Index.ets) staged by `day build`, and it needs no Rust dependency beyond
+# the toolkit.
 arkui = ["dep:day-arkui"]        # + [package.metadata.day.ohos]
-# Web: an <iframe>. Registered at RUNTIME rather than link-time — wasm has no `linkme` distributed
+# Web: an <iframe>. Registered at runtime rather than link-time: wasm has no `linkme` distributed
 # slice (see lib-dom.rs), so the piece registers itself from its constructor. The same-origin policy
 # makes history and URL readback unreachable, so this arm is Emulated, not Native (docs/webview.md).
 dom = ["dep:day-dom"]
@@ -49,8 +50,8 @@ dom = ["dep:day-dom"]
 compat = "0.4"
 
 # Backends this piece carries a native-renderer [features] entry for. `day` unions `<pkg>/<backend>`
-# into an app build (Tier A.2), so an app depends on this piece with a plain `{ git = "…" }` line —
-# no per-backend feature fan-out in its own Cargo.toml.
+# into an app build (Tier A.2), so an app depends on this piece with a plain `{ git = "…" }` line,
+# with no per-backend feature fan-out in its own Cargo.toml.
 [package.metadata.day.piece]
 backends = ["appkit", "gtk", "qt", "uikit", "mdc", "xaml", "arkui", "dom"]
 
@@ -84,7 +85,7 @@ objc2-web-kit = { version = "0.3", optional = true, features = ["WKWebView", "WK
 # WebKitGTK 6 ships as a fast package only on Linux (libwebkitgtk-6.0-dev): MSYS2/MINGW64 has no
 # WebKitGTK at all and it isn't viable on macOS-quartz. Scope `webkit6` to non-macOS + non-Windows so
 # the `gtk` feature's `dep:webkit6` is a no-op on those (the GTK web view then falls back to day's
-# placeholder leaf — lib.rs gates lib-gtk.rs to match).
+# placeholder leaf; lib.rs gates lib-gtk.rs to match).
 [target.'cfg(all(not(target_os = "macos"), not(target_os = "windows")))'.dependencies]
 webkit6 = { version = "0.6", optional = true }
 
@@ -97,7 +98,7 @@ cc = "1"
 day-mock = { git = "https://github.com/daybrite/day.git" }
 
 # Standalone-piece Android contribution (https://daybrite.dev/docs/extending). The day CLI reads
-# this from `cargo metadata` and folds it into the app's Gradle build — the piece carries its own
+# this from `cargo metadata` and folds it into the app's Gradle build: the piece carries its
 # backend Java and declares the Android permissions it needs, without touching day-android or the
 # scaffold.
 [package.metadata.day.android]
@@ -108,22 +109,22 @@ java = ["src/DayWebView.java"]
 gradle-dependencies = []
 # Extra Maven repositories (URLs) for dependencies not on google()/mavenCentral().
 gradle-repositories = []
-# Android manifest <uses-permission>s the piece needs — merged into the app manifest by `day build`
+# Android manifest <uses-permission>s the piece needs, merged into the app manifest by `day build`
 # (the enhancement this piece motivates: a standalone piece can now contribute a permission).
 permissions = ["android.permission.INTERNET"]
 
 # --- HarmonyOS backend contribution (https://daybrite.dev/docs/extending) ---
 # The ArkTS half of this piece: `day build -p harmony-arkui` stages these into the app's hvigor
 # project and generates the aggregator that registers `dayPiece` with the native shim. Each dir
-# needs an `Index.ets` exporting a `DayPieceModule`. This is the seam this piece motivates — the
-# HarmonyOS counterpart of the android `java` contribution above.
+# needs an `Index.ets` exporting a `DayPieceModule`. This `ets` key is the extension point this
+# piece motivates, the HarmonyOS counterpart of the android `java` contribution above.
 [package.metadata.day.ohos]
 ets = ["platform/harmony/ets"]
 
 # --- iOS backend contribution (https://daybrite.dev/docs/extending) ---
-# The iOS WKWebView is hand-rolled in Rust (objc2), so there's no Swift shim — but WKWebView's ObjC
+# The iOS WKWebView is hand-rolled in Rust (objc2), so there's no Swift shim, but WKWebView's ObjC
 # class lives in WebKit.framework, which the app must link. Declaring it here (the `frameworks` key)
-# links it via the generated DayPieces SwiftPM package — replacing the earlier runtime `dlopen`.
+# links it via the generated DayPieces SwiftPM package, replacing the earlier runtime `dlopen`.
 [package.metadata.day.ios]
 frameworks = ["WebKit"]
 

@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // ---------------------------------------------------------------------------
-// UIKit: WKWebView (WebKit) — the same control as AppKit, but a UIView subclass on iOS. objc2-web-kit
-// 0.3 only generates the macOS (NSView) WKWebView binding, so here we hand-roll the iOS class via
-// `extern_class!` + `msg_send!`. A navigation delegate reports the committed URL back through
-// `Event::custom("webview:url", …)`; retained in a thread_local (WKWebView keeps the delegate weakly).
+// UIKit: WKWebView (WebKit), the same control as AppKit, but a UIView subclass on iOS.
+// objc2-web-kit 0.3 only generates the macOS (NSView) WKWebView binding, so here we hand-roll the
+// iOS class via `extern_class!` + `msg_send!`. A navigation delegate reports the committed URL back
+// through `Event::custom("webview:url", …)`; retained in a thread_local (WKWebView keeps the
+// delegate weakly).
 // ---------------------------------------------------------------------------
 
 use super::*;
@@ -22,10 +23,11 @@ use objc2_foundation::{NSError, NSString, NSURL, NSURLRequest};
 use objc2_ui_kit::{UIResponder, UIView};
 
 // WKWebView lives in WebKit.framework. objc2-web-kit force-links it on macOS but only binds the
-// AppKit variant, so on iOS we hand-roll the class below. WebKit must be LINKED or
-// `objc_getClass("WKWebView")` returns nil and `alloc` aborts (SIGABRT) — declared via this crate's
-// `[package.metadata.day.ios].frameworks = ["WebKit"]`, which the generated DayPieces SwiftPM package
-// links into the app (no runtime `dlopen`, no xcodeproj edit — the framework-contribution seam).
+// AppKit variant, so on iOS we hand-roll the class below. WebKit must be linked or
+// `objc_getClass("WKWebView")` returns nil and `alloc` aborts (SIGABRT); it is declared via this
+// crate's `[package.metadata.day.ios].frameworks = ["WebKit"]`, which the generated DayPieces
+// SwiftPM package links into the app, so neither a runtime `dlopen` nor an xcodeproj edit is
+// needed.
 
 // The iOS WKWebView (a UIView subclass). We only need a handful of methods, called via msg_send!.
 extern_class!(
@@ -58,8 +60,9 @@ define_class!(
     unsafe impl NSObjectProtocol for WebNav {}
 
     impl WebNav {
-        // WKNavigationDelegate's webView:didFinishNavigation: — WKWebView calls it on the object we
-        // set as its navigationDelegate; responding to the selector is all that's required.
+        // WKNavigationDelegate's webView:didFinishNavigation:, which WKWebView calls on the
+        // object we set as its navigationDelegate; responding to the selector is all that's
+        // required.
         #[unsafe(method(webView:didFinishNavigation:))]
         fn did_finish(&self, web_view: &WKWebView, _navigation: *mut AnyObject) {
             if let Some(url) = current_url(web_view) {
@@ -67,8 +70,8 @@ define_class!(
             }
         }
 
-        // Inline mode's link policy — same contract as the AppKit arm's `decide_policy`: a
-        // main-frame navigation leaving the bundled site is CANCELLED and reported; the piece
+        // Inline mode's link policy, the same contract as the AppKit arm's `decide_policy`: a
+        // main-frame navigation leaving the bundled site is canceled and reported; the piece
         // runs the app's `LinkPolicy` (events are enqueue-only, the decision can't come back
         // through this callback). Raw msg_send shapes, like the rest of this hand-rolled arm.
         #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
@@ -126,7 +129,7 @@ day_core::tls_group! {
     static DELEGATES: RefCell<HashMap<usize, Retained<WebNav>>> = RefCell::new(HashMap::new());
     // Session id -> the retained web view. Day drops its own reference when the page is navigated
     // away from, which on UIKit only detaches (`removeFromSuperview`); this reference is what keeps
-    // the engine — and so the loaded page and its JavaScript context — alive until the app returns.
+    // the engine (and so the loaded page and its JavaScript context) alive until the app returns.
     static SESSIONS: RefCell<HashMap<u64, Retained<UIView>>> = RefCell::new(HashMap::new());
 
 }
@@ -148,7 +151,7 @@ fn load_url(web: &WKWebView, url: &str) {
 
 fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
     // A session already holding a view: re-attach it rather than build a new one. Only the node
-    // changes — point the delegate at the node now showing it, and do not reload, since the whole
+    // changes: point the delegate at the node now showing it, and do not reload, since the whole
     // purpose is to come back to the page as it was left.
     if p.session != 0
         && let Some(view) = SESSIONS.with(|m| m.borrow().get(&p.session).cloned())
@@ -168,7 +171,7 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
     let _: () = unsafe { msg_send![&web, setNavigationDelegate: &*nav] };
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the assets tree is loose files in the app bundle, so
-        // `loadFileURL:allowingReadAccessToURL:` with the site ROOT is the whole load path —
+        // `loadFileURL:allowingReadAccessToURL:` with the site root is the whole load path;
         // WebKit resolves the page's relative references natively.
         if let Some(dir) = day_spec::resolve_asset_dir(&p.inline_root) {
             let root = NSURL::fileURLWithPath(&NSString::from_str(&dir.display().to_string()));
@@ -270,12 +273,12 @@ fn update(_backend: &mut Uikit, h: &Retained<UIView>, patch: &WebPatch) {
 
 /// Drop the retained navigation delegate when the view goes away.
 ///
-/// Without this the map grows by one entry per realized web view, and — worse — its key is the
-/// view's ADDRESS, which the allocator reuses: a later view landing on a freed address would
+/// Without this the map grows by one entry per realized web view, and, worse, its key is the
+/// view's address, which the allocator reuses: a later view landing on a freed address would
 /// inherit the dead node's id and misroute its events.
 fn release(_backend: &mut Uikit, h: &Retained<UIView>) {
     let key = (&**h as *const UIView) as usize;
-    // A session-retained view is not going away — day is only detaching it from the page being
+    // A session-retained view is not going away; day is only detaching it from the page being
     // torn down, and the next visit re-attaches it. Its delegate has to outlive this node too, or
     // the returning view would report navigations to nobody.
     let retained = SESSIONS.with(|m| {

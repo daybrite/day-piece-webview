@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 // AppKit: WKWebView (WebKit). A custom navigation delegate reports the committed URL back via
 // `Event::custom("webview:url", …)` so a bound text field follows navigation. WKWebView keeps its
-// navigationDelegate WEAKLY, so we retain each delegate in a thread_local for the view's lifetime.
+// navigationDelegate weakly, so we retain each delegate in a thread_local for the view's lifetime.
 // ---------------------------------------------------------------------------
 
 use super::*;
@@ -43,7 +43,7 @@ define_class!(
     unsafe impl NSObjectProtocol for WebNav {}
 
     unsafe impl WKNavigationDelegate for WebNav {
-        // Fired when a navigation completes — report the new URL back to the piece.
+        // Fired when a navigation completes: reports the new URL back to the piece.
         #[unsafe(method(webView:didFinishNavigation:))]
         fn did_finish(&self, web_view: &WKWebView, _navigation: Option<&WKNavigation>) {
             if let Some(url) = current_url(web_view) {
@@ -51,10 +51,10 @@ define_class!(
             }
         }
 
-        // Inline mode's link policy (docs/webview.md): a MAIN-frame navigation leaving the
+        // Inline mode's link policy (docs/webview.md): a main-frame navigation leaving the
         // bundled site is cancelled here and reported to the piece, which runs the app's
         // `LinkPolicy` (events are enqueue-only, so the decision cannot come back through this
-        // callback — cancel-then-dispatch is the contract). Remote mode allows everything.
+        // callback; cancel-then-dispatch is the contract). Remote mode allows everything.
         #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
         fn decide_policy(
             &self,
@@ -109,7 +109,7 @@ day_core::tls_group! {
     static DELEGATES: RefCell<HashMap<usize, Retained<WebNav>>> = RefCell::new(HashMap::new());
     // Session id -> the retained web view. Day releases its own reference when the page is
     // navigated away from, which on AppKit only detaches (`removeFromSuperview`); this reference
-    // is what keeps the engine — and therefore the loaded page — alive until the app returns.
+    // is what keeps the engine (and therefore the loaded page) alive until the app returns.
     static SESSIONS: RefCell<HashMap<u64, Retained<NSView>>> = RefCell::new(HashMap::new());
 
 }
@@ -138,7 +138,7 @@ fn load_url(web: &WKWebView, url: &str) {
 
 fn make(backend: &mut AppKit, p: &WebProps, id: NodeId) -> Retained<NSView> {
     // A session already holding a view: re-attach it rather than build a new one. Only the node
-    // changes — point the delegate at the node now showing it, and do not reload, since the whole
+    // changes: point the delegate at the node now showing it, and do not reload, since the whole
     // purpose is to come back to the page as it was left.
     if p.session != 0
         && let Some(view) = SESSIONS.with(|m| m.borrow().get(&p.session).cloned())
@@ -160,7 +160,7 @@ fn make(backend: &mut AppKit, p: &WebProps, id: NodeId) -> Retained<NSView> {
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the bundled site is loose files (the assets tree in
         // the bundle, or the project's `resource/assets/` under `day launch`), so a file URL
-        // with read access to the site ROOT is the whole load path — WebKit resolves the
+        // with read access to the site root is the whole load path; WebKit resolves the
         // page's relative references against it natively.
         if let Some(dir) = day_spec::resolve_asset_dir(&p.inline_root) {
             let root = NSURL::fileURLWithPath(&NSString::from_str(&dir.display().to_string()));
@@ -194,11 +194,11 @@ fn make(backend: &mut AppKit, p: &WebProps, id: NodeId) -> Retained<NSView> {
 /// Run `script` and report `1␟<json>` / `0␟<name>␟<message>` back on `node`, keyed by `req`.
 ///
 /// The script is already wrapped by the front-end, so it always evaluates to a JS string and the
-/// `id` handed to the completion is an `NSString` — no `NSJSONSerialization` walk, which matters
-/// because WebKit hands back genuinely cyclic dictionaries that would hang it.
+/// `id` handed to the completion is an `NSString`: no `NSJSONSerialization` walk, which matters
+/// because WebKit hands back cyclic dictionaries that would hang it.
 ///
 /// A `nil` result with a `nil` error cannot happen here for the same reason (the wrapper always
-/// returns a string), so anything else is WebKit itself failing — most often a dead content
+/// returns a string), so anything else is WebKit itself failing, most often a dead content
 /// process, which reports as `JavaScriptResultTypeIsUnsupported` with no exception message.
 fn eval(web: &WKWebView, node: NodeId, req: u64, script: &str) {
     let js = NSString::from_str(script);
@@ -252,12 +252,12 @@ fn update(_backend: &mut AppKit, h: &Retained<NSView>, patch: &WebPatch) {
 
 /// Drop the retained navigation delegate when the view goes away.
 ///
-/// Without this the map grows by one entry per realized web view, and — worse — its key is the
-/// view's ADDRESS, which the allocator reuses: a later view landing on a freed address would
+/// Without this the map grows by one entry per realized web view, and, worse, its key is the
+/// view's address, which the allocator reuses: a later view landing on a freed address would
 /// inherit the dead node's id and misroute its events.
 fn release(_backend: &mut AppKit, h: &Retained<NSView>) {
     let key = (&**h as *const NSView) as usize;
-    // A session-retained view is not going away — day is only detaching it from the page being
+    // A session-retained view is not going away; day is only detaching it from the page being
     // torn down, and the next visit re-attaches it. Its delegate has to outlive this node too, or
     // the returning view would report navigations to nobody.
     let retained = SESSIONS.with(|m| {

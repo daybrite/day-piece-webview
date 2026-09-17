@@ -10,7 +10,7 @@
 // documented in docs/webview.md:
 //
 // - **Session history is unreachable.** `contentWindow.history.back()` throws `SecurityError` on a
-//   cross-origin frame, so `Back` and `Forward` are no-ops. Driving the TOP-level history instead
+//   cross-origin frame, so `Back` and `Forward` are no-ops. Driving the top-level history instead
 //   would be worse than doing nothing: day's web router owns that stack (`pushState` on hash
 //   routes), so a "back" press would navigate the app off the page hosting the frame.
 // - **A load cannot be cancelled.** `contentWindow.stop()` is blocked for the same reason.
@@ -25,7 +25,7 @@
 // controls on `day_piece_webview::support()`.
 //
 // A cross-origin frame that refuses embedding (`X-Frame-Options`, CSP `frame-ancestors`) renders
-// blank, and the parent cannot detect it — the load event fires either way. That is the browser's
+// blank, and the parent cannot detect it; the load event fires either way. That is the browser's
 // policy, not day's, and no arm of this piece can report it.
 // ---------------------------------------------------------------------------
 
@@ -45,7 +45,7 @@ day_core::tls_group! {
 }
 
 /// Point the frame at `url` and remember it for `Reload`. Assigning `src` navigates, and assigning
-/// the value it already holds re-navigates — which is what lets one helper serve both commands.
+/// the value it already holds re-navigates, which is what lets one helper serve both commands.
 fn load(backend: &mut Dom, h: &DomHandle, url: &str) {
     backend.set_attr(h, "src", url);
     LAST_SRC.with(|m| m.borrow_mut().insert(*h, url.to_string()));
@@ -55,7 +55,7 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
     let h = backend.element("iframe");
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the bundled site deploys under `assets/data/` beside
-        // the host page (web.rs), so a RELATIVE src is same-origin and the browser resolves
+        // the host page (web.rs), so a relative src is same-origin and the browser resolves
         // the site's internal references natively. The crate's browser bridge arms its
         // same-origin click hook before the first load: links leaving the site are cancelled
         // in-frame and reported (num -1), and the front-end runs the app's LinkPolicy.
@@ -66,8 +66,8 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
         load(backend, &h, &p.url);
     }
     // No `sandbox` attribute: present-but-empty is deny-everything, which breaks scripts, forms and
-    // same-origin reads on essentially every real site. Absent is the permissive default we want.
-    // The inline style fills the frame day's layout assigns — the growing-leaf contract the native
+    // same-origin reads on nearly every site. Absent is the permissive default we want.
+    // The inline style fills the frame day's layout assigns, the growing-leaf contract the native
     // arms honor by sizing their native view to the same rect.
     backend.set_attr(&h, "style", "width:100%;height:100%;border:0");
     h
@@ -93,7 +93,7 @@ fn update(backend: &mut Dom, h: &DomHandle, patch: &WebPatch) {
 }
 
 /// A growing leaf: take whatever the layout proposes, with a modest default when it proposes
-/// nothing — the same posture as the native arms, which report their web view's intrinsic size.
+/// nothing, the same posture as the native arms, which report their web view's intrinsic size.
 fn measure(_backend: &mut Dom, _h: &DomHandle, p: Proposal) -> Size {
     Size::new(p.width.unwrap_or(320.0), p.height.unwrap_or(240.0))
 }
@@ -102,7 +102,7 @@ fn release(_backend: &mut Dom, h: &DomHandle) {
     LAST_SRC.with(|m| m.borrow_mut().remove(h));
 }
 
-// Defines `register()`, which `web_view()` calls — web-dom's registry is populated at runtime,
+// Defines `register()`, which `web_view()` calls: web-dom's registry is populated at runtime,
 // unlike the link-time `renderer!` the native arms use (wasm has no `linkme` slice).
 day_pieces::dom_renderer!(day_dom::register_renderer, Dom,
     kind: KIND, props: WebProps, patch: WebPatch,

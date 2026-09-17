@@ -3,12 +3,12 @@
 
 // ---------------------------------------------------------------------------
 // HarmonyOS: the ArkTS `Web` component. Unlike every other backend here, there is no native widget
-// to construct — the ArkUI C node API has no Web node kind — so this crate ships its OWN ArkTS
+// to construct (the ArkUI C node API has no Web node kind), so this crate ships its ArkTS
 // (platform/harmony/ets/Index.ets) that `day build` stages into the app's hvigor project via
 // `[package.metadata.day.ohos]`, the HarmonyOS counterpart of the android `java` contribution.
 // day-arkui's generic piece bridge builds it and returns its FrameNode as an ordinary handle
 // (docs/extending.md); commands cross as this piece's own (cmd, arg) strings, and each committed
-// navigation comes back through the shim's `pieceEvent` as the Custom event kind (12) — §8.2's
+// navigation comes back through the shim's `pieceEvent` as the Custom event kind (12): §8.2's
 // piece-defined channel, the same one the Android renderer uses.
 // ---------------------------------------------------------------------------
 
@@ -33,7 +33,7 @@ fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
 }
 
 fn update(_backend: &mut ArkUi, h: &AHandle, patch: &WebPatch) {
-    // Evaluation (docs/webview-eval.md): `req` rides in front of the script, 0x1F-separated —
+    // Evaluation (docs/webview-eval.md): `req` rides in front of the script, 0x1F-separated;
     // the ArkTS side runs `runJavaScript`, normalizes the reply, and answers on `pieceEvent`
     // with `req` as the num. Its try/catch guarantees exactly one reply even when the
     // controller is not yet attached (error 17100001).

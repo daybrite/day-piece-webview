@@ -614,8 +614,8 @@ pub fn web_view(url: Signal<String>) -> WebView {
     // the earliest point the piece is known to be in play, always before its node is realized.
     #[cfg(all(feature = "dom", target_arch = "wasm32"))]
     dom_impl::register();
-    // Same earliest-point reasoning for the dayscript `web_eval` registration: a step can only target
-    // a webview some constructor built, so registration here is always in time.
+    // Same earliest-point reasoning for the dayscript `web_eval` registration: a step can only
+    // target a webview some constructor built, so registration here is always in time.
     register_script_eval();
     WebView {
         url,

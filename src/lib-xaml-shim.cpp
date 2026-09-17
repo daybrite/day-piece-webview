@@ -1,24 +1,25 @@
 // Copyright © The Daybrite Project
 // SPDX-License-Identifier: MPL-2.0
 
-// The web-view piece's OWN C++/WinRT shim — parallel to src/lib-qt-shim.cpp.
+// The web-view piece's C++/WinRT shim, parallel to src/lib-qt-shim.cpp.
 //
 // day-xaml hosts UWP system XAML (winrt::Windows::UI::Xaml, base Windows SDK, no WinAppSDK) inside a
 // Win32 window via XAML Islands. The system-XAML web view, Windows.UI.Xaml.Controls.WebView (EdgeHTML),
-// is UNSUPPORTED in that host: it renders blank, never raises NavigationCompleted, and crashes on
-// navigation. The supported engine is WebView2, hosted here in WINDOWLESS / VISUAL-HOSTING mode — the
-// same technique the official XAML WebView2 controls use internally:
+// is unsupported in that host: it renders blank, never raises NavigationCompleted, and crashes on
+// navigation. The supported engine is WebView2, hosted here in windowless / visual-hosting mode,
+// the same technique the official XAML WebView2 controls use internally:
 //
 //   * make() boxes a plain XAML Border (transparent, hit-testable, with a faint URL label) as the day
 //     handle. day lays it out like any leaf.
 //   * A CoreWebView2CompositionController renders the page into a Windows.UI.Composition Visual instead
 //     of its own HWND. We splice that visual into the XAML tree with ElementCompositionPreview::
-//     SetElementChildVisual(Border, visual) — so the web view is a REAL node in the XAML visual tree:
+//     SetElementChildVisual(Border, visual), so the web view is a node in the XAML visual tree:
 //     correct z-order, clipping, DPI and layout, no separate window to track, no airspace.
 //   * Input: a raw child HWND over the XAML island gets no mouse input, because the island's
-//     ContentIsland InputSite owns pointer input for its whole surface. Windowless hosting turns that
-//     around — the InputSite delivers pointer events to the Border (XAML), and we FORWARD them to the
-//     controller's SendMouseInput. So clicks/scroll/drag work, routed through XAML's own input.
+//     ContentIsland InputSite owns pointer input for its whole surface. Windowless hosting turns
+//     that around: the InputSite delivers pointer events to the Border (XAML), and we forward them
+//     to the controller's SendMouseInput. So clicks/scroll/drag work, routed through XAML's own
+//     input.
 //   * The browser's lifetime follows the Border's tree membership (Unloaded → detach visual + Close).
 //   * If the WebView2 Runtime is absent, controller creation fails and the Border's URL label remains
 //     as a graceful, no-crash fallback.
@@ -59,8 +60,8 @@ namespace WUXI = winrt::Windows::UI::Xaml::Input;
 namespace WUXM = winrt::Windows::UI::Xaml::Media;
 namespace wrl = Microsoft::WRL;
 
-// Seams exported by day-xaml-sys (already linked into the app). The host HWND is the composition
-// controller's parentWindow (for DPI / IME / input association) — the page still renders windowless.
+// Exported by day-xaml-sys (already linked into the app). The host HWND is the composition
+// controller's parentWindow (for DPI / IME / input association); the page still renders windowless.
 extern "C" void *day_xaml_box(void *iinspectable_abi);
 extern "C" void *day_xaml_unbox(void *handle);
 extern "C" void *day_xaml_host_hwnd();
@@ -90,7 +91,7 @@ static std::string to_utf8(winrt::hstring const &h) {
 // Per-web-view state. Keyed by the day handle (the boxed Border) so async callbacks and later
 // operations find it, and a callback that outlives teardown is a safe no-op (find returns null).
 struct WebViewCtx {
-    HWND parent{}; // host window — the composition controller's parentWindow
+    HWND parent{}; // host window, the composition controller's parentWindow
     wrl::ComPtr<ICoreWebView2CompositionController> compositionController; // SendMouseInput, visual
     wrl::ComPtr<ICoreWebView2Controller> controller; // Bounds, IsVisible, focus, Close (same object)
     wrl::ComPtr<ICoreWebView2> webview;
@@ -123,7 +124,7 @@ static WebViewCtx *find_ctx(void *handle) {
 // Rust side registers it once rather than per view (the Qt shim's arrangement).
 static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 
-// A reply in the 0x1F-separated form the Rust front-end decodes. Only for ENGINE failures — a
+// A reply in the 0x1F-separated form the Rust front-end decodes. Only for engine failures; a
 // script that merely throws is caught by the JS wrapper and arrives as an ordinary value.
 static std::string eval_engine_error(const char *name, const char *message) {
     std::string s = "0";
@@ -142,9 +143,9 @@ static void eval_reply(uint64_t id, uint64_t req, std::string const &payload) {
         g_eval_cb(id, req, payload.c_str());
 }
 
-/// Decode a JSON string literal into the string it denotes — the fallback path's job.
+/// Decode a JSON string literal into the string it denotes: the fallback path's job.
 ///
-/// `ExecuteScript` hands back the result AS JSON, so the wrapper's string return arrives quoted
+/// `ExecuteScript` hands back the result as JSON, so the wrapper's string return arrives quoted
 /// and escaped, and the front-end wants the string itself. `` is the separator the whole
 /// protocol is built on, so `\u` decoding (surrogate pairs included) is required, not optional.
 /// Returns false when the text is not a JSON string at all, which is an engine-level failure.
@@ -204,7 +205,7 @@ static bool json_string_to_utf8(std::wstring const &json, std::string &out) {
 // Match the render visual + controller Bounds to the Border's current size. BoundsMode is
 // UseRasterizationScale, so Bounds/visual are in DIPs and RasterizationScale carries the DPI. The
 // visual follows the element's position/clipping/transforms automatically (it is a child of the
-// element's own composition visual) — only the size needs syncing, and only on resize.
+// element's own composition visual), so only the size needs syncing, and only on resize.
 static void sync_size(WebViewCtx *c) {
     if (!c->controller || !c->placeholder)
         return;
@@ -236,7 +237,7 @@ static COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS vkeys_of(WUInput::PointerPointPrope
     return static_cast<COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS>(v);
 }
 
-// The pointer position relative to the Border, in DIPs — the WebView2's Bounds coordinate space.
+// The pointer position relative to the Border, in DIPs, the WebView2's Bounds coordinate space.
 static POINT point_of(WebViewCtx *c, WUXI::PointerRoutedEventArgs const &e) {
     auto pos = e.GetCurrentPoint(c->placeholder).Position();
     return POINT{static_cast<LONG>(std::lround(pos.X)), static_cast<LONG>(std::lround(pos.Y))};
@@ -397,7 +398,7 @@ static void create_webview2(void *handle) {
                                 return S_OK;
                             c2->controller->get_CoreWebView2(c2->webview.GetAddressOf());
 
-                            // Logical (DIP) bounds scaled by the window DPI — crisp at any scale.
+                            // Logical (DIP) bounds scaled by the window DPI, crisp at any scale.
                             wrl::ComPtr<ICoreWebView2Controller3> c3;
                             if (SUCCEEDED(c2->controller.As(&c3)) && c3) {
                                 c3->put_BoundsMode(COREWEBVIEW2_BOUNDS_MODE_USE_RASTERIZATION_SCALE);
@@ -418,8 +419,8 @@ static void create_webview2(void *handle) {
                             if (c2->webview && !c2->inline_prefix.empty()) {
                                 // Inline mode: map the exe-relative assets tree under the virtual
                                 // host before the first Navigate, then police top-level
-                                // navigations against the site prefix — leaving ones are
-                                // CANCELLED and reported (the Rust side runs the LinkPolicy;
+                                // navigations against the site prefix; leaving ones are
+                                // canceled and reported (the Rust side runs the LinkPolicy;
                                 // events are enqueue-only, so the verdict can't come back here).
                                 wrl::ComPtr<ICoreWebView2_3> wv3;
                                 if (SUCCEEDED(c2->webview->QueryInterface(IID_PPV_ARGS(&wv3))) &&
@@ -463,7 +464,7 @@ static void create_webview2(void *handle) {
                                         })
                                         .Get(),
                                     &navTok);
-                                // window.open / target=_blank: external by definition — no new
+                                // window.open / target=_blank: external by definition, since no new
                                 // window exists in day's tree, so report and swallow.
                                 EventRegistrationToken winTok{};
                                 c2->webview->add_NewWindowRequested(
@@ -607,10 +608,10 @@ void day_webview_xaml_set_eval_cb(void (*cb)(uint64_t, uint64_t, const char *)) 
 // Evaluate `script` (already wrapped by the Rust front-end) and reply exactly once.
 //
 // Two paths, and the better one is worth the probe: `ExecuteScriptWithResult` on ICoreWebView2_21
-// reports failures at the ENGINE level, so it catches the one case the JS wrapper structurally
-// cannot — a syntax error, where the wrapper and the user's script compile as a single unit and
+// reports failures at the engine level, so it catches the one case the JS wrapper structurally
+// cannot: a syntax error, where the wrapper and the user's script compile as a single unit and
 // the wrapper's own `try` never runs. The interface arrived in SDK 1.0.2277.86 (this crate pins
-// 1.0.3179.45, so the header is always present) but the RUNTIME is not guaranteed, so a failed
+// 1.0.3179.45, so the header is always present) but the runtime is not guaranteed, so a failed
 // query falls back to plain `ExecuteScript` + the wrapper's own error reporting.
 //
 // Handlers run on the creating UI thread, serially and never re-entrantly, so touching
@@ -619,7 +620,7 @@ void day_webview_xaml_set_eval_cb(void (*cb)(uint64_t, uint64_t, const char *)) 
 void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
     auto *c = find_ctx(handle);
     if (!c || !c->webview) {
-        // The WebView2 Runtime is absent, or the view is gone. Still a reply — the Rust future is
+        // The WebView2 Runtime is absent, or the view is gone. Still a reply: the Rust future is
         // resolved only by one arriving.
         eval_reply(c ? c->id : 0, req, eval_engine_error("Error", "no engine"));
         return;
@@ -640,8 +641,8 @@ void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
                     BOOL ok = FALSE;
                     res->get_Succeeded(&ok);
                     if (ok) {
-                        // The wrapper always evaluates to a STRING, so ask for it directly rather
-                        // than re-parsing ResultAsJson — the same shape Qt's QVariant and
+                        // The wrapper always evaluates to a string, so ask for it directly rather
+                        // than re-parsing ResultAsJson, the same shape Qt's QVariant and
                         // WebKit's NSString hand back.
                         LPWSTR str = nullptr;
                         BOOL is_string = FALSE;
@@ -665,7 +666,7 @@ void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
                                    eval_engine_error("Error", "result was not a string"));
                         return S_OK;
                     }
-                    // Engine-level failure — in practice a syntax error, since anything the script
+                    // Engine-level failure, which means a syntax error, since anything the script
                     // threw at run time was caught by the wrapper and returned as a value.
                     // Documented trap: get_Exception returns S_OK even when it yields nothing, so
                     // the out-pointer is what decides, not the HRESULT.
@@ -701,7 +702,7 @@ void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
                 .Get());
         if (SUCCEEDED(hr))
             return;
-        // The call itself was refused — fall through to the older path rather than stranding it.
+        // The call itself was refused; fall through to the older path rather than stranding it.
     }
 
     HRESULT hr = c->webview->ExecuteScript(
@@ -712,8 +713,8 @@ void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
                     eval_reply(id, req, eval_engine_error("Error", "no result (page discarded)"));
                     return S_OK;
                 }
-                // This path returns the result AS JSON, so the wrapper's string arrives quoted
-                // and escaped — including the `` separators the protocol rides on.
+                // This path returns the result as JSON, so the wrapper's string arrives quoted
+                // and escaped, including the `` separators the protocol rides on.
                 std::string inner;
                 if (!json_string_to_utf8(json, inner)) {
                     eval_reply(id, req, eval_engine_error("Error", "result was not a string"));

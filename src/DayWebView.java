@@ -1,11 +1,12 @@
 // Copyright © The Daybrite Project
 // SPDX-License-Identifier: MPL-2.0
 
-// The day-piece-webview crate's Android backend — bundled here and folded into the app's Gradle
-// build via [package.metadata.day.android], with ZERO edits to day-android. It uses only day-android's
-// PUBLIC Java surface: DayBridge.ctx (the Context) and DayBridge.nativeOnEvent (the event trampoline).
-// The piece also declares its INTERNET permission in Cargo.toml, which `day build` merges into the app
-// manifest — so a WebView-using app needs no manual manifest edit. See docs/extending.md.
+// The day-piece-webview crate's Android backend, bundled here and folded into the app's Gradle
+// build via [package.metadata.day.android], with no edits to day-android. It uses only
+// day-android's public Java surface: DayBridge.ctx (the Context) and DayBridge.nativeOnEvent (the
+// event trampoline). The piece also declares its INTERNET permission in Cargo.toml, which
+// `day build` merges into the app manifest, so a WebView-using app needs no manual manifest edit.
+// See docs/extending.md.
 package dev.daybrite.day.piece.webview;
 
 import android.view.View;
@@ -25,7 +26,7 @@ import dev.daybrite.day.bridge.DayBridge;
 public final class DayWebView {
     private DayWebView() {}
 
-    // The day node each live view reports to — evaluation replies need it, and `evalJs` receives
+    // The day node each live view reports to: evaluation replies need it, and `evalJs` receives
     // only the View (weak keys: a released view must not pin itself here).
     private static final Map<View, Long> IDS = new WeakHashMap<>();
 
@@ -36,14 +37,14 @@ public final class DayWebView {
 
     /**
      * API 30 flipped {@link android.webkit.WebSettings#setAllowFileAccess} to {@code false},
-     * refusing even the app's OWN {@code loadUrl("file://...")} with net::ERR_ACCESS_DENIED —
+     * refusing even the app's {@code loadUrl("file://...")} with net::ERR_ACCESS_DENIED,
      * which broke every day app that renders a locally written document (a feed reader's
      * article file). Re-enable it only when the app itself asks for a {@code file://} URL, so
      * a WebView that never leaves http(s) keeps the modern lockdown. The dangerous switches
      * stay at their defaults regardless: scripts inside a file page still cannot read other
      * {@code file://} content (setAllowFileAccessFromFileURLs) or reach other origins from the
      * file scheme (setAllowUniversalAccessFromFileURLs), and web content cannot navigate a
-     * WebView to {@code file://} at all — only the app's {@code loadUrl} can.
+     * WebView to {@code file://} at all; only the app's {@code loadUrl} can.
      */
     private static void allowFileUrl(WebView web, String url) {
         if (url != null && url.startsWith("file://")) {
@@ -71,7 +72,7 @@ public final class DayWebView {
                     return false; // in-site (or remote mode): let the WebView navigate
                 }
                 // Inline mode leaving the site: cancel and report (num -1 = the link report);
-                // the Rust side runs the app's LinkPolicy — system browser by default.
+                // the Rust side runs the app's LinkPolicy, system browser by default.
                 DayBridge.nativeOnEvent(id, 12, -1.0, target);
                 return true;
             }
@@ -87,11 +88,11 @@ public final class DayWebView {
     /**
      * Evaluate the (already-wrapped) script and reply on the kind-12 channel keyed by {@code req}
      * (docs/webview-eval.md). The wrapper makes the result a JS string, which
-     * {@code evaluateJavascript} hands back JSON-SERIALIZED — one outer quoted layer to strip.
+     * {@code evaluateJavascript} hands back JSON-serialized, with one outer quoted layer to strip.
      * Android has no error channel: a throw and {@code undefined} both arrive as the literal
      * {@code "null"}, and a failed JSON write as the empty string; both map to engine errors
      * (the wrapper already catches script-level throws before they get that far). Delivery is
-     * at most once — a destroyed WebView drops the callback — which is why the console's
+     * at most once (a destroyed WebView drops the callback), which is why the console's
      * awaiting future must never be the only owner of critical work.
      */
     public static void evalJs(View view, double req, String script) {

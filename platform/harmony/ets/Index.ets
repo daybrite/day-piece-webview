@@ -1,7 +1,7 @@
 // Copyright © The Daybrite Project
 // SPDX-License-Identifier: MPL-2.0
 
-// day-piece-webview — the HarmonyOS half of the piece (docs/extending.md, docs/webview.md).
+// day-piece-webview: the HarmonyOS half of the piece (docs/extending.md, docs/webview.md).
 //
 // The ArkUI C node API has no Web node kind (native_node.h stops at the container types), so the
 // component is declared here in ArkTS, built into a BuilderNode, and handed to Day as a FrameNode
@@ -10,7 +10,7 @@
 //
 // Commands arrive as the piece's own vocabulary ('load' | 'back' | 'forward' | 'stop' | 'reload')
 // and are applied through the ArkTS WebviewController. Navigation reports the current URL back
-// through `pieceEvent`, which reaches the piece's Rust front-end as an `Event::Custom` — so a
+// through `pieceEvent`, which reaches the piece's Rust front-end as an `Event::Custom`, so a
 // bound text field follows along exactly as it does on the other backends.
 
 import { BuilderNode, FrameNode, UIContext } from '@kit.ArkUI';
@@ -20,7 +20,7 @@ import nativeEntry from 'libentry.so';
 import { DayPieceModule } from '../DayPiece';
 
 // One live web view: its BuilderNode (which owns the component) and the controller commands go
-// through. Held until Day disposes the node — a Web engine instance is expensive and does not go
+// through. Held until Day disposes the node; a Web engine instance is expensive and does not go
 // away with its FrameNode.
 class DayWebViewInstance {
   node: BuilderNode<[DayWebViewParams]>;
@@ -36,19 +36,19 @@ class DayWebViewParams {
   id: number = 0;
   url: string = '';
   // Inline mode (docs/webview.md): the URL prefix of the bundled site under rawfile ('' =
-  // remote mode). A main-document navigation outside it is BLOCKED in onLoadIntercept and
+  // remote mode). A main-document navigation outside it is blocked in onLoadIntercept and
   // reported with num -1; the piece's Rust front-end runs the app's LinkPolicy.
   inlinePrefix: string = '';
   controller: webview.WebviewController = new webview.WebviewController();
 }
 
-// The component. `onPageEnd` fires for every committed navigation — including in-page link taps —
-// which is what keeps the URL bar honest. `onLoadIntercept` sees each main-document request
-// Before it loads, which is where an inline site's link policy runs (subresources go through a
+// The component. `onPageEnd` fires for every committed navigation, including in-page link taps,
+// which is what keeps the URL bar current. `onLoadIntercept` sees each main-document request
+// before it loads, which is where an inline site's link policy runs (subresources go through a
 // different callback and are never policed).
 @Builder
 function dayWebViewBuilder(params: DayWebViewParams) {
-  // NO percentage sizing: a BuilderNode is built detached, so '100%' resolves against the whole
+  // No percentage sizing: a BuilderNode is built detached, so '100%' resolves against the whole
   // window and the Web would cover the page. Day owns layout and sets this node's position + size
   // through the ArkUI C API like every other leaf, which is what the piece's `fill_measure` asks
   // for on every other backend too.
@@ -67,7 +67,7 @@ function dayWebViewBuilder(params: DayWebViewParams) {
         return false; // in-site: let the engine navigate
       }
       // Leaving the site: block and report (num -1 = the link report); the Rust side runs the
-      // app's LinkPolicy — system browser by default.
+      // app's LinkPolicy, system browser by default.
       nativeEntry.pieceEvent(params.id, url, -1);
       return true;
     })
@@ -78,7 +78,7 @@ const instances: Map<number, DayWebViewInstance> = new Map();
 function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
   // Decline where the system has no web engine rather than mount a component that cannot render.
   // A `Web` whose engine fails to load still creates its RosenWeb surface, and that surface wedges
-  // the window's compositor for the rest of the process — every later frame goes stale, which is
+  // the window's compositor for the rest of the process: every later frame goes stale, which is
   // far worse than Day's placeholder leaf. Declining reports the placeholder instead, exactly as
   // the GTK arm does where WebKitGTK is absent.
   if (!canIUse('SystemCapability.Web.Webview.Core')) {
@@ -90,7 +90,7 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
   params.id = id;
   // Inline mode arrives as `day-inline<US><root>[<US><start>]` (0x1F-separated, the piece's own
   // props encoding): the site lives under rawfile `day/<root>/` (resources/arkui.rs staging),
-  // which ArkWeb browses through `resource://rawfile/` URLs — relative references resolve
+  // which ArkWeb browses through `resource://rawfile/` URLs, so relative references resolve
   // within it natively.
   const SEP: string = '\u001F';
   if (props.startsWith('day-inline' + SEP)) {
@@ -119,7 +119,7 @@ function dayEvalError(message: string): string {
   return '0\u001FArkWeb\u001F' + message;
 }
 
-// Normalize a `runJavaScript` reply. The front-end's wrapper makes every result a JS STRING;
+// Normalize a `runJavaScript` reply. The front-end's wrapper makes every result a JS string;
 // whether the engine hands that back raw or JSON-serialized (one outer quoted layer) was left
 // unverified in docs/webview-eval.md, so both spellings are accepted. Empty and literal-null
 // replies are engine failures (the wrapper catches script throws before they get that far).
@@ -146,8 +146,8 @@ function update(id: number, cmd: string, arg: string): void {
   if (live === undefined) {
     return;
   }
-  // Evaluation (docs/webview-eval.md): `<req><script>`. The reply is MANDATORY on every
-  // path — the Rust future resolves only when `pieceEvent` answers with `req` as the num — so
+  // Evaluation (docs/webview-eval.md): `<req><script>`. The reply is mandatory on every
+  // path (the Rust future resolves only when `pieceEvent` answers with `req` as the num), so
   // the pre-attach throw (17100001) and the promise rejection both answer with an engine error
   // rather than staying silent.
   if (cmd === 'eval') {

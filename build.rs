@@ -1,7 +1,7 @@
 // Copyright © The Daybrite Project
 // SPDX-License-Identifier: MPL-2.0
 
-//! Compiles this piece's OWN native shims per feature — a standalone Day Piece carrying native C++
+//! Compiles this piece's native shims per feature: a standalone Day Piece carrying native C++
 //! without touching Day's toolkit crates (like day-piece-picker). Qt uses `cc` + pkg-config, and
 //! (unlike the picker) links Qt6WebEngineWidgets, which day-qt-sys does not link. XAML uses `cc`
 //! (MSVC) + the Windows SDK cppwinrt projection, mirroring day-xaml-sys.
@@ -21,7 +21,7 @@ fn main() {
     }
     // NOTE: the iOS WKWebView (lib-uikit.rs) needs WebKit.framework linked. That's declared in
     // Cargo.toml's `[package.metadata.day.ios].frameworks = ["WebKit"]` and linked by the generated
-    // DayPieces SwiftPM package — not from this build script (a `cargo:rustc-link-lib` never reaches
+    // DayPieces SwiftPM package, not from this build script (a `cargo:rustc-link-lib` never reaches
     // xcodebuild, which performs the app's final link).
 }
 
@@ -29,7 +29,7 @@ fn build_qt() {
     // QWebEngineView lives in Qt6WebEngineWidgets, which not every Qt host ships: MSYS2/MINGW64
     // (windows-qt) has no Qt6 WebEngine at all (Chromium won't build with MinGW GCC). When it's
     // absent the shim degrades to a QtWidgets URL label (see lib-qt-shim.cpp's #else), so build
-    // against Qt6Widgets — which day-qt-sys already links — instead of failing the build.
+    // against Qt6Widgets (which day-qt-sys already links) instead of failing the build.
     let has_webengine = pkg_config_exists("Qt6WebEngineWidgets");
     let cflags_pkg = if has_webengine {
         "Qt6WebEngineWidgets" // --cflags pull in Qt6Core/Gui/Widgets too
@@ -52,7 +52,7 @@ fn build_qt() {
     build.flag_if_supported("-Wno-unused-parameter");
     build.compile("daywebviewqtshim");
 
-    // day-qt-sys already links Qt6Core/Qt6Widgets, but not the WebEngine modules — emit those.
+    // day-qt-sys already links Qt6Core/Qt6Widgets, but not the WebEngine modules, so emit those.
     // Duplicates with day-qt-sys's flags are harmless (the linker dedups). The label fallback needs
     // nothing beyond Qt6Widgets (already linked), so emit no extra libs there.
     if has_webengine {
@@ -69,13 +69,13 @@ fn build_xaml() {
          (Visual Studio 'Desktop development with C++'), or point DAY_CPPWINRT / \
          DAY_WINDOWS_KITS_ROOT at a relocated install (docs/environment.md).",
     );
-    // The system-XAML WebView (EdgeHTML) is unsupported in Day's Win32 XAML-Islands host — it renders
-    // blank and crashes on navigation. The supported engine is WebView2, hosted WINDOWLESS: the page
-    // renders into a composition visual spliced into the XAML tree, because a child window over the
-    // island receives no pointer input (see the header of src/lib-xaml-shim.cpp). WebView2.h + the
-    // loader ship in the Microsoft.Web.WebView2 NuGet package (Not the base SDK); we statically link
-    // WebView2LoaderStatic.lib so there is no DLL to bundle (the WebView2 Runtime itself is a
-    // system-wide install, present on Win11 and the CI runners).
+    // The system-XAML WebView (EdgeHTML) is unsupported in Day's Win32 XAML-Islands host: it
+    // renders blank and crashes on navigation. The supported engine is WebView2, hosted windowless:
+    // the page renders into a composition visual spliced into the XAML tree, because a child window
+    // over the island receives no pointer input (see the header of src/lib-xaml-shim.cpp).
+    // WebView2.h + the loader ship in the Microsoft.Web.WebView2 NuGet package (not the base SDK);
+    // we statically link WebView2LoaderStatic.lib so there is no DLL to bundle (the WebView2
+    // Runtime itself is a system-wide install, present on Win11 and the CI runners).
     let webview2 = webview2_sdk_root();
     let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
         Ok("x86_64") => "x64",
@@ -95,7 +95,7 @@ fn build_xaml() {
         .flag("/bigobj")
         .flag_if_supported("/permissive-");
     build.compile("daywebviewxamlshim");
-    // WindowsApp.lib (WinRT umbrella) + the day_xaml_box/unbox seam are already linked by
+    // WindowsApp.lib (WinRT umbrella) and the day_xaml_box/unbox functions are already linked by
     // day-xaml-sys. Add the statically-linked WebView2 loader (pulls in the runtime at first use).
     println!(
         "cargo:rustc-link-search=native={}",
