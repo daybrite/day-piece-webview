@@ -102,12 +102,14 @@ struct WebViewCtx {
     std::wstring pending_url; // navigated once the controller is ready
     double scale{1.0};        // DIP → physical-pixel factor (host-window DPI / 96), the rasterization scale
     // Inline mode (docs/webview.md): the URL prefix of the bundled site under the virtual host
-    // (empty = remote mode) and the callback a cancelled external navigation reports through.
+    // (empty = remote mode), the local folder that host maps to (empty = the exe-relative
+    // default), and the callback a cancelled external navigation reports through.
     std::wstring inline_prefix;
+    std::wstring inline_dir;
     void (*link_cb)(uint64_t, const char *){};
 };
 
-// The virtual host the exe-relative assets tree is mapped under for inline sites. `.example` is
+// The virtual host the app's asset tree is mapped under for inline sites. `.example` is
 // reserved for exactly this use, the same convention Microsoft's own WebView2 docs model.
 static const wchar_t *kDayAssetsHost = L"day-assets.example";
 
@@ -425,13 +427,22 @@ static void create_webview2(void *handle) {
                                 wrl::ComPtr<ICoreWebView2_3> wv3;
                                 if (SUCCEEDED(c2->webview->QueryInterface(IID_PPV_ARGS(&wv3))) &&
                                     wv3) {
-                                    wchar_t exe[MAX_PATH]{};
-                                    GetModuleFileNameW(nullptr, exe, MAX_PATH);
-                                    std::wstring assets(exe);
-                                    size_t slash = assets.find_last_of(L"\\/");
-                                    if (slash != std::wstring::npos)
-                                        assets.resize(slash);
-                                    assets += L"\\assets";
+                                    // The Rust side resolves the tree (lib-xaml.rs `inline_dir`),
+                                    // since a dev run reads its assets from the project and a
+                                    // packed app from beside the exe. The exe-relative path is
+                                    // the fallback for a caller that passed nothing: mapping a
+                                    // folder that does not exist leaves the host unmapped, and
+                                    // the site's first navigation then fails DNS resolution.
+                                    std::wstring assets = c2->inline_dir;
+                                    if (assets.empty()) {
+                                        wchar_t exe[MAX_PATH]{};
+                                        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+                                        assets = exe;
+                                        size_t slash = assets.find_last_of(L"\\/");
+                                        if (slash != std::wstring::npos)
+                                            assets.resize(slash);
+                                        assets += L"\\assets";
+                                    }
                                     wv3->SetVirtualHostNameToFolderMapping(
                                         kDayAssetsHost, assets.c_str(),
                                         COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
@@ -529,6 +540,7 @@ extern "C" {
 
 void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, const char *),
                            const char *inline_root, const char *inline_start,
+                           const char *inline_dir,
                            void (*link_cb)(uint64_t, const char *)) {
     // The boxed element day lays out: a transparent (hit-testable) Border carrying a faint URL label.
     // The browser's render visual is spliced in as the Border's child visual and covers the label;
@@ -557,6 +569,7 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
     c->cb = cb;
     c->pending_url = first;
     c->inline_prefix = prefix;
+    c->inline_dir = inlined && inline_dir ? std::wstring(hs(inline_dir).c_str()) : std::wstring();
     c->link_cb = link_cb;
     UINT dpi = c->parent ? GetDpiForWindow(c->parent) : 96;
     c->scale = (dpi ? dpi : 96) / 96.0;

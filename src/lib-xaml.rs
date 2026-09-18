@@ -22,6 +22,7 @@ unsafe extern "C" {
         cb: extern "C" fn(u64, *const c_char),
         inline_root: *const c_char,
         inline_start: *const c_char,
+        inline_dir: *const c_char,
         link_cb: extern "C" fn(u64, *const c_char),
     ) -> *mut c_void;
     fn day_webview_xaml_load(handle: *mut c_void, url: *const c_char);
@@ -88,15 +89,53 @@ fn cstr(s: &str) -> CString {
     CString::new(s).unwrap_or_default()
 }
 
+/// The local folder the virtual host maps to: the asset tree that holds the site, so that
+/// `https://day-assets.example/<inline_root>/<page>` resolves to a real file.
+///
+/// Resolved here rather than in the shim, because only `day_spec` knows where the tree is. A
+/// packed app has one `assets` directory beside the exe; a `day launch` run leaves the app's
+/// assets in the project and stages a piece's under `build/`, and points an environment variable
+/// at each ([`day_spec::resolve_asset_dir`] probes both). An empty answer leaves the shim on its
+/// exe-relative default.
+fn inline_dir(p: &WebProps) -> String {
+    if p.inline_root.is_empty() {
+        return String::new();
+    }
+    let Some(site) = day_spec::resolve_asset_dir(&p.inline_root) else {
+        return String::new();
+    };
+    // The URL keeps `<host>/<inline_root>/<page>`, so the mapped folder is the site's directory
+    // with its own path taken back off: one parent per segment of `inline_root`.
+    let mut base = site;
+    for _ in p.inline_root.split('/').filter(|seg| !seg.is_empty()) {
+        let Some(parent) = base.parent().map(|dir| dir.to_path_buf()) else {
+            return String::new();
+        };
+        base = parent;
+    }
+    base.to_string_lossy().into_owned()
+}
+
 fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
     // The eval callback is a single file-static in the shim, shared by every web view (each reply
     // carries its own node id), so register it once rather than per view.
     static EVAL_CB: std::sync::Once = std::sync::Once::new();
     EVAL_CB.call_once(|| unsafe { day_webview_xaml_set_eval_cb(on_eval) });
-    // Inline mode (docs/webview.md): the shim maps the exe-relative assets tree under a virtual
-    // host (Windows ships assets as loose files beside the exe, resources/xaml.rs) and browses
-    // `https://day-assets.example/<root>/<start>`; the engine resolves the site's relative
-    // references itself, and the shim polices top-level navigations against that prefix.
+    // Inline mode (docs/webview.md): the shim maps the asset tree holding the site under a
+    // virtual host and browses `https://day-assets.example/<root>/<start>`; the engine resolves
+    // the site's relative references itself, and the shim polices top-level navigations against
+    // that prefix. The folder comes from `inline_dir` below, because where that tree is depends
+    // on how the app was built and run (Windows keeps assets as loose files, resources/xaml.rs).
+    let dir = inline_dir(p);
+    if !p.inline_root.is_empty() && dir.is_empty() {
+        // Without a folder there is nothing to map the host to, and the site's first navigation
+        // fails DNS resolution in the engine rather than here: say so while it can still be tied
+        // to the cause.
+        log::warn!(
+            "day-piece-webview: inline site {:?} not found in the staged assets",
+            p.inline_root
+        );
+    }
     WinHandle(unsafe {
         day_webview_xaml_new(
             cstr(&p.url).as_ptr(),
@@ -104,6 +143,7 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
             on_url,
             cstr(&p.inline_root).as_ptr(),
             cstr(&p.inline_start).as_ptr(),
+            cstr(&dir).as_ptr(),
             on_link,
         )
     })

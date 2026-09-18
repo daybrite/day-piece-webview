@@ -11,6 +11,11 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   its own directory. WebKit's file-URL read access widens to the asset tree, and the GTK arm
   extracts the whole tree and allows file-URL fetches; the backends whose browsable base is
   already that tree are unchanged, and navigation policing stays on the site.
+- Fixed: on Windows, an inline site showed the engine's "can't reach this page"
+  (`ERR_NAME_NOT_RESOLVED`). The shim mapped the virtual host to an `assets` directory beside the
+  exe, which only a packed app has; a `day launch` run keeps the app's assets in the project and a
+  piece's under `build/`, so the mapping was never established. The folder is resolved in Rust now
+  (`day_spec::resolve_asset_dir`), and a site that resolves to nothing says so in the log.
 - Fixed: a start page with a query or a fragment (`start_page("player.html?src=hello")`) loaded
   nothing on AppKit and UIKit. `fileURLWithPath:` percent-encoded the `?` into the file name, so
   the load asked for a file that does not exist; the tail is now re-attached as a relative
