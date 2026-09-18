@@ -36,9 +36,14 @@ pub(crate) fn extract_site(root: &str) -> Result<std::path::PathBuf, String> {
         .join(app.as_str())
         .join(root);
     // Overwrite-extract once per process: stale caches from an older app build must not linger,
-    // and the cost is one pass over a bundled site's files.
+    // and the cost is one pass over a bundled site's files. An empty root is the whole asset
+    // tree, which is what a site reading the app's own files (`app_assets`) browses.
     let _ = std::fs::remove_dir_all(&dest);
-    extract_tree(&format!("/day/assets/{root}"), &dest)?;
+    let res_dir = match root {
+        "" => "/day/assets".to_string(),
+        root => format!("/day/assets/{root}"),
+    };
+    extract_tree(&res_dir, &dest)?;
     DONE.with(|m| m.borrow_mut().insert(root.to_string(), dest.clone()));
     Ok(dest)
 }
@@ -74,15 +79,30 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             day_gtk::emit(id, Event::custom("webview:url", uri.to_string()));
         }
     });
+    if p.inline_assets
+        && let Some(settings) = wv.settings()
+    {
+        // A site that reads the app's files does so from one `file:` URL to another, which
+        // WebKitGTK refuses by default whatever the page can load as a subresource. What the
+        // grant opens up is the extracted asset tree the view is already showing the site from.
+        settings.set_allow_file_access_from_file_urls(true);
+    }
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): extract-to-cache (above), then a file URL; WebKit
         // resolves the site's relative references natively. The policy handler polices by the
         // canonical file-URL prefix; navigations leaving the site are ignored here and
         // reported, and the Rust front-end runs the app's LinkPolicy (events are enqueue-only,
         // so the verdict cannot come back through this signal).
-        match extract_site(&p.inline_root) {
+        // A site reading the app's own files (`app_assets`) extracts the whole asset tree and
+        // opens its own directory inside it, so the page's relative references reach both.
+        match extract_site(if p.inline_assets { "" } else { &p.inline_root }) {
             Ok(dir) => {
                 let dir = dir.canonicalize().unwrap_or(dir);
+                let dir = if p.inline_assets {
+                    dir.join(&p.inline_root)
+                } else {
+                    dir
+                };
                 let base = format!("file://{}/", dir.display());
                 let start = format!("{base}{}", p.inline_start);
                 let policed = base.clone();

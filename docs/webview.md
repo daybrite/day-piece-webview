@@ -131,6 +131,10 @@ let site = res::assets::web::minisite.prepare_site().await?;   // InlineSite
 web_view_inline(site)
 ```
 
+A page may carry a query or a fragment (`start_page("player.html?src=hello")`), and the site
+reads it back through `location.search` / `location.hash` as it would from a server. That is the
+one channel a site has on every backend, including the two with no JavaScript evaluation arm.
+
 Two rules define the mode. **Relative references resolve natively**: the arm loads the site
 through the platform's local-content channel, so the engine itself resolves `css/style.css`
 or `../index.html`, with no interception layer rewriting anything. **Navigations that leave the site
@@ -144,15 +148,42 @@ command. `prepare_site()` is a future because backends whose engine cannot read 
 in place will extract to the platform cache dir here; on every v1 backend it resolves on first
 poll.
 
+### Reading the app's own files: `app_assets`
+
+A site is confined to its own directory. Ask for more when the page's job is to show the app's
+files rather than its own — a player, a viewer, a renderer — because those files live in the
+app's asset namespace, one or more directories away from the site:
+
+```rust
+web_view_inline(res::assets::player)
+    .app_assets()                     // the page may read all of resource/assets/
+    .start_page("index.html?src=hello")
+```
+
+What that changes is per backend, because the confinement is: WebKit's file-URL read access
+widens from the site's directory to the asset tree, and the GTK arm extracts the whole tree to
+the cache instead of the site alone. The backends whose browsable base is already the asset tree
+(Qt's qrc, Android's `file:///android_asset/`, WebView2's virtual host, the deployed
+`assets/data/` on web-dom) read the same either way. Navigation policing does not widen: the
+page still starts inside the site, and a navigation out of it is still reported.
+
+What `app_assets` covers on every backend is what the engine loads as a subresource: `<img>`,
+`<script>`, `<link>`, a stylesheet's `url()`. Reading a file with `XMLHttpRequest` or `fetch` is
+a separate question, answered by each engine's origin policy: WebKit refuses it for any page
+opened from a `file:` URL, with no public setting to change that, while WebKitGTK has one and
+`app_assets` turns it on. A page that has to parse the app's data is therefore better handed it
+through [JavaScript evaluation](https://github.com/daybrite/day/blob/main/docs/webview-eval.md),
+which is how `day-piece-lottie` gives its player an animation on the backends that evaluate.
+
 Per backend (gate on `inline_support()`):
 
 | Backend | Channel | Policy hook |
 |---|---|---|
-| AppKit / UIKit | `loadFileURL:allowingReadAccessToURL:` into the bundle's assets tree (canonicalized, since WebKit reports standardized URLs, so the policed base must match) | `decidePolicyForNavigationAction` |
+| AppKit / UIKit | `loadFileURL:allowingReadAccessToURL:` with the site's directory, or the whole assets tree under `app_assets` (canonicalized, since WebKit reports standardized URLs, so the policed base must match). A start page's query or fragment is re-attached to the file URL as a relative reference, because `fileURLWithPath:` would encode it into the file name | `decidePolicyForNavigationAction` |
 | Android | `file:///android_asset/<dir>/…` (the assets tree is the APK `assets/` root; the URL family is exempt from the API-30 file-access default) | `shouldOverrideUrlLoading` |
 | Qt | `qrc:/day/assets/<dir>/…`; QWebEngine reads the qrc-staged tree natively; policed by (scheme, path-prefix), since Chromium normalizes qrc spellings | `acceptNavigationRequest` (the shim's `DayWebPage`) |
 | XAML | `SetVirtualHostNameToFolderMapping` maps the exe-relative assets dir under `day-assets.example`; `NewWindowRequested` is swallowed and reported as external | `NavigationStarting` |
-| GTK (linux) | extract-to-cache; WebKitGTK cannot browse a GResource, so `prepare_site()` (or realize, on the lazy path) copies the tree to the user cache once per process and the view loads the canonical `file://` URL | `decide-policy` |
+| GTK (linux) | extract-to-cache; WebKitGTK cannot browse a GResource, so `prepare_site()` (or realize, on the lazy path) copies the tree to the user cache once per process and the view loads the canonical `file://` URL. Under `app_assets` it copies the whole asset tree, opens the site inside it, and allows file-URL fetches (`allow-file-access-from-file-urls`) | `decide-policy` |
 | ArkWeb | `resource://rawfile/day/<dir>/…` over the rawfile staging; the inline marker crosses in the piece's props string and the ArkTS side composes and polices the URL | `onLoadIntercept` |
 | web-dom | the deployed `assets/data/<dir>/…` URL, same origin as the host page, so the browser resolves the site and the crate's capture-phase click hook in `src/browser.rs` polices leaving links | in-frame click hook → `dayHost.dom.emit` |
 

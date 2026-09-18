@@ -149,6 +149,22 @@ fn load_url(web: &WKWebView, url: &str) {
     let _: *mut AnyObject = unsafe { msg_send![web, loadRequest: &*req] };
 }
 
+
+/// A file URL for `page` inside `dir`, where `page` may carry a query or fragment
+/// (`"player.html?src=hello"`). `fileURLWithPath:` would percent-encode the `?` into the file
+/// name, so the path is built first and the tail re-attached as a relative reference against it,
+/// which is the resolution a browser performs for the same string.
+fn page_url(dir: &std::path::Path, page: &str) -> objc2::rc::Retained<NSURL> {
+    let (path, tail) = super::split_page(page);
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&dir.join(path).display().to_string()));
+    if tail.is_empty() {
+        return url;
+    }
+    NSURL::URLWithString_relativeToURL(&NSString::from_str(tail), Some(&url))
+        .and_then(|u| u.absoluteURL())
+        .unwrap_or(url)
+}
+
 fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
     // A session already holding a view: re-attach it rather than build a new one. Only the node
     // changes: point the delegate at the node now showing it, and do not reload, since the whole
@@ -171,18 +187,24 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
     let _: () = unsafe { msg_send![&web, setNavigationDelegate: &*nav] };
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the assets tree is loose files in the app bundle, so
-        // `loadFileURL:allowingReadAccessToURL:` with the site root is the whole load path;
-        // WebKit resolves the page's relative references natively.
+        // `loadFileURL:allowingReadAccessToURL:` is the whole load path; WebKit resolves the
+        // page's relative references natively. Read access covers the site's own directory, or
+        // the app's whole asset tree for a site that asked for it (`app_assets`); the page
+        // starts inside the site either way, and policing stays on the site's URL prefix.
         if let Some(dir) = day_spec::resolve_asset_dir(&p.inline_root) {
-            let root = NSURL::fileURLWithPath(&NSString::from_str(&dir.display().to_string()));
-            let index = NSURL::fileURLWithPath(&NSString::from_str(
-                &dir.join(&p.inline_start).display().to_string(),
-            ));
-            if let Some(base) = root.absoluteString() {
+            let site = NSURL::fileURLWithPath(&NSString::from_str(&dir.display().to_string()));
+            let read = match p.inline_assets.then(|| day_spec::resolve_asset_dir("")).flatten() {
+                Some(assets) => {
+                    NSURL::fileURLWithPath(&NSString::from_str(&assets.display().to_string()))
+                }
+                None => site.clone(),
+            };
+            let index = page_url(&dir, &p.inline_start);
+            if let Some(base) = site.absoluteString() {
                 *nav.ivars().inline_base.borrow_mut() = Some(base.to_string());
             }
             let _: *mut AnyObject =
-                unsafe { msg_send![&web, loadFileURL: &*index, allowingReadAccessToURL: &*root] };
+                unsafe { msg_send![&web, loadFileURL: &*index, allowingReadAccessToURL: &*read] };
         } else {
             log::warn!(
                 "day-piece-webview: inline site {:?} not found in the staged assets",

@@ -7,6 +7,14 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 ## Unreleased
 
+- New: `WebView::app_assets()` — an inline site that reads the app's own files rather than only
+  its own directory. WebKit's file-URL read access widens to the asset tree, and the GTK arm
+  extracts the whole tree and allows file-URL fetches; the backends whose browsable base is
+  already that tree are unchanged, and navigation policing stays on the site.
+- Fixed: a start page with a query or a fragment (`start_page("player.html?src=hello")`) loaded
+  nothing on AppKit and UIKit. `fileURLWithPath:` percent-encoded the `?` into the file name, so
+  the load asked for a file that does not exist; the tail is now re-attached as a relative
+  reference, which is how a browser reads the same string.
 - Changed: the Android factory moved from `platform/android/java/…/DayWebView.java` to
   `src/DayWebView.java`, beside the Rust arms. Building for Android now needs a `day` CLI that
   links single-file `java` entries; an older one skips the file, and the app fails when it first

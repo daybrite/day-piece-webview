@@ -41,9 +41,15 @@ pub struct WebProps {
     /// browsable base, loads `<base>/<inline_start>`, and cancels+reports navigations that
     /// leave the site (`Event::Custom` with `num` = the link-report tag).
     pub inline_root: String,
-    /// The start page within `inline_root` (`"index.html"` unless overridden). Empty in
-    /// remote mode.
+    /// The start page within `inline_root` (`"index.html"` unless overridden), which may carry a
+    /// query or fragment (`"player.html?src=hello"`). Empty in remote mode.
     pub inline_start: String,
+    /// Inline mode: the page may read the app's whole `resource/assets/` tree rather than only
+    /// the site's own directory ([`WebView::app_assets`]). Backends whose browsable base is the
+    /// asset tree already (Qt's qrc, Android's `file:///android_asset/`, WebView2's virtual host,
+    /// the deployed `assets/data/` on web-dom) read the same either way; it is WebKit's file-URL
+    /// read access and the GTK cache extraction that narrow to the site without it.
+    pub inline_assets: bool,
 }
 
 /// A retained browsing session: the thing that outlives the view showing it.
@@ -119,6 +125,19 @@ pub enum LinkPolicy {
     /// Swallow it. The handler has already done whatever the link means in-app (navigate the
     /// day app, record it, show UI).
     Ignore,
+}
+
+/// Split a start page into its path and the query/fragment behind it (`"player.html?src=hello"`
+/// → `("player.html", "?src=hello")`). The arms that browse a site by URL keep the page whole;
+/// the two that build a file URL from a path need the tail back, because `fileURLWithPath:`
+/// would percent-encode `?` and `#` into the file name.
+// Only the two file-URL arms call this; the test below covers it in every build.
+#[allow(dead_code)]
+pub(crate) fn split_page(page: &str) -> (&str, &str) {
+    match page.find(['?', '#']) {
+        Some(i) => page.split_at(i),
+        None => (page, ""),
+    }
 }
 
 /// A bundled site ready for [`web_view_inline`], the marker [`AssetDirSiteExt::prepare_site`]
@@ -604,6 +623,7 @@ pub struct WebView {
     session: Option<WebSession>,
     inline: Option<InlineSite>,
     inline_start: String,
+    inline_assets: bool,
     on_link: Option<LinkDecider>,
 }
 
@@ -628,6 +648,7 @@ pub fn web_view(url: Signal<String>) -> WebView {
         session: None,
         inline: None,
         inline_start: String::new(),
+        inline_assets: false,
         on_link: None,
     }
 }
@@ -683,9 +704,22 @@ impl WebView {
         self.session = Some(session);
         self
     }
-    /// Inline mode only: the page within the site to open first, instead of `index.html`.
+    /// Inline mode only: the page within the site to open first, instead of `index.html`. A
+    /// query or fragment is part of the page (`"player.html?src=hello"`), and the site reads it
+    /// back through `location.search` / `location.hash` as it would on a server.
     pub fn start_page(mut self, page: impl Into<String>) -> Self {
         self.inline_start = page.into();
+        self
+    }
+    /// Inline mode only: let the site read the app's whole `resource/assets/` tree, not just its
+    /// own directory.
+    ///
+    /// A self-contained site needs nothing here. Ask for it when the page's job is to show the
+    /// app's own files — a player, a viewer, a renderer — because those files live in the app's
+    /// asset namespace and the site's relative URLs have to reach them
+    /// (`day-piece-lottie`'s player is this: one page, any of the app's animations).
+    pub fn app_assets(mut self) -> Self {
+        self.inline_assets = true;
         self
     }
     /// Inline mode only: decide what happens to a navigation that leaves the site. Runs on the
@@ -740,6 +774,7 @@ impl Piece for WebView {
             session,
             inline,
             inline_start,
+            inline_assets,
             on_link,
         } = self;
         let initial = WebProps {
@@ -751,6 +786,7 @@ impl Piece for WebView {
             } else {
                 String::new()
             },
+            inline_assets: inline.is_some() && inline_assets,
         };
         // A web view has no intrinsic size; it fills whatever space its container offers.
         let node = cx.leaf(
@@ -1010,6 +1046,19 @@ mod tests {
                 "raw newline leaked for {hostile:?}: {js}"
             );
         }
+    }
+
+    #[test]
+    fn a_start_page_keeps_its_query_out_of_the_path() {
+        assert_eq!(split_page("index.html"), ("index.html", ""));
+        assert_eq!(
+            split_page("player.html?src=hello&loop=1"),
+            ("player.html", "?src=hello&loop=1")
+        );
+        assert_eq!(
+            split_page("docs/index.html#top"),
+            ("docs/index.html", "#top")
+        );
     }
 
     #[test]
