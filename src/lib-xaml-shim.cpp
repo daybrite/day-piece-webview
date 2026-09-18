@@ -21,11 +21,11 @@
 //     to the controller's SendMouseInput. So clicks/scroll/drag work, routed through XAML's own
 //     input.
 //   * The browser's lifetime follows the Border's tree membership (Unloaded → detach visual + Close).
-//   * If the WebView2 Runtime is absent, controller creation fails and the Border's URL label remains
-//     as a graceful, no-crash fallback.
+//   * If WebView2 creation fails, the Border shows the operation and HRESULT; eval replies and
+//     stderr report the same error (including a hint for a missing runtime).
 //
 // WebView2LoaderStatic.lib is statically linked by build.rs (no DLL to bundle); the WebView2 Runtime
-// is a system-wide install present on Windows 11 and the CI runners.
+// must be installed separately where the OS does not supply it (including CI runners).
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.h>             // Color (transparent, hit-testable Border background)
@@ -44,9 +44,12 @@
 #include <WebView2EnvironmentOptions.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <map>
 #include <string>
+
+#include "xaml-strings.h"
 
 using namespace winrt;
 namespace WF = winrt::Windows::Foundation;
@@ -78,14 +81,7 @@ static winrt::hstring hs(const char *s) {
 }
 
 static std::string to_utf8(winrt::hstring const &h) {
-    if (h.empty())
-        return {};
-    int len = WideCharToMultiByte(CP_UTF8, 0, h.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (len <= 1)
-        return {};
-    std::string s(static_cast<size_t>(len - 1), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, h.c_str(), -1, s.data(), len, nullptr, nullptr);
-    return s;
+    return day_webview::utf8(std::wstring_view(h.c_str(), h.size()));
 }
 
 // Per-web-view state. Keyed by the day handle (the boxed Border) so async callbacks and later
@@ -100,6 +96,7 @@ struct WebViewCtx {
     uint64_t id{};
     void (*cb)(uint64_t, const char *){};
     std::wstring pending_url; // navigated once the controller is ready
+    std::string startup_error; // retained for eval replies as well as the visible fallback
     double scale{1.0};        // DIP → physical-pixel factor (host-window DPI / 96), the rasterization scale
     // Inline mode (docs/webview.md): the URL prefix of the bundled site under the virtual host
     // (empty = remote mode), the local folder that host maps to (empty = the exe-relative
@@ -195,12 +192,7 @@ static bool json_string_to_utf8(std::wstring const &json, std::string &out) {
             return false;
         }
     }
-    int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0,
-                                  nullptr, nullptr);
-    out.assign(static_cast<size_t>(len), '\0');
-    if (len)
-        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), out.data(), len,
-                            nullptr, nullptr);
+    out = day_webview::utf8(w);
     return true;
 }
 
@@ -366,6 +358,23 @@ static std::wstring user_data_folder() {
     return p;
 }
 
+static void startup_failed(void *handle, const char *stage, HRESULT hr) {
+    auto *c = find_ctx(handle);
+    if (!c)
+        return;
+    char code[16];
+    std::snprintf(code, sizeof(code), "0x%08lX", static_cast<unsigned long>(hr));
+    c->startup_error = std::string("WebView2 ") + stage + " failed (" + code + ")";
+    if (hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
+        c->startup_error += "; install the Microsoft Edge WebView2 Runtime";
+    std::fprintf(stderr, "day-piece-webview: %s\n", c->startup_error.c_str());
+    std::fflush(stderr);
+    if (auto label = c->placeholder.Child().try_as<WUXC::TextBlock>()) {
+        label.Text(hs(c->startup_error.c_str()));
+        label.TextWrapping(WUX::TextWrapping::Wrap);
+    }
+}
+
 // Kick off async WebView2 creation: environment → composition controller → attach the render visual,
 // wire input + NavigationCompleted, size, navigate. All callbacks run on the UI thread (WebView2 posts
 // to the creating thread), so touching XAML / composition / g_webviews here is safe.
@@ -377,28 +386,49 @@ static void create_webview2(void *handle) {
     auto options = wrl::Make<CoreWebView2EnvironmentOptions>();
     if (options)
         options->put_AdditionalBrowserArguments(L"--disable-features=CalculateNativeWinOcclusion");
-    CreateCoreWebView2EnvironmentWithOptions(
+    const HRESULT started = CreateCoreWebView2EnvironmentWithOptions(
         nullptr, udf.c_str(), options.Get(),
         wrl::Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [handle](HRESULT r, ICoreWebView2Environment *env) -> HRESULT {
                 auto *cc = find_ctx(handle);
-                if (!cc || FAILED(r) || !env)
+                if (!cc)
                     return S_OK;
+                if (FAILED(r) || !env) {
+                    startup_failed(handle, "environment creation", FAILED(r) ? r : E_POINTER);
+                    return S_OK;
+                }
                 wrl::ComPtr<ICoreWebView2Environment3> env3;
-                if (FAILED(env->QueryInterface(IID_PPV_ARGS(&env3))) || !env3)
+                const HRESULT queried = env->QueryInterface(IID_PPV_ARGS(&env3));
+                if (FAILED(queried) || !env3) {
+                    startup_failed(handle, "composition interface",
+                                   FAILED(queried) ? queried : E_NOINTERFACE);
                     return S_OK;
-                env3->CreateCoreWebView2CompositionController(
+                }
+                const HRESULT creating = env3->CreateCoreWebView2CompositionController(
                     cc->parent,
                     wrl::Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
                         [handle](HRESULT r2, ICoreWebView2CompositionController *comp) -> HRESULT {
                             auto *c2 = find_ctx(handle);
-                            if (!c2 || FAILED(r2) || !comp)
+                            if (!c2)
                                 return S_OK;
+                            if (FAILED(r2) || !comp) {
+                                startup_failed(handle, "controller creation",
+                                               FAILED(r2) ? r2 : E_POINTER);
+                                return S_OK;
+                            }
                             c2->compositionController = comp;
-                            c2->compositionController.As(&c2->controller); // same object, base interface
-                            if (!c2->controller)
+                            const HRESULT controller = c2->compositionController.As(&c2->controller);
+                            if (FAILED(controller) || !c2->controller) {
+                                startup_failed(handle, "controller interface",
+                                               FAILED(controller) ? controller : E_NOINTERFACE);
                                 return S_OK;
-                            c2->controller->get_CoreWebView2(c2->webview.GetAddressOf());
+                            }
+                            const HRESULT engine =
+                                c2->controller->get_CoreWebView2(c2->webview.GetAddressOf());
+                            if (FAILED(engine) || !c2->webview) {
+                                startup_failed(handle, "engine creation", FAILED(engine) ? engine : E_POINTER);
+                                return S_OK;
+                            }
 
                             // Logical (DIP) bounds scaled by the window DPI, crisp at any scale.
                             wrl::ComPtr<ICoreWebView2Controller3> c3;
@@ -530,10 +560,13 @@ static void create_webview2(void *handle) {
                             return S_OK;
                         })
                         .Get());
+                if (FAILED(creating))
+                    startup_failed(handle, "controller request", creating);
                 return S_OK;
             })
             .Get());
-    // A failed HRESULT here (e.g. no WebView2 Runtime) leaves the Border's URL label as the fallback.
+    if (FAILED(started))
+        startup_failed(handle, "environment request", started);
 }
 
 extern "C" {
@@ -544,7 +577,7 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
                            void (*link_cb)(uint64_t, const char *)) {
     // The boxed element day lays out: a transparent (hit-testable) Border carrying a faint URL label.
     // The browser's render visual is spliced in as the Border's child visual and covers the label;
-    // if the WebView2 Runtime is absent, the label remains as the graceful, no-crash fallback.
+    // if startup fails, the label displays the diagnostic instead of remaining just a URL.
     const bool inlined = inline_root && *inline_root;
     std::wstring first = hs(url ? url : "").c_str();
     std::wstring prefix;
@@ -635,7 +668,8 @@ void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
     if (!c || !c->webview) {
         // The WebView2 Runtime is absent, or the view is gone. Still a reply: the Rust future is
         // resolved only by one arriving.
-        eval_reply(c ? c->id : 0, req, eval_engine_error("Error", "no engine"));
+        const char *why = c && !c->startup_error.empty() ? c->startup_error.c_str() : "no engine";
+        eval_reply(c ? c->id : 0, req, eval_engine_error("Error", why));
         return;
     }
     const uint64_t id = c->id;
@@ -661,14 +695,7 @@ void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
                         BOOL is_string = FALSE;
                         if (SUCCEEDED(res->TryGetResultAsString(&str, &is_string)) && is_string &&
                             str) {
-                            std::string utf8;
-                            int len = WideCharToMultiByte(CP_UTF8, 0, str, -1, nullptr, 0, nullptr,
-                                                          nullptr);
-                            if (len > 1) {
-                                utf8.assign(static_cast<size_t>(len - 1), '\0');
-                                WideCharToMultiByte(CP_UTF8, 0, str, -1, utf8.data(), len - 1,
-                                                    nullptr, nullptr);
-                            }
+                            const std::string utf8 = day_webview::utf8(str);
                             CoTaskMemFree(str);
                             eval_reply(id, req, utf8);
                             return S_OK;
@@ -695,12 +722,7 @@ void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
                     auto narrow = [](LPWSTR w, const char *fallback) {
                         if (!w)
                             return std::string(fallback);
-                        int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-                        std::string s;
-                        if (len > 1) {
-                            s.assign(static_cast<size_t>(len - 1), '\0');
-                            WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), len - 1, nullptr, nullptr);
-                        }
+                        const std::string s = day_webview::utf8(w);
                         return s.empty() ? std::string(fallback) : s;
                     };
                     const std::string n = narrow(name, "SyntaxError");

@@ -256,8 +256,13 @@ gallery.
 
   `WebView2LoaderStatic.lib` is linked statically (from the Microsoft.Web.WebView2 NuGet package, not
   the base SDK), so there is no DLL to bundle; the WebView2 Runtime itself is a system-wide install,
-  present on Windows 11 and on the CI runners. When it is absent, controller creation fails and the
-  Border's URL label stays as the fallback, so the page degrades rather than crashing.
+  supplied by Windows 11 but installed explicitly in CI (`webview2-runtime`). Edge Stable and the
+  NuGet SDK do not substitute for that runtime. If startup fails, the Border displays the failing
+  operation and HRESULT; stderr and evaluation replies carry the same diagnostic.
+
+  Evaluation replies use a length-counted UTF-16 → UTF-8 conversion, preserving the protocol's
+  separators and non-ASCII text. `tests/xaml` exercises that conversion against the Windows API;
+  the Windows demo walkthrough checks that the bundled page loads and JavaScript replies arrive.
 
 ## CI screenshots + gallery
 

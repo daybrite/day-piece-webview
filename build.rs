@@ -10,6 +10,7 @@ fn main() {
     day_build::bridge::generate().expect("webview browser bridge");
     println!("cargo:rerun-if-changed=src/lib-qt-shim.cpp");
     println!("cargo:rerun-if-changed=src/lib-xaml-shim.cpp");
+    println!("cargo:rerun-if-changed=src/xaml-strings.h");
     println!("cargo:rerun-if-changed=build.rs");
 
     if std::env::var("CARGO_FEATURE_QT").is_ok() {
@@ -75,7 +76,7 @@ fn build_xaml() {
     // over the island receives no pointer input (see the header of src/lib-xaml-shim.cpp).
     // WebView2.h + the loader ship in the Microsoft.Web.WebView2 NuGet package (not the base SDK);
     // we statically link WebView2LoaderStatic.lib so there is no DLL to bundle (the WebView2
-    // Runtime itself is a system-wide install, present on Win11 and the CI runners).
+    // Runtime itself is a separate install, supplied by Win11 and installed explicitly in CI).
     let webview2 = webview2_sdk_root();
     let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
         Ok("x86_64") => "x64",

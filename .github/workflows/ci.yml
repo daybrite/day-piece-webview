@@ -4,8 +4,8 @@ name: ci
 #   host        does the crate build, lint, and pass its tests, with each desktop toolkit's arm
 #               compiled in on a host that has that toolkit's web engine?
 #   cross-check do the mobile and web arms compile for their targets?
-#   demo        does the walkthrough pass on macOS, the iOS Simulator, the Android emulator, and
-#               a headless browser, against day's newest main?
+#   demo        does the walkthrough pass on macOS, Windows, the iOS Simulator, the Android
+#               emulator, and a headless browser, against day's newest main?
 #
 # No Cargo.lock is committed, here or in demo/: this crate tracks an unpublished framework by
 # its bare git URL, so every run resolves day afresh at the tip of main and proves the crate
@@ -55,6 +55,12 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo clippy --features ${{ matrix.features }} -- -D warnings
       - run: cargo test
+      - name: Test Windows evaluation payload conversion
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S tests/xaml -B target/xaml-tests
+          cmake --build target/xaml-tests --config Release
+          ctest --test-dir target/xaml-tests -C Release --output-on-failure
       - uses: actions/setup-node@v6
         if: matrix.features == 'gtk'
         with:
@@ -94,7 +100,9 @@ jobs:
     secrets: inherit
     with:
       project-path: demo
-      targets: macos-appkit, ios-uikit, android-mdc, web-dom
+      targets: macos-appkit, ios-uikit, android-mdc, windows-xaml, web-dom
+      target-packages: |
+        windows-xaml: webview2-runtime
       # The CLI that builds, and the framework revision: with no lock committed the shared
       # workflow resolves one fresh, and this moves every leg to the same tip-of-main revision.
       day-version: main

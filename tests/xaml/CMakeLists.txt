@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(day_webview_xaml_tests LANGUAGES CXX)
+enable_testing()
+add_executable(xaml_strings strings.cpp)
+target_compile_features(xaml_strings PRIVATE cxx_std_17)
+add_test(NAME xaml_strings COMMAND xaml_strings)
