@@ -79,8 +79,10 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             day_gtk::emit(id, Event::custom("webview:url", uri.to_string()));
         }
     });
+    // Spelled out because `gtk4::prelude::WidgetExt` has a `settings()` of its own (the widget's
+    // GtkSettings) and both traits are in scope here.
     if p.inline_assets
-        && let Some(settings) = wv.settings()
+        && let Some(settings) = webkit6::prelude::WebViewExt::settings(&wv)
     {
         // A site that reads the app's files does so from one `file:` URL to another, which
         // WebKitGTK refuses by default whatever the page can load as a subresource. What the
