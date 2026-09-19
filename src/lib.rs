@@ -572,6 +572,13 @@ impl Future for EvalFuture {
             let (req, script) = (self.req, self.script.take().unwrap_or_default());
             PENDING.with(|p| p.borrow_mut().insert(req, self.shared.clone()));
             with_tree(|t| t.patch(node, Box::new(WebPatch::Eval { req, script }), false));
+            // An arm that fails a request without reaching the engine replies from inside that
+            // patch — before this poll has a waker to wake, so `resolve` found none and left the
+            // answer here. Take it now: nothing will ever wake this future on its behalf.
+            // (The XAML arm does exactly this while WebView2 is still starting up.)
+            if let Some(result) = self.shared.result.borrow_mut().take() {
+                return Poll::Ready(result);
+            }
         }
         *self.shared.waker.borrow_mut() = Some(cx.waker().clone());
         Poll::Pending
