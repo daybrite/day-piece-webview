@@ -193,9 +193,10 @@ Per backend (gate on `inline_support()`):
 | web-dom | the deployed `assets/data/<dir>/…` URL, same origin as the host page, so the browser resolves the site and the crate's capture-phase click hook in `src/browser.rs` polices leaving links | in-frame click hook → `dayHost.dom.emit` |
 
 Every backend with a web engine reports `Native`; `Unsupported` remains only where there is no
-engine at all (macos-gtk / windows-gtk, which have no WebKitGTK build). The Qt, XAML, GTK and
-ArkWeb arms are compile-verified from this host and behavior-verified by their CI legs; Qt was
-additionally exercised live on macos-qt.
+engine at all (macos-gtk / windows-gtk, which have no WebKitGTK build). Qt, XAML and GTK have
+passed their CI walkthroughs; Qt was additionally exercised live on macos-qt. ArkWeb is
+compile-verified through HAP packaging and signing, but its browser behavior still needs
+validation in the dedicated `harmony webview` CI workflow.
 
 The showcase's Web View page shows both modes as tabs: **Remote** (the browsing demo above) and
 **Embedded** (`resource/assets/web/minisite/`, with all three link dispositions live). This
@@ -223,11 +224,20 @@ gallery.
 - **ArkUI (HarmonyOS)**: the ArkTS `Web` component. The ArkUI **C** node API has no Web node kind, so
   this is the first piece whose native half is ArkTS: the crate ships `platform/harmony/ets/Index.ets`, `day build`
   stages it into the app's hvigor project (`[package.metadata.day.ohos]`), and day-arkui's generic piece
-  bridge builds it in a `BuilderNode` and mounts its FrameNode in the Day tree. Commands go out through
-  `webview.WebviewController`; `onPageEnd` reports each committed URL back. **The x86_64 emulator cannot
-  run it**: its `ArkWebCore.hap` carries arm64-only native libs (`bm install` answers "the Abi type
-  supported by the device does not match"), so the engine loads as null and the component's surface
-  wedges the window's compositor; the walkthrough skips this page there (day's [docs/harmonyos.md](https://github.com/daybrite/day/blob/main/docs/harmonyos.md)).
+  bridge builds it in a `BuilderNode` and mounts its FrameNode in the Day tree. The engine is explicitly
+  initialized before building the component. Commands queue until the UI turn after
+  `onControllerAttached`; evaluation before attachment answers an error so callers can retry.
+  `onPageEnd` reports each committed URL back. Disposal and renderer exit settle pending evaluations
+  once and suppress late replies. Failed builders release their nodes. Link interception only
+  dispatches main-frame navigation; load errors and renderer exits are logged.
+  These lifecycle paths have host-side regression coverage in `tests/harmony-controller.mjs`;
+  the ArkTS source is also compiled by hvigor. **Rendering remains CI-unverified**: the stock Oniro
+  v6.1 x86_64 image contains an ARM64-only `ArkWebCore.hap`, which can leave the engine null and stall
+  its compositor. The demo now attempts the real component on every architecture. The dedicated
+  `harmony webview` workflow requires the full walkthrough, bounds its runtime, and uploads hilog,
+  engine ABI diagnostics, and screenshots. It does not count an unavailable-state screen as a pass.
+  Initializing the engine cannot repair incompatible native libraries; that still requires a
+  compatible system image/runtime. See [HarmonyOS CI](../.github/workflows/harmony-webview.yml).
 - **web-dom**: an `<iframe>`, the one backend with no engine to embed, because the host page already
   is one. `Load` and `Reload` work. `Back`, `Forward` and `Stop` are no-ops, and navigation does not
   report back into the bound signal, because the same-origin policy forbids a parent document from

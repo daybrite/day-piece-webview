@@ -1,6 +1,7 @@
 # The demo's walkthrough (https://daybrite.dev/docs/dayscript), and the crate's on-device test. CI
-# runs on all primary targets with an engine; harmony-emulator.yaml covers the engine-less
-# x86_64 Oniro image. The same commands run it on a development machine:
+# attempts the real web view on all primary targets, including HarmonyOS. A missing engine
+# fails this walkthrough; it is never replaced with an unavailable-state test.
+# The same commands run it on a development machine:
 #
 #     day launch -p macos-appkit --script dayscript/webview.yaml
 #     day launch -p ios-uikit --script dayscript/webview.yaml

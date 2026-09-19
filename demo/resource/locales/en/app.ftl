@@ -18,4 +18,3 @@ reload = Reload
 link_none = No link from the page yet.
 link_received = The page sent the app a link to "{ $route }".
 site_unsupported = This build has no web engine to show the site in.
-site_emulator_unsupported = This HarmonyOS emulator has no ArkWeb engine. Open the demo on a compatible device to view the bundled site.

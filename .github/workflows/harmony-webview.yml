@@ -1,0 +1,114 @@
+name: harmony webview
+
+# This job deliberately requires real ArkWeb rendering. The shared dayapp workflow treats
+# Harmony emulator failures as best-effort, which is insufficient for validating this backend.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harmony-arkui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DAY_VERBOSE: "1"
+      DAY_OHOS_ARCH: x86_64
+      DAY_OHOS_TARGET: "127.0.0.1:55555"
+      DAY_OHOS_SHOT_SETTLE_MS: "2500"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: demo
+      - uses: daybrite/actions/.github/actions/setup-day-cli@main
+        with:
+          version: main
+      - uses: daybrite/actions/.github/actions/setup-day-deps@main
+        with:
+          target: harmony-arkui
+          extras: "true"
+          pack: "false"
+      - name: Build the real ArkWeb integration
+        working-directory: demo
+        run: '"$DAY_BIN" build -p harmony-arkui'
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/oniro-emulator/v6.1
+          key: oniro-emulator-v6.1-oniro_emulator.zip
+      - name: Enable KVM
+        run: |
+          sudo chmod a+rw /dev/kvm
+      - name: Boot the Oniro emulator
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          ARCHIVE="$HOME/.cache/oniro-emulator/v6.1/oniro_emulator.zip"
+          if [ ! -f "$ARCHIVE" ]; then
+            mkdir -p "$(dirname "$ARCHIVE")"
+            curl --fail --location --retry 3 --output "$ARCHIVE" \
+              https://github.com/eclipse-oniro4openharmony/device_board_oniro/releases/download/v6.1/oniro_emulator.zip
+          fi
+          mkdir -p "$RUNNER_TEMP/oniro-webview"
+          unzip -q "$ARCHIVE" -d "$RUNNER_TEMP/oniro-webview"
+          DAY_OHOS_EMULATOR="$(dirname "$(find "$RUNNER_TEMP/oniro-webview" -name bzImage -print -quit)")"
+          export DAY_OHOS_EMULATOR
+          echo "DAY_OHOS_EMULATOR=$DAY_OHOS_EMULATOR" >> "$GITHUB_ENV"
+          "$DAY_BIN" ohos emulator launch --headless
+      - name: Record engine and system diagnostics
+        # Missing diagnostic tools or an unreadable engine package must not skip the test.
+        continue-on-error: true
+        timeout-minutes: 2
+        run: |
+          mkdir -p harmony-diagnostics
+          hdc -t "$DAY_OHOS_TARGET" shell uname -a > harmony-diagnostics/system.txt || true
+          hdc -t "$DAY_OHOS_TARGET" shell bm dump -n com.ohos.arkwebcore > harmony-diagnostics/arkweb-package.txt || true
+          hdc -t "$DAY_OHOS_TARGET" shell 'find /system /data/app -iname "*arkweb*" 2>/dev/null' > harmony-diagnostics/arkweb-files.txt || true
+          # Record actual ELF architectures, not just the package's advertised ABI. The stock
+          # x86_64 image has shipped an ARM64 ArkWebCore.hap; a capability flag misses that.
+          ENGINE_HAP="$(tr -d '\r' < harmony-diagnostics/arkweb-files.txt | awk '/^\/system\/.*ArkWebCore\.hap$/ { print; exit }')"
+          if [ -n "$ENGINE_HAP" ] && hdc -t "$DAY_OHOS_TARGET" file recv "$ENGINE_HAP" "$RUNNER_TEMP/ArkWebCore.hap"; then
+            python3 - <<'PY' > harmony-diagnostics/arkweb-abis.txt
+          import os
+          import struct
+          import zipfile
+          from pathlib import Path
+          with zipfile.ZipFile(Path(os.environ["RUNNER_TEMP"]) / "ArkWebCore.hap") as package:
+              for name in package.namelist():
+                  if name.endswith(".so"):
+                      with package.open(name) as library:
+                          header = library.read(20)
+                      if header[:4] == b"\x7fELF" and len(header) == 20:
+                          machine = struct.unpack("<H" if header[5] == 1 else ">H", header[18:20])[0]
+                          print(name, {62: "x86_64", 183: "aarch64", 40: "arm"}.get(machine, machine))
+          PY
+          fi
+      - name: Require the full webview walkthrough
+        timeout-minutes: 6
+        working-directory: demo
+        run: |
+          set -euo pipefail
+          "$DAY_BIN" launch -p harmony-arkui --ohos-device "$DAY_OHOS_TARGET" \
+            --script dayscript/webview.yaml 2>&1 | tee ../harmony-diagnostics/walkthrough.log
+      - name: Collect emulator logs
+        if: always()
+        timeout-minutes: 2
+        run: |
+          mkdir -p harmony-diagnostics
+          if command -v hdc >/dev/null; then
+            timeout 30s hdc -t "$DAY_OHOS_TARGET" shell hilog -x > harmony-diagnostics/hilog.txt 2>&1 || true
+          fi
+      - name: Upload diagnostics and screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: harmony-webview-diagnostics
+          path: |
+            harmony-diagnostics/
+            demo/build/day/screenshots/
+          if-no-files-found: warn

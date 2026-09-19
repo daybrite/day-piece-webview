@@ -67,7 +67,7 @@ jobs:
         if: matrix.features == 'gtk'
         with:
           node-version: '22'
-      - run: node --test tests/browser.mjs
+      - run: node --test tests/*.mjs
         if: matrix.features == 'gtk'
 
   # The mobile and web arms compile for their targets. A link is not attempted here (the demo
@@ -111,10 +111,6 @@ jobs:
       day-version: main
       update-day-deps: true
       scripts: dayscript/webview.yaml
-      # The x86_64 Oniro emulator has no usable ArkWeb engine. Compile the integration and
-      # exercise the demo's explicit unavailable state; real devices use webview.yaml.
-      target-scripts: |
-        harmony-arkui: dayscript/harmony-emulator.yaml
       preflight-checks: fmt, clippy, test
       # website/site.toml opts into daysite: landing page, gallery, and /webapp/.
       deploy-web: true

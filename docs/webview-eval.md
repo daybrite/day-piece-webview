@@ -214,10 +214,15 @@ variant, which appears to be the only way to recover a JS exception. Controller 
 `17100001` unless the controller is attached to a live `Web`, so evaluation must be gated on
 `onControllerAttached` or later.
 
-Both facts marked ? in the matrix are unverified, because official documentation endpoints were
-unreachable during this research. Settle them against the installed DevEco SDK's `@ohos.web.webview.d.ts` before
-implementing. This arm also cannot be tested on the x86_64 emulator at all, because `ArkWebCore.hap`
-carries arm64-only native libraries.
+The implementation accepts both raw and JSON-quoted string replies and converts thrown/rejected
+controller errors into the evaluation envelope. Attachment is tracked explicitly; calls made
+before it return an error, while navigation commands wait until the next UI turn after attachment.
+Disposal and renderer exit answer outstanding evaluations once and ignore their later native replies.
+These cases are covered by `tests/harmony-controller.mjs`, which executes the shipped controller
+code with a fake native controller. The ArkTS APIs compile against the installed API 18 SDK.
+Real rendering and native reply behavior still require the dedicated HarmonyOS CI walkthrough.
+The stock x86_64 Oniro image's ARM64-only `ArkWebCore.hap` remains an environment blocker; the
+workflow collects its native-library architectures and hilog instead of treating fallback UI as success.
 
 ### web-dom — iframe
 
