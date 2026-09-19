@@ -260,6 +260,13 @@ gallery.
   NuGet SDK do not substitute for that runtime. If startup fails, the Border displays the failing
   operation and HRESULT; stderr and evaluation replies carry the same diagnostic.
 
+  The virtual-host folder uses ordinary DOS/UNC path syntax. The asset resolver canonicalizes
+  directories, so the XAML adapter removes Windows' extended-length `\\?\` prefix (restoring
+  `\\server\share` for UNC paths) before calling WebView2. Without this conversion a valid
+  on-disk player page can load as `ERR_INVALID_URL`. `src/xaml_path.rs` tests drive and UNC paths,
+  Unicode and spaces, and a real canonicalized directory on Windows. Mapping failures report
+  their HRESULT, and failed navigations log the URL and WebView2 error status.
+
   Evaluation replies use a length-counted UTF-16 → UTF-8 conversion, preserving the protocol's
   separators and non-ASCII text. `tests/xaml` exercises that conversion against the Windows API;
   the Windows demo walkthrough checks that the bundled page loads and JavaScript replies arrive.

@@ -473,9 +473,16 @@ static void create_webview2(void *handle) {
                                             assets.resize(slash);
                                         assets += L"\\assets";
                                     }
-                                    wv3->SetVirtualHostNameToFolderMapping(
+                                    const HRESULT mapped = wv3->SetVirtualHostNameToFolderMapping(
                                         kDayAssetsHost, assets.c_str(),
                                         COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+                                    if (FAILED(mapped)) {
+                                        startup_failed(handle, "asset folder mapping", mapped);
+                                        return S_OK;
+                                    }
+                                } else {
+                                    startup_failed(handle, "asset mapping interface", E_NOINTERFACE);
+                                    return S_OK;
                                 }
                                 EventRegistrationToken navTok{};
                                 c2->webview->add_NavigationStarting(
@@ -536,7 +543,7 @@ static void create_webview2(void *handle) {
                                 c2->webview->add_NavigationCompleted(
                                     wrl::Callback<ICoreWebView2NavigationCompletedEventHandler>(
                                         [handle](ICoreWebView2 *wv,
-                                                 ICoreWebView2NavigationCompletedEventArgs *)
+                                                 ICoreWebView2NavigationCompletedEventArgs *args)
                                             -> HRESULT {
                                             auto *c3n = find_ctx(handle);
                                             if (!c3n)
@@ -544,6 +551,17 @@ static void create_webview2(void *handle) {
                                             LPWSTR src = nullptr;
                                             if (SUCCEEDED(wv->get_Source(&src)) && src) {
                                                 std::string s = to_utf8(winrt::hstring{src});
+                                                BOOL success = FALSE;
+                                                args->get_IsSuccess(&success);
+                                                if (!success) {
+                                                    COREWEBVIEW2_WEB_ERROR_STATUS error{};
+                                                    args->get_WebErrorStatus(&error);
+                                                    std::fprintf(stderr,
+                                                        "day-piece-webview: navigation failed "
+                                                        "(WebErrorStatus %d): %s\n",
+                                                        static_cast<int>(error), s.c_str());
+                                                    std::fflush(stderr);
+                                                }
                                                 if (c3n->cb)
                                                     c3n->cb(c3n->id, s.c_str());
                                                 CoTaskMemFree(src);

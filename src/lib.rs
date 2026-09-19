@@ -873,6 +873,9 @@ impl Piece for WebView {
 
 day_pieces::glue_modules!(appkit, qt, uikit, mdc, xaml, arkui, dom);
 
+#[cfg(any(test, all(feature = "xaml", windows)))]
+mod xaml_path;
+
 // GTK web view is Linux only: WebKitGTK 6 (webkit6) isn't viable on macOS and has no MSYS2
 // package on Windows, so both fall back to Day's placeholder leaf (see Cargo.toml's webkit6 target
 // gate).

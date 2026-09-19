@@ -113,7 +113,9 @@ fn inline_dir(p: &WebProps) -> String {
         };
         base = parent;
     }
-    base.to_string_lossy().into_owned()
+    // resolve_asset_dir canonicalizes, which adds a Windows verbatim prefix. WebView2's
+    // virtual-host loader needs the ordinary DOS/UNC spelling of the same resolved folder.
+    super::xaml_path::mapping_folder(&base)
 }
 
 fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
