@@ -29,6 +29,12 @@ jobs:
       - uses: daybrite/actions/.github/actions/setup-day-cli@main
         with:
           version: main
+      - name: Require the current device command
+        run: |
+          if ! "$DAY_BIN" devices boot --help | grep -Fq "starts Oniro without a window"; then
+            echo "::error::Update the day CLI: this test requires HarmonyOS headless device boot."
+            exit 1
+          fi
       - uses: daybrite/actions/.github/actions/setup-day-deps@main
         with:
           target: harmony-arkui
@@ -59,7 +65,7 @@ jobs:
           DAY_OHOS_EMULATOR="$(dirname "$(find "$RUNNER_TEMP/oniro-webview" -name bzImage -print -quit)")"
           export DAY_OHOS_EMULATOR
           echo "DAY_OHOS_EMULATOR=$DAY_OHOS_EMULATOR" >> "$GITHUB_ENV"
-          "$DAY_BIN" ohos emulator launch --headless
+          "$DAY_BIN" devices boot -p harmony-arkui --headless --wait
       - name: Record engine and system diagnostics
         # Missing diagnostic tools or an unreadable engine package must not skip the test.
         continue-on-error: true
