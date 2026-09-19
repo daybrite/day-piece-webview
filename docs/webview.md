@@ -148,6 +148,11 @@ command. `prepare_site()` is a future because backends whose engine cannot read 
 in place will extract to the platform cache dir here; on every v1 backend it resolves on first
 poll.
 
+Bundled pages on Qt allow custom-scheme requests from JavaScript as well as mouse clicks.
+Qt's default user-gesture restriction would otherwise suppress those requests before Day's
+navigation callback sees them. The callback still cancels outgoing main-frame navigation and
+passes the URL through the same `LinkPolicy`.
+
 ### Reading the app's own files: `app_assets`
 
 A site is confined to its own directory. Ask for more when the page's job is to show the app's

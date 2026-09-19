@@ -38,6 +38,7 @@ static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 #ifdef DAY_WEBVIEW_QT_ENGINE
 
 #include <QWebEnginePage>
+#include <QWebEngineSettings>
 #include <QWebEngineView>
 
 // Session id -> the retained engine view. Qt is the one backend whose `release` DELETES the handle
@@ -139,6 +140,10 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
         page->id = id;
         page->pathPrefix = prefix;
         page->linkCb = link_cb;
+        // Bundled JavaScript can send app-scheme links without a mouse gesture. Let them
+        // reach acceptNavigationRequest, which cancels external main-frame navigation and
+        // hands it to Day's LinkPolicy instead of launching a system handler here.
+        page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);
         v->setPage(page);
     }
     day_webview_connect_url(v, id, cb);
