@@ -83,8 +83,12 @@ requires it to pass: boot errors, timeouts, missing engines, and assertion failu
 It runs on pushes and pull requests and can also be started manually with **Run workflow**.
 The shared app workflow still treats HarmonyOS emulator failures as best-effort; use this separate
 check to assess browser support. It uploads the device logs, installed engine ABI report, and
-screenshots for diagnosis. The stock Oniro v6.1 image has shipped an ARM64-only ArkWeb package
-on its x86_64 system, so successful compilation alone does not establish working rendering.
+screenshots for diagnosis. [The first strict Harmony run](https://github.com/daybrite/day-piece-webview/actions/runs/35414766914)
+confirmed that the stock Oniro v6.1 image contains an ARM64-only ArkWeb package on its x86_64
+system: the loader cannot find `libs/x86_64/libarkweb_engine.so`, and only 19 of 27 walkthrough
+steps passed. CI now rejects an incompatible engine before launching the app. Rendering needs
+an image with a matching x86_64 engine, or validation on a compatible ARM64 device; successful
+compilation alone does not establish working rendering.
 
 The shared workflow publishes [demo/website/site.toml](demo/website/site.toml) through daysite,
 along with the captured screenshots and web-dom build, after the full primary-platform matrix

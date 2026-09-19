@@ -88,6 +88,25 @@ jobs:
                           print(name, {62: "x86_64", 183: "aarch64", 40: "arm"}.get(machine, machine))
           PY
           fi
+      - name: Require a compatible ArkWeb engine
+        run: |
+          set -euo pipefail
+          REPORT=harmony-diagnostics/arkweb-abis.txt
+          if [ ! -s "$REPORT" ]; then
+            echo "::error::Could not inspect ArkWebCore.hap. See the engine diagnostics artifact."
+            exit 1
+          fi
+          if ! grep -Eq '(^|/)libarkweb_engine\.so x86_64$' "$REPORT"; then
+            echo "::error::The x86_64 emulator has no x86_64 ArkWeb engine. A compatible ArkWebCore.hap or emulator image is required."
+            {
+              echo '### ArkWeb runtime is incompatible with this emulator'
+              echo 'The app targets x86_64, but the installed package has no x86_64 libarkweb_engine.so. The browser walkthrough cannot run on this image.'
+              echo '```text'
+              cat "$REPORT"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
       - name: Require the full webview walkthrough
         timeout-minutes: 6
         working-directory: demo
