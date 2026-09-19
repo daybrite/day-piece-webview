@@ -30,6 +30,8 @@ flow:
       id: webview
       script: "document.getElementById('script-status').textContent"
       text: "The bundled script ran."
+      # WebView2's first process startup on a fresh Windows runner can exceed five seconds.
+      timeout_secs: 30
       only_on: [appkit, uikit, mdc, xaml, qt, arkui]
   - web_eval:
       id: webview
