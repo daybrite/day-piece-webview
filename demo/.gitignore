@@ -42,3 +42,11 @@ platform/android/.idea/
 # these two directories to the generated set under build/day/host/harmony/media.
 /platform/harmony/entry/src/main/resources/base/media
 /platform/harmony/AppScope/resources/base/media
+
+# daysite's local template and per-build website data.
+website/.daysite/
+website/appindex.json
+website/channels.json
+website/gallery-manifest.json
+website/*/appindex.json
+website/*/gallery-manifest.json

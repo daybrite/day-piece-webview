@@ -1,0 +1,16 @@
+# The shared dayapp workflow builds this with daybrite/daysite, like day-piece-charts.
+# Screenshots come from the walkthroughs on all eight primary targets; the browser demo
+# is published under /webapp/ and the screenshot index under /gallery/gallery.json.
+host = "https://daybrite.github.io/day-piece-webview"
+title = "Web View Demo"
+tagline = "A bundled website, native web views, and links back to your app"
+
+default-platform = "web"
+default-theme = "system"
+accent-color = "#0A84FF"
+
+show-store-badges = false
+show-permissions = false
+show-source-link = true
+
+footer = "© {year} The Daybrite Project · MPL-2.0"

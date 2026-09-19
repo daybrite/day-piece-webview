@@ -23,6 +23,19 @@ day::resources!();
 /// The scheme of the links the bundled site addresses to this app rather than to a browser.
 const APP_SCHEME: &str = "webviewdemo://";
 
+// The x86_64 Oniro emulator has no usable ArkWeb runtime: its engine package ships arm64
+// libraries. Avoid creating a Web surface there, which can stall the compositor. Device
+// builds still exercise ArkWeb. CI gives the emulator its own fallback walkthrough.
+const EMULATOR_WITHOUT_WEB: bool = cfg!(all(feature = "arkui", target_arch = "x86_64"));
+
+fn available(support: Support) -> Support {
+    if EMULATOR_WITHOUT_WEB {
+        Support::Unsupported
+    } else {
+        support
+    }
+}
+
 /// The window every entry point opens.
 pub fn window() -> day::WindowOptions {
     day::WindowOptions {
@@ -43,7 +56,9 @@ pub fn root() -> impl Piece {
     // The route of the last app link the site sent; empty until the first one arrives.
     let received = Signal::new(String::new());
     let js = JsHandle::new();
-    let can_eval = eval_support() == Support::Native;
+    let reload = Trigger::new();
+    let can_eval = available(eval_support()) == Support::Native;
+    let has_engine = available(inline_support()) != Support::Unsupported;
 
     column((
         label(res::str::app_title())
@@ -53,15 +68,15 @@ pub fn root() -> impl Piece {
         section((
             labeled(
                 res::str::support_remote(),
-                support_label(support(), "webview-support"),
+                support_label(available(support()), "webview-support"),
             ),
             labeled(
                 res::str::support_inline(),
-                support_label(inline_support(), "webview-inline-support"),
+                support_label(available(inline_support()), "webview-inline-support"),
             ),
             labeled(
                 res::str::support_eval(),
-                support_label(eval_support(), "webview-eval-support"),
+                support_label(available(eval_support()), "webview-eval-support"),
             ),
         ))
         .title(res::str::support_section()),
@@ -83,6 +98,10 @@ pub fn root() -> impl Piece {
                     });
                 })
                 .id("webview-js-run"),
+            button(res::str::reload())
+                .enabled(move || has_engine)
+                .action(move || reload.notify())
+                .id("webview-reload"),
         ))
         .spacing(8.0),
         label(move || answer.get())
@@ -98,7 +117,7 @@ pub fn root() -> impl Piece {
         })
         .font(Font::Footnote)
         .id("webview-link"),
-        site(js, received),
+        site(js, received, reload),
     ))
     .spacing(10.0)
     .align(HAlign::Leading)
@@ -116,15 +135,21 @@ fn support_label(answer: Support, id: &'static str) -> impl Piece {
 }
 
 /// The bundled site in the web view, or a line saying this build has no engine to show it in.
-fn site(js: JsHandle, received: Signal<String>) -> AnyPiece {
-    if inline_support() == Support::Unsupported {
-        return label(res::str::site_unsupported())
+fn site(js: JsHandle, received: Signal<String>, reload: Trigger) -> AnyPiece {
+    if available(inline_support()) == Support::Unsupported {
+        let message = if EMULATOR_WITHOUT_WEB {
+            res::str::site_emulator_unsupported()
+        } else {
+            res::str::site_unsupported()
+        };
+        return label(message)
             .font(Font::Footnote)
             .id("webview-unsupported")
             .any();
     }
     web_view_inline(res::assets::site)
         .js(js)
+        .reload(reload)
         .on_external_link(move |url| match url.strip_prefix(APP_SCHEME) {
             // A link addressed to the app: record it here and keep both the view and the
             // system browser where they are.

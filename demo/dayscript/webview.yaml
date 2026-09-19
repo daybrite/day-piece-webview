@@ -1,6 +1,6 @@
 # The demo's walkthrough (https://daybrite.dev/docs/dayscript), and the crate's on-device test. CI
-# runs it on macOS, Windows, the iOS Simulator, the Android emulator, and a headless browser, and the same
-# command runs it here:
+# runs on all primary targets with an engine; harmony-emulator.yaml covers the engine-less
+# x86_64 Oniro image. The same commands run it on a development machine:
 #
 #     day launch -p macos-appkit --script dayscript/webview.yaml
 #     day launch -p ios-uikit --script dayscript/webview.yaml
@@ -16,11 +16,11 @@ flow:
   - assert_visible: { id: webview-title }
   # The support rows are the piece's own answers for this target. Remote browsing on web-dom is
   # an <iframe>, which the browser keeps from reporting history or its URL, so it reads Emulated.
-  - assert_text: { id: webview-support, key: support_native, only_on: [appkit, uikit, mdc, xaml] }
+  - assert_text: { id: webview-support, key: support_native, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
   - assert_text: { id: webview-support, key: support_emulated, only_on: [dom] }
-  - assert_text: { id: webview-inline-support, key: support_native, only_on: [appkit, uikit, mdc, xaml, dom] }
-  - assert_text: { id: webview-eval-support, key: support_native, only_on: [appkit, uikit, mdc, xaml] }
-  - assert_text: { id: webview-eval-support, key: support_unsupported, only_on: [dom] }
+  - assert_text: { id: webview-inline-support, key: support_native, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui, dom] }
+  - assert_text: { id: webview-eval-support, key: support_native, only_on: [appkit, uikit, mdc, xaml, qt, arkui] }
+  - assert_text: { id: webview-eval-support, key: support_unsupported, only_on: [gtk, dom] }
   - assert_visible: { id: webview }
   - assert_text: { id: webview-link, key: link_none }
 
@@ -30,24 +30,27 @@ flow:
       id: webview
       script: "document.getElementById('script-status').textContent"
       text: "The bundled script ran."
-      only_on: [appkit, uikit, mdc, xaml]
+      only_on: [appkit, uikit, mdc, xaml, qt, arkui]
   - web_eval:
       id: webview
       script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()"
       text: "yes"
-      only_on: [appkit, uikit, mdc, xaml]
+      only_on: [appkit, uikit, mdc, xaml, qt, arkui]
   # Exercise both ASCII protocol separators and a UTF-16 surrogate pair on Windows.
   - web_eval:
       id: webview
       script: "'caf\\u00e9 \\uD83C\\uDF05'"
       text: "café 🌅"
-      only_on: [appkit, uikit, mdc, xaml]
-  - screenshot: webview
+      only_on: [appkit, uikit, mdc, xaml, qt, arkui]
+  # GTK and DOM have no eval API; allow their page a frame before capturing it.
+  - pause: { secs: 1, only_on: [gtk, dom] }
+  - assert_no_placeholders: {}
+  - screenshot: { name: webview, title: "Bundled site" }
 
   # The console: the page's answer comes back as JSON, so a string arrives quoted.
-  - input: { id: webview-js, text: "document.title", only_on: [appkit, uikit, mdc, xaml] }
-  - tap: { id: webview-js-run, only_on: [appkit, uikit, mdc, xaml] }
-  - assert_text: { id: webview-js-result, text: '"Bundled site"', only_on: [appkit, uikit, mdc, xaml] }
+  - input: { id: webview-js, text: "document.title", only_on: [appkit, uikit, mdc, xaml, qt, arkui] }
+  - tap: { id: webview-js-run, only_on: [appkit, uikit, mdc, xaml, qt, arkui] }
+  - assert_text: { id: webview-js-result, text: '"Bundled site"', only_on: [appkit, uikit, mdc, xaml, qt, arkui] }
 
   # A webviewdemo:// link leaves the site, so the view cancels it and the link policy hands the
   # route to the app, which records it and keeps the system browser closed.
@@ -55,6 +58,22 @@ flow:
       id: webview
       script: "document.getElementById('app-link').click(); 'clicked'"
       text: "clicked"
-      only_on: [appkit, uikit, mdc, xaml]
-  - assert_text: { id: webview-link, key: link_received, args: { route: "greeting" }, only_on: [appkit, uikit, mdc, xaml] }
-  - screenshot: webview-link
+      only_on: [appkit, uikit, mdc, xaml, qt, arkui]
+  - assert_text: { id: webview-link, key: link_received, args: { route: "greeting" }, only_on: [appkit, uikit, mdc, xaml, qt, arkui] }
+  - screenshot: { name: webview-link, title: "A link from the page", only_on: [appkit, uikit, mdc, xaml, qt, arkui] }
+
+  # Reload is supported even where eval is not. Where it is, prove this is a fresh document.
+  - web_eval:
+      id: webview
+      script: "window.dayDemoMarker = 1"
+      text: "1"
+      only_on: [appkit, uikit, mdc, xaml, qt, arkui]
+  - tap: { id: webview-reload }
+  - web_eval:
+      id: webview
+      script: "typeof window.dayDemoMarker + ':' + document.getElementById('script-status').textContent"
+      text: "undefined:The bundled script ran."
+      only_on: [appkit, uikit, mdc, xaml, qt, arkui]
+  - pause: { secs: 1, only_on: [gtk, dom] }
+  - assert_visible: { id: webview }
+  - screenshot: { name: webview-reloaded, title: "Reloading the bundled site" }

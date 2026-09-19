@@ -67,10 +67,23 @@ the host page, so Back, Forward, and Stop do nothing there.
 
 ## Demo
 
+[Open the demo website](https://daybrite.github.io/day-piece-webview/),
+[try the browser app](https://daybrite.github.io/day-piece-webview/webapp/), or
+[compare platform screenshots](https://daybrite.github.io/day-piece-webview/gallery/).
+
 [demo/](demo/) is a one-page app and this crate's on-device test. It shows a site bundled with the
 app, runs JavaScript in it, and receives a link the site sends to the app. From `demo/`, run
 `day launch -p macos-appkit --script dayscript/webview.yaml`, or the same command with
-`-p ios-uikit`, `-p android-mdc`, or `-p web-dom`.
+any other primary target. CI builds and runs the demo on macOS AppKit, Linux GTK and Qt,
+Windows XAML, iOS UIKit, Android MDC, HarmonyOS ArkUI, and web-dom. It checks the support
+labels, bundled page, JavaScript and app links where supported, and reloads the page.
+GTK and web-dom capture the site without evaluation; the x86_64 HarmonyOS emulator checks an
+explicit unavailable state because its image has no usable ArkWeb engine. Compatible HarmonyOS
+devices use the normal walkthrough.
+
+The shared workflow publishes [demo/website/site.toml](demo/website/site.toml) through daysite,
+along with the captured screenshots and web-dom build, after the full primary-platform matrix
+passes on the default branch.
 
 ## Implementation and dependencies
 

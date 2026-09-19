@@ -4,8 +4,8 @@ name: ci
 #   host        does the crate build, lint, and pass its tests, with each desktop toolkit's arm
 #               compiled in on a host that has that toolkit's web engine?
 #   cross-check do the mobile and web arms compile for their targets?
-#   demo        does the walkthrough pass on macOS, Windows, the iOS Simulator, the Android
-#               emulator, and a headless browser, against day's newest main?
+#   demo        do the walkthroughs pass on all eight primary platform-toolkit pairs,
+#               against day's newest main?
 #
 # No Cargo.lock is committed, here or in demo/: this crate tracks an unpublished framework by
 # its bare git URL, so every run resolves day afresh at the tip of main and proves the crate
@@ -23,6 +23,8 @@ on:
 
 permissions:
   contents: write # release-asset upload on tag builds
+  pages: write    # project website, screenshots, and web demo
+  id-token: write # deploy-pages OIDC token
 
 jobs:
   # One row per desktop toolkit, because each links a different engine: WebKitGTK 6 and Qt
@@ -100,7 +102,8 @@ jobs:
     secrets: inherit
     with:
       project-path: demo
-      targets: macos-appkit, ios-uikit, android-mdc, windows-xaml, web-dom
+      targets: macos-appkit, linux-gtk, linux-qt, windows-xaml, ios-uikit, android-mdc,
+        harmony-arkui, web-dom
       target-packages: |
         windows-xaml: webview2-runtime
       # The CLI that builds, and the framework revision: with no lock committed the shared
@@ -108,7 +111,13 @@ jobs:
       day-version: main
       update-day-deps: true
       scripts: dayscript/webview.yaml
+      # The x86_64 Oniro emulator has no usable ArkWeb engine. Compile the integration and
+      # exercise the demo's explicit unavailable state; real devices use webview.yaml.
+      target-scripts: |
+        harmony-arkui: dayscript/harmony-emulator.yaml
       preflight-checks: fmt, clippy, test
+      # website/site.toml opts into daysite: landing page, gallery, and /webapp/.
+      deploy-web: true
       ios-devices: |
         device=iPhone, orientation=portrait
       android-devices: |
