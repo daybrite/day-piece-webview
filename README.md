@@ -77,9 +77,10 @@ app, runs JavaScript in it, and receives a link the site sends to the app. From 
 any other primary target. CI builds and runs the demo on macOS AppKit, Linux GTK and Qt,
 Windows XAML, iOS UIKit, Android MDC, HarmonyOS ArkUI, and web-dom. It checks the support
 labels, bundled page, JavaScript and app links where supported, and reloads the page.
-GTK and web-dom capture the site without evaluation. HarmonyOS now attempts the same real-browser
-walkthrough, including on x86_64. The dedicated [harmony webview workflow](.github/workflows/harmony-webview.yml)
-requires it to pass: boot errors, timeouts, missing engines, and assertion failures fail the job.
+GTK and web-dom capture the site without evaluation. On HarmonyOS the shared walkthrough checks
+the support rows, the view and the captures but skips the steps that need a page, because the
+x86_64 Oniro image CI boots cannot load ArkWeb (below). The dedicated [harmony webview workflow](.github/workflows/harmony-webview.yml)
+is the strict probe of that engine: boot errors, timeouts, missing engines, and assertion failures fail the job.
 It runs on pushes and pull requests and can also be started manually with **Run workflow**.
 The shared app workflow still treats HarmonyOS emulator failures as best-effort; use this separate
 check to assess browser support. It uploads the device logs, installed engine ABI report, and
