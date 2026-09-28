@@ -26,16 +26,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: demo
-      - uses: daybrite/actions/.github/actions/setup-day-cli@main
-        with:
-          version: main
+      - uses: daybrite/actions/.github/actions/setup-day-cli@v1
       - name: Require the current device command
         run: |
           if ! "$DAY_BIN" devices boot --help | grep -Fq "starts Oniro without a window"; then
             echo "::error::Update the day CLI: this test requires HarmonyOS headless device boot."
             exit 1
           fi
-      - uses: daybrite/actions/.github/actions/setup-day-deps@main
+      - uses: daybrite/actions/.github/actions/setup-day-deps@v1
         with:
           target: harmony-arkui
           extras: "true"
