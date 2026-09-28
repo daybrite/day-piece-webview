@@ -203,6 +203,28 @@ The showcase's Web View page shows both modes as tabs: **Remote** (the browsing 
 repository's [demo/](../demo/) loads a bundled site, runs JavaScript in it, and follows its app
 link from `dayscript/webview.yaml`.
 
+### A transparent view: `transparent`
+
+A web view normally paints a white sheet under its page. `.transparent()` turns that off, so
+wherever the page's own background is transparent the app shows through, the way an image with
+an alpha channel sits on whatever is behind it. It is for content that belongs to the app's own
+surface (an animation player, a rendered diagram, a badge), where the white sheet reads as a hole
+in the window; `day-piece-lottie`'s web player asks for it. A page that sets a background of its
+own still draws it.
+
+| Backend | How |
+| --- | --- |
+| AppKit | `drawsBackground` off, through key-value coding |
+| UIKit | a non-opaque view, clear behind the page and its scroll view |
+| GTK | `webkit_web_view_set_background_color` with a zero alpha |
+| Qt | the page's background color set to `Qt::transparent` |
+| Android | `setBackgroundColor(Color.TRANSPARENT)` |
+| XAML | WebView2's `DefaultBackgroundColor` cleared, and the placeholder label blanked once the view is up |
+| HarmonyOS | the `Web` component's `backgroundColor(Color.Transparent)` |
+| web-dom | a transparent frame with `color-scheme: normal`, so the browser paints no opaque canvas under a page whose scheme differs from the host's |
+
+The XAML and HarmonyOS arms are written but not yet verified on a device.
+
 ## Per-backend native realization
 
 | | AppKit | UIKit | Qt | Android | GTK | XAML |

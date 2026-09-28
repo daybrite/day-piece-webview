@@ -24,6 +24,7 @@ unsafe extern "C" {
         inline_start: *const c_char,
         inline_dir: *const c_char,
         link_cb: extern "C" fn(u64, *const c_char),
+        transparent: bool,
     ) -> *mut c_void;
     fn day_webview_xaml_load(handle: *mut c_void, url: *const c_char);
     fn day_webview_xaml_back(handle: *mut c_void);
@@ -147,6 +148,7 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
             cstr(&p.inline_start).as_ptr(),
             cstr(&dir).as_ptr(),
             on_link,
+            p.transparent,
         )
     })
 }

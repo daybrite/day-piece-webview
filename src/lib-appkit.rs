@@ -171,6 +171,16 @@ fn make(backend: &mut AppKit, p: &WebProps, id: NodeId) -> Retained<NSView> {
     let mtm = backend.mtm();
     // SAFETY: creates a WKWebView with a default configuration on the main thread.
     let web = unsafe { WKWebView::new(mtm) };
+    if p.transparent {
+        // WKWebView paints a white sheet under the page unless told not to. `drawsBackground` is
+        // the key Safari's own transparent views set (there is no public setter on macOS), read
+        // through key-value coding so a WebKit without it ignores the call rather than crashing.
+        unsafe {
+            let no: *mut AnyObject = msg_send![objc2::class!(NSNumber), numberWithBool: false];
+            let key = NSString::from_str("drawsBackground");
+            let _: () = msg_send![&*web, setValue: no, forKey: &*key];
+        }
+    }
     let nav = WebNav::new(mtm, id);
     unsafe { web.setNavigationDelegate(Some(ProtocolObject::from_ref(&*nav))) };
     if !p.inline_root.is_empty() {

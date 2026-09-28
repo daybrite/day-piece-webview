@@ -50,6 +50,9 @@ pub struct WebProps {
     /// the deployed `assets/data/` on web-dom) read the same either way; it is WebKit's file-URL
     /// read access and the GTK cache extraction that narrow to the site without it.
     pub inline_assets: bool,
+    /// Draw no background of the view's own, so a page whose own background is transparent shows
+    /// the app behind it ([`WebView::transparent`]). A view normally paints white under the page.
+    pub transparent: bool,
 }
 
 /// A retained browsing session: the thing that outlives the view showing it.
@@ -631,6 +634,7 @@ pub struct WebView {
     inline: Option<InlineSite>,
     inline_start: String,
     inline_assets: bool,
+    transparent: bool,
     on_link: Option<LinkDecider>,
 }
 
@@ -656,6 +660,7 @@ pub fn web_view(url: Signal<String>) -> WebView {
         inline: None,
         inline_start: String::new(),
         inline_assets: false,
+        transparent: false,
         on_link: None,
     }
 }
@@ -729,6 +734,17 @@ impl WebView {
         self.inline_assets = true;
         self
     }
+    /// Draw no background of the view's own: where the page's own background is transparent, the
+    /// app shows through, the way an image with an alpha channel sits on whatever is behind it.
+    ///
+    /// What a web view is for here is content that belongs to the app's own surface (an
+    /// animation player, a rendered diagram, a badge), where the view's usual white sheet reads as
+    /// a hole in the window. A page that sets a background of its own still draws it. Every arm
+    /// honors it (docs/webview.md "A transparent view").
+    pub fn transparent(mut self) -> Self {
+        self.transparent = true;
+        self
+    }
     /// Inline mode only: decide what happens to a navigation that leaves the site. Runs on the
     /// main thread with the target URL; without it every external link is
     /// [`LinkPolicy::OpenSystem`]. The closure may do arbitrary in-app work (navigate the day
@@ -782,6 +798,7 @@ impl Piece for WebView {
             inline,
             inline_start,
             inline_assets,
+            transparent,
             on_link,
         } = self;
         let initial = WebProps {
@@ -794,6 +811,7 @@ impl Piece for WebView {
                 String::new()
             },
             inline_assets: inline.is_some() && inline_assets,
+            transparent,
         };
         // A web view has no intrinsic size; it fills whatever space its container offers.
         let node = cx.leaf(

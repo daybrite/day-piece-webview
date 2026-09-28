@@ -53,10 +53,19 @@ fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
             )
             .ok()
         });
-        AHandle(made.unwrap_or_else(|| {
+        let view = made.unwrap_or_else(|| {
             log::warn!("day-piece-webview: DayWebView.makeWebView failed; substituting a placeholder");
             day_android::placeholder_view(env, "web_view")
-        }))
+        });
+        if p.transparent {
+            let _ = env.dcall_static(
+                WEBVIEW_CLASS,
+                "setTransparent",
+                "(Landroid/view/View;)V",
+                &[JValue::Object(view.as_obj())],
+            );
+        }
+        AHandle(view)
     })
 }
 

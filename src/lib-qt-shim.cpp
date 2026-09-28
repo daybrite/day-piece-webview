@@ -205,6 +205,13 @@ void day_webview_reload(void *w) {
     if (QWebEngineView *v = static_cast<DayWebView *>(w)->view)
         v->reload();
 }
+// Draw no background of the view's own (WebView::transparent): the page composites over what is
+// behind the widget. The container QWidget paints nothing by default, so the page is the only
+// layer that needed telling.
+void day_webview_set_transparent(void *w) {
+    if (QWebEngineView *v = static_cast<DayWebView *>(w)->view)
+        v->page()->setBackgroundColor(Qt::transparent);
+}
 
 } // extern "C"
 
@@ -242,6 +249,9 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
     lay->addWidget(l);
     w->label = l;
     return w;
+}
+void day_webview_set_transparent(void *w) {
+    (void)w; // a label paints no background of its own already
 }
 
 void day_webview_load(void *w, const char *url) {

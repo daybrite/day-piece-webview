@@ -183,6 +183,17 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
 
     let mtm = MainThreadMarker::new().unwrap();
     let web: Retained<WKWebView> = unsafe { msg_send![WKWebView::alloc(mtm), init] };
+    if p.transparent {
+        // A non-opaque view with a clear background, and the same for the scroll view the page
+        // sits in, which paints its own color under an overscroll.
+        unsafe {
+            let clear: *mut AnyObject = msg_send![objc2::class!(UIColor), clearColor];
+            let _: () = msg_send![&web, setOpaque: false];
+            let _: () = msg_send![&web, setBackgroundColor: clear];
+            let scroll: *mut AnyObject = msg_send![&web, scrollView];
+            let _: () = msg_send![scroll, setBackgroundColor: clear];
+        }
+    }
     let nav = WebNav::new(mtm, id);
     let _: () = unsafe { msg_send![&web, setNavigationDelegate: &*nav] };
     if !p.inline_root.is_empty() {

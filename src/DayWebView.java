@@ -52,6 +52,13 @@ public final class DayWebView {
         }
     }
 
+    /** Draw no background of the view's own, so a transparent page shows the app behind it. */
+    public static void setTransparent(View view) {
+        if (view instanceof WebView) {
+            view.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        }
+    }
+
     public static View makeWebView(long id, String url, String inlinePrefix) {
         WebView web = new WebView(DayBridge.ctx);
         web.getSettings().setJavaScriptEnabled(true);

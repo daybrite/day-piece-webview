@@ -39,6 +39,9 @@ class DayWebViewParams {
   // remote mode). A main-document navigation outside it is blocked in onLoadIntercept and
   // reported with num -1; the piece's Rust front-end runs the app's LinkPolicy.
   inlinePrefix: string = '';
+  // WebView::transparent: the component draws no background of its own, so a page whose own
+  // background is transparent shows the app behind it.
+  transparent: boolean = false;
   controller: webview.WebviewController;
   state: Controller;
   constructor(controller: webview.WebviewController, state: Controller) {
@@ -58,6 +61,7 @@ function dayWebViewBuilder(params: DayWebViewParams) {
   // through the ArkUI C API like every other leaf, which is what the piece's `fill_measure` asks
   // for on every other backend too.
   Web({ src: params.url, controller: params.controller })
+    .backgroundColor(params.transparent ? Color.Transparent : Color.White)
     .javaScriptAccess(true)
     .domStorageAccess(true)
     .onControllerAttached(() => {
@@ -125,14 +129,20 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
   // which ArkWeb browses through `resource://rawfile/` URLs, so relative references resolve
   // within it natively.
   const SEP: string = '\u001F';
-  if (props.startsWith('day-inline' + SEP)) {
-    const parts: string[] = props.split(SEP);
+  // A transparent view leads with its own marker (lib-arkui.rs), ahead of everything below.
+  let rest: string = props;
+  if (rest.startsWith('day-transparent' + SEP)) {
+    params.transparent = true;
+    rest = rest.substring(('day-transparent' + SEP).length);
+  }
+  if (rest.startsWith('day-inline' + SEP)) {
+    const parts: string[] = rest.split(SEP);
     const root: string = parts.length > 1 ? parts[1] : '';
     const start: string = parts.length > 2 && parts[2] !== '' ? parts[2] : 'index.html';
     params.inlinePrefix = 'resource://rawfile/day/' + root + '/';
     params.url = params.inlinePrefix + start;
   } else {
-    params.url = props;
+    params.url = rest;
   }
   const node: BuilderNode<[DayWebViewParams]> = new BuilderNode(ui);
   try {

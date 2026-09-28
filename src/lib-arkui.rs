@@ -29,6 +29,13 @@ fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
             SEP = super::SEP
         )
     };
+    // A transparent view (`WebView::transparent`) leads with its own marker, which the ArkTS side
+    // strips before reading the rest: the component's background is set when it is built.
+    let props = if p.transparent {
+        format!("day-transparent{}{props}", super::SEP)
+    } else {
+        props
+    };
     piece::make(KIND, id, &props)
 }
 

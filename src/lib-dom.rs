@@ -69,7 +69,20 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
     // same-origin reads on nearly every site. Absent is the permissive default we want.
     // The inline style fills the frame day's layout assigns, the growing-leaf contract the native
     // arms honor by sizing their native view to the same rect.
-    backend.set_attr(&h, "style", "width:100%;height:100%;border:0");
+    // A frame is transparent wherever its page is, with one exception: when the frame's color
+    // scheme differs from the page's, the browser paints an opaque canvas under it so light text
+    // cannot land on a light parent. A page that declares no scheme is `normal`, so a
+    // transparent frame declares the same, whatever the host page chose.
+    let style = if p.transparent {
+        "width:100%;height:100%;border:0;background:transparent;color-scheme:normal"
+    } else {
+        "width:100%;height:100%;border:0"
+    };
+    backend.set_attr(&h, "style", style);
+    if p.transparent {
+        // The legacy spelling some engines still read.
+        backend.set_attr(&h, "allowtransparency", "true");
+    }
     h
 }
 

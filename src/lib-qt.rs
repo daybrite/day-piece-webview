@@ -28,6 +28,7 @@ unsafe extern "C" {
     fn day_webview_forward(w: *mut c_void);
     fn day_webview_stop(w: *mut c_void);
     fn day_webview_reload(w: *mut c_void);
+    fn day_webview_set_transparent(w: *mut c_void);
     fn day_webview_set_eval_cb(cb: extern "C" fn(u64, u64, *const c_char));
     fn day_webview_eval(w: *mut c_void, req: u64, script: *const c_char);
 }
@@ -104,7 +105,7 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
             format!("/day/assets/{}/", p.inline_root),
         )
     };
-    QtHandle(unsafe {
+    let handle = QtHandle(unsafe {
         day_webview_new(
             cstr(&url).as_ptr(),
             id.0,
@@ -113,7 +114,11 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
             cstr(&path_prefix).as_ptr(),
             on_link,
         )
-    })
+    });
+    if p.transparent {
+        unsafe { day_webview_set_transparent(handle.0) };
+    }
+    handle
 }
 
 fn update(_backend: &mut Qt, h: &QtHandle, patch: &WebPatch) {

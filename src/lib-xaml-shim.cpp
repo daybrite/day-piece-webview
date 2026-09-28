@@ -104,6 +104,9 @@ struct WebViewCtx {
     std::wstring inline_prefix;
     std::wstring inline_dir;
     void (*link_cb)(uint64_t, const char *){};
+    // WebView::transparent: the engine's default background is cleared once the controller is
+    // up, and the URL label under the render visual is blanked so it cannot show through.
+    bool transparent{};
 };
 
 // The virtual host the app's asset tree is mapped under for inline sites. `.example` is
@@ -448,6 +451,17 @@ static void create_webview2(void *handle) {
                             WUXH::ElementCompositionPreview::SetElementChildVisual(c2->placeholder,
                                                                                   c2->rootVisual);
 
+                            // A transparent view: no default background under the page, and no
+                            // URL label under the view (a startup failure never reaches here, so
+                            // its diagnostic keeps the label).
+                            if (c2->transparent) {
+                                wrl::ComPtr<ICoreWebView2Controller2> ctl2;
+                                if (SUCCEEDED(c2->controller.As(&ctl2)) && ctl2)
+                                    ctl2->put_DefaultBackgroundColor(COREWEBVIEW2_COLOR{0, 0, 0, 0});
+                                if (auto tb = c2->placeholder.Child().try_as<WUXC::TextBlock>())
+                                    tb.Text(L"");
+                            }
+
                             if (c2->webview && !c2->inline_prefix.empty()) {
                                 // Inline mode: map the exe-relative assets tree under the virtual
                                 // host before the first Navigate, then police top-level
@@ -592,7 +606,7 @@ extern "C" {
 void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, const char *),
                            const char *inline_root, const char *inline_start,
                            const char *inline_dir,
-                           void (*link_cb)(uint64_t, const char *)) {
+                           void (*link_cb)(uint64_t, const char *), bool transparent) {
     // The boxed element day lays out: a transparent (hit-testable) Border carrying a faint URL label.
     // The browser's render visual is spliced in as the Border's child visual and covers the label;
     // if startup fails, the label displays the diagnostic instead of remaining just a URL.
@@ -622,6 +636,7 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
     c->inline_prefix = prefix;
     c->inline_dir = inlined && inline_dir ? std::wstring(hs(inline_dir).c_str()) : std::wstring();
     c->link_cb = link_cb;
+    c->transparent = transparent;
     UINT dpi = c->parent ? GetDpiForWindow(c->parent) : 96;
     c->scale = (dpi ? dpi : 96) / 96.0;
     g_webviews[handle] = c;

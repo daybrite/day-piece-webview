@@ -73,6 +73,14 @@ fn extract_tree(res_dir: &str, dest: &std::path::Path) -> Result<(), String> {
 
 fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
     let wv = webkit6::WebView::new();
+    if p.transparent {
+        // WebKitGTK composites the page over this color; a zero alpha is its documented way to
+        // draw no background of its own.
+        webkit6::prelude::WebViewExt::set_background_color(
+            &wv,
+            &gtk4::gdk::RGBA::new(0.0, 0.0, 0.0, 0.0),
+        );
+    }
     // Report the current URL back on every navigation so a bound text field follows.
     wv.connect_uri_notify(move |wv| {
         if let Some(uri) = wv.uri() {
