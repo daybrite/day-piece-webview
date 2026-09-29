@@ -122,6 +122,21 @@ frameworks = ["WebKit"]
 [package.metadata.day.macos]
 frameworks = ["WebKit"]
 
+# --- AppImage launcher default (docs/extending.md) ---
+# WebKitGTK runs its web and network processes inside a bubblewrap sandbox. Bubblewrap asks the
+# kernel to bring up loopback in a fresh network namespace, which needs CAP_NET_ADMIN there, and
+# Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns` grants that only to binaries with
+# an AppArmor profile. A distro's own `/usr/libexec/webkit2gtk-6.0/*` has one; the same helper
+# unpacked at a random path inside an AppImage does not, so bwrap fails with "loopback: Failed
+# RTM_NEWADDR" and WebKit's IPC then aborts the whole app ("failed to receive credentials") the
+# moment a page loads. Skipping the sandbox is the documented escape hatch and what other
+# WebKitGTK AppImages do; it applies to the AppImage alone, never to a distro or Flatpak build
+# (flatpak.rs reads none of this), and a value the user already set still wins.
+[[package.metadata.day.appimage.env]]
+toolkit = "gtk"
+name = "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"
+value = "1"
+
 # Qt's Flatpak runtime does not include its browser engine. Only bundle this base when
 # the executable actually links the engine; builds using the URL-label fallback stay small.
 [[package.metadata.day.flatpak.bases]]
