@@ -7,6 +7,9 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 ## Unreleased
 
+- Fixed: Linux GTK JavaScript evaluation timed out on web views with an automation ID.
+  Evaluation replies now retain the internal node ID separately from GTK's widget name,
+  which Day replaces with the automation ID.
 - New: `WebView::app_assets()` — an inline site that reads the app's own files rather than only
   its own directory. WebKit's file-URL read access widens to the asset tree, and the GTK arm
   extracts the whole tree and allows file-URL fetches; the backends whose browsable base is

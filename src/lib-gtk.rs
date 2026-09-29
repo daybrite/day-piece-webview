@@ -14,6 +14,12 @@ use day_spec::NodeId;
 use gtk4::prelude::*;
 use webkit6::prelude::*;
 
+// Day assigns the automation ID to GtkWidget:name after make(), so that mutable
+// presentation property cannot carry the node ID used to route evaluation replies.
+day_core::tls_group! {
+    static NODE_IDS: RefCell<HashMap<usize, NodeId>> = RefCell::new(HashMap::new());
+}
+
 /// Extract an inline site's tree from the GResource blob to the user cache dir, once per
 /// process per root (docs/webview.md): WebKitGTK cannot browse a GResource, so the site becomes
 /// loose files and the view loads a `file://` URL. Returns the extracted site root.
@@ -81,7 +87,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             &gtk4::gdk::RGBA::new(0.0, 0.0, 0.0, 0.0),
         );
     }
-    wv.set_widget_name(&format!("day-webview-{}", id.0));
+    NODE_IDS.with(|ids| ids.borrow_mut().insert(wv.as_ptr() as usize, id));
     // Report the current URL back on every navigation so a bound text field follows.
     wv.connect_uri_notify(move |wv| {
         if let Some(uri) = wv.uri() {
@@ -182,10 +188,7 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
         WebPatch::Reload => wv.reload(),
         // WebKitGTK replies asynchronously; forward the wrapped string on the request channel.
         WebPatch::Eval { req, script } => {
-            let Some(id) = wv
-                .widget_name()
-                .strip_prefix("day-webview-")
-                .and_then(|s| s.parse::<u64>().ok())
+            let Some(id) = NODE_IDS.with(|ids| ids.borrow().get(&(wv.as_ptr() as usize)).copied())
             else {
                 return;
             };
@@ -201,7 +204,7 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
                         Err(error) => super::engine_error("WebKitError", &error.to_string()),
                     };
                     day_gtk::emit(
-                        NodeId(id),
+                        id,
                         Event::Custom {
                             tag: "webview:eval",
                             num: req as f64,
@@ -214,6 +217,10 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
     }
 }
 
+fn release(_backend: &mut Gtk, h: &gtk4::Widget) {
+    NODE_IDS.with(|ids| ids.borrow_mut().remove(&(h.as_ptr() as usize)));
+}
+
 day_pieces::renderer!(day_gtk::RENDERERS, Gtk,
     kind: KIND, props: WebProps, patch: WebPatch,
-    make: make, update: update, measure: day_pieces::fill_measure);
+    make: make, update: update, measure: day_pieces::fill_measure, release: release);
