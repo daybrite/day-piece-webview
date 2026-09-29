@@ -1,6 +1,7 @@
 /target
 /demo/target
 /demo/build
+__pycache__/
 
 # No lock, here or in demo/. Every day crate is a bare git dependency on main, and this
 # repository's job is to prove itself against the newest one: CI resolves a fresh lock on every

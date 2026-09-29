@@ -120,3 +120,19 @@ jobs:
         device=iPhone, orientation=portrait
       android-devices: |
         device=pixel_7,     os=36, orientation=portrait
+
+  # The same walkthrough paints a marker on every target. Checking the Harmony captures
+  # separately catches a working JS engine with a blank GPU surface, without a second suite.
+  harmony-rendering:
+    needs: demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: screenshots-harmony-arkui*
+          path: harmony-screenshots
+          merge-multiple: true
+      - run: python3 -m pip install 'Pillow==11.3.0'
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - run: python3 scripts/verify-webview-render.py harmony-screenshots

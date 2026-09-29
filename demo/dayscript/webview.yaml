@@ -1,20 +1,4 @@
-# The demo's walkthrough (https://daybrite.dev/docs/dayscript), and the crate's on-device test. CI
-# attempts the real web view on every primary target with an engine to attempt. HarmonyOS is
-# the exception for now: CI's x86_64 Oniro image ships ArkWeb with arm64-only native
-# libraries, so the engine never loads there (its controller never attaches and an eval waits
-# forever), and the steps that need a page are off on arkui until an image carries an x86_64
-# ArkWeb; the support rows, the view's presence and the captures still run there, and the
-# strict harmony-webview workflow keeps probing the engine. Nowhere else is a missing engine
-# replaced with an unavailable-state test.
-# The same commands run it on a development machine:
-#
-#     day launch -p macos-appkit --script dayscript/webview.yaml
-#     day launch -p ios-uikit --script dayscript/webview.yaml
-#     day launch -p android-mdc --script dayscript/webview.yaml
-#     day launch -p windows-xaml --script dayscript/webview.yaml
-#     day launch -p web-dom --script dayscript/webview.yaml
-#
-# Every page the view shows ships in resource/assets/site/, so no step waits on a network.
+# One walkthrough for every primary target, including Harmony with the shared CI runtime.
 name: webview
 description: Check the support the piece reports, load the bundled site, run JavaScript in it, and follow the site's link back to the app.
 flow:
@@ -37,25 +21,25 @@ flow:
       text: "The bundled script ran."
       # WebView2's first process startup on a fresh Windows runner can exceed five seconds.
       timeout_secs: 30
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom]
+      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
   - web_eval:
       id: webview
       script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()"
       text: "yes"
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom]
+      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
   # Exercise both ASCII protocol separators and a UTF-16 surrogate pair on Windows.
   - web_eval:
       id: webview
       script: "'caf\\u00e9 \\uD83C\\uDF05'"
       text: "café 🌅"
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom]
+      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
   - assert_no_placeholders: {}
   - screenshot: { name: webview, title: "Bundled site" }
 
   # The console: the page's answer comes back as JSON, so a string arrives quoted.
-  - input: { id: webview-js, text: "document.title", only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom] }
-  - tap: { id: webview-js-run, only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom] }
-  - assert_text: { id: webview-js-result, text: '"Bundled site"', only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom] }
+  - input: { id: webview-js, text: "document.title", only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
+  - tap: { id: webview-js-run, only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
+  - assert_text: { id: webview-js-result, text: '"Bundled site"', only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
 
   # A webviewdemo:// link leaves the site, so the view cancels it and the link policy hands the
   # route to the app, which records it and keeps the system browser closed.
@@ -63,21 +47,28 @@ flow:
       id: webview
       script: "document.getElementById('app-link').click(); 'clicked'"
       text: "clicked"
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom]
-  - assert_text: { id: webview-link, key: link_received, args: { route: "greeting" }, only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom] }
-  - screenshot: { name: webview-link, title: "A link from the page", only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom] }
+      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
+  - assert_text: { id: webview-link, key: link_received, args: { route: "greeting" }, only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
+  - screenshot: { name: webview-link, title: "A link from the page", only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
 
   # Reload is supported even where eval is not. Where it is, prove this is a fresh document.
   - web_eval:
       id: webview
       script: "window.dayDemoMarker = 1"
       text: "1"
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom]
+      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
   - tap: { id: webview-reload }
   - web_eval:
       id: webview
       script: "typeof window.dayDemoMarker + ':' + document.getElementById('script-status').textContent"
       text: "undefined:The bundled script ran."
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom]
+      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
   - assert_visible: { id: webview }
   - screenshot: { name: webview-reloaded, title: "Reloading the bundled site" }
+
+  # A browser can evaluate JS while its GPU surface stays blank. CI checks these pixels too.
+  - web_eval:
+      id: webview
+      script: "document.body.style.backgroundColor = '#12d9a4'; 'painted'"
+      text: "painted"
+  - screenshot: { name: webview-render-proof, title: "Browser paint verification" }
