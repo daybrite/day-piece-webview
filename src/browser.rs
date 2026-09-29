@@ -7,10 +7,23 @@ day_bridge::bridge! {
     #[day_bridge::declare]
     extern "day" {
         fn attach_browser(id: i32, base: &str);
+        fn eval_browser(id: i32, req: f64, script: &str);
     }
 
     #[day_bridge::impl(js, platforms = [web])]
     js!(r#"
+        function eval_browser(id, req, script) {
+            let reply;
+            try {
+                const frame = dayHost.dom.element(id);
+                if (!frame?.contentDocument) throw new Error('Frame is unavailable or cross-origin');
+                reply = frame.contentWindow.eval(script);
+                if (typeof reply !== 'string') throw new Error('Non-string evaluation reply');
+            } catch (error) {
+                reply = '0\u001f' + (error.name || 'Error') + '\u001f' + error.message;
+            }
+            dayHost.dom.emit(id, req, reply);
+        }
         function attach_browser(id, base) {
             const frame = dayHost.dom.element(id);
             const site = new URL(base, document.baseURI);
@@ -44,8 +57,14 @@ day_bridge::bridge! {
     "#);
     #[day_bridge::impl(rust, platforms = [other])]
     fn attach_browser(id: i32, base: &str) { let _ = (id, base); }
+    #[day_bridge::impl(rust, platforms = [other])]
+    fn eval_browser(id: i32, req: f64, script: &str) { let _ = (id, req, script); }
 }
 
 pub(crate) fn attach(id: i32, base: &str) {
     attach_browser(id, base);
+}
+
+pub(crate) fn eval(id: i32, req: f64, script: &str) {
+    eval_browser(id, req, script);
 }

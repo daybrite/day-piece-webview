@@ -43,7 +43,7 @@ implements `Piece`, so `.id()`/`.a11y()`/`.frame()` chain via `Decorate`. It's a
 `day_piece_webview::support()` reports what the running backend realizes. `Native` is an embedded
 browser engine with the full command set. `Emulated` loads pages but cannot drive history or report
 navigation back (web-dom's `<iframe>`; see the note below). `Unsupported` renders day's placeholder
-leaf (macos-gtk and windows-gtk, which have no WebKitGTK). Gate history controls on it:
+leaf where no renderer is compiled. Gate history controls on it:
 
 ```rust
 let history = support() == Support::Native;
@@ -66,10 +66,10 @@ direct-HTML API yet).
 
 Evaluating JavaScript and reading a value back is covered in day's [docs/webview-eval.md](https://github.com/daybrite/day/blob/main/docs/webview-eval.md), which keeps the per-platform support list current:
 `JsHandle::eval(script).await` returns the value as JSON, or the error the script threw. Ask
-`eval_support()` before offering it: AppKit, UIKit, Qt, XAML, Android and ArkWeb have working
-arms; GTK has an engine but no arm yet, windows-qt ships no engine, and web-dom can never have
-one (`contentWindow.eval` throws across origins). See [webview-eval.md](https://github.com/daybrite/day/blob/main/docs/webview-eval.md) for
-the per-platform research, the JavaScript envelope, and what each arm does.
+`eval_support()` before offering it. AppKit, UIKit, Qt, XAML, Android, ArkWeb and Linux GTK
+have evaluation arms. macOS GTK uses WKWebView; Windows GTK/Qt use WebView2 through Wry.
+web-dom evaluates bundled/same-origin frames; remote cross-origin frames answer an engine error.
+See [webview-eval.md](webview-eval.md) for the value envelope and lifetime contract.
 
 ### Sessions (surviving navigation)
 
@@ -193,7 +193,7 @@ Per backend (gate on `inline_support()`):
 | web-dom | the deployed `assets/data/<dir>/…` URL, same origin as the host page, so the browser resolves the site and the crate's capture-phase click hook in `src/browser.rs` polices leaving links | in-frame click hook → `dayHost.dom.emit` |
 
 Every backend with a web engine reports `Native`; `Unsupported` remains only where there is no
-engine at all (macos-gtk / windows-gtk, which have no WebKitGTK build). Qt, XAML and GTK have
+engine compiled in. Qt, XAML and GTK have
 passed their CI walkthroughs; Qt was additionally exercised live on macos-qt. ArkWeb is
 compile-verified through HAP packaging and signing, but its browser behavior still needs
 validation in the dedicated `harmony webview` CI workflow.
@@ -239,10 +239,15 @@ in CI; the GTK `webkit6` API is verified against the crate source, and both are 
 gallery.
 
 **Backend notes:**
-- **GTK**: WebKitGTK 6 via the `webkit6` crate. **Linux/Windows only**: Homebrew's `webkitgtk` vends the
-  GTK3 API and has no bottle, and WebKitGTK isn't viable on macOS-quartz, so `webkit6` is a non-macOS
-  target dependency and `macos-gtk` falls back to a placeholder leaf. The CI Linux/Windows GTK jobs
-  install `libwebkitgtk-6.0-dev` / `mingw-w64-x86_64-webkitgtk6`.
+- **GTK**: Linux uses WebKitGTK 6 (`webkit6`). macOS uses WKWebView attached to the
+  GTK window's Cocoa content view. A GTK allocation anchor and frame-clock callback keep
+  its bounds current; unmap detaches it and release drops its delegate. Windows uses Wry's
+  WebView2 child host positioned from the GTK allocation. GTK bundled resources are extracted
+  into a per-app cache before navigation. Windows rendering/input still needs runtime validation.
+- **Windows Qt without Qt WebEngine**: a native QWidget hosts a WebView2 child. Bundled qrc
+  files are extracted to the widget's temporary directory; disposal closes the browser before
+  removing those files. The browser follows the widget's native clipping and visibility. This
+  arm does not retain `WebSession` instances across navigation. Install WebView2 Runtime.
 - **ArkUI (HarmonyOS)**: the ArkTS `Web` component. The ArkUI **C** node API has no Web node kind, so
   this is the first piece whose native half is ArkTS: the crate ships `platform/harmony/ets/Index.ets`, `day build`
   stages it into the app's hvigor project (`[package.metadata.day.ohos]`), and day-arkui's generic piece
@@ -268,9 +273,8 @@ gallery.
   would navigate the app off the page hosting the frame, because day's web router owns that stack
   (`pushState` on hash routes).
 
-  Same-origin content has none of these limits, but a piece cannot know the origin before loading and
-  the failure is silent when it guesses wrong, so the arm reports `Support::Emulated` and behaves
-  identically either way rather than working only sometimes. `Reload` re-assigns the last URL day set,
+  History and URL readback remain `Support::Emulated`. Evaluation explicitly checks frame access
+  and supports same-origin content; an inaccessible frame returns an error. `Reload` re-assigns the last URL day set,
   not wherever the frame has since navigated to, and the arm keeps that URL itself because day-dom is
   write-only (`set_attr` with no getter). No `sandbox` attribute is set: present-but-empty is
   deny-everything, which breaks scripts and forms on nearly every real site. A site that refuses

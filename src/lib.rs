@@ -263,23 +263,22 @@ impl IntoInlineSite for day_core::AssetDir {
 /// Whether this backend can show an inline (app-embedded) site. A separate axis from
 /// [`support`]: web-dom's iframe is `Emulated` for remote browsing but fully capable here:
 /// the bundled site is same-origin, so loading, relative navigation and the link policy all
-/// work. `Unsupported` remains only where there is no web engine at all (macos-gtk and
-/// windows-gtk have no WebKitGTK build), and the view realizes the placeholder.
+/// work. `Unsupported` means no renderer is compiled for this target.
 pub fn inline_support() -> day_spec::Support {
     if cfg!(any(
-        all(feature = "appkit", target_os = "macos"),
+        all(
+            any(feature = "appkit", feature = "gtk"),
+            target_os = "macos"
+        ),
         all(feature = "uikit", target_os = "ios"),
         all(feature = "mdc", target_os = "android"),
-        // QWebEngine reads the qrc-staged asset tree natively. windows-qt has no engine
-        // (MSYS2 packages no Qt WebEngine) and degrades to the URL label at runtime, the
-        // same overstatement `support()` already makes there.
+        // QWebEngine reads qrc assets; Windows without that engine uses a WebView2 child.
         feature = "qt",
         // WebView2 browses the exe-relative assets tree through a virtual-host mapping
         // (degrades to the URL label when the WebView2 Runtime is absent, like `support()`).
         all(feature = "xaml", windows),
-        // WebKitGTK reads the site from the cache extraction `prepare_site`/realize performs
-        // (linux only; macos-gtk/windows-gtk have no WebKitGTK and realize the placeholder).
-        all(feature = "gtk", not(target_os = "macos"), not(windows)),
+        // GTK hosts extract the bundled site before navigation.
+        all(feature = "gtk", not(target_os = "macos")),
         // ArkWeb browses the rawfile-staged tree through `resource://rawfile/` URLs.
         all(feature = "arkui", target_env = "ohos"),
         // The deployed `assets/data/` tree is same-origin with the host page: the browser
@@ -595,12 +594,17 @@ impl Drop for EvalFuture {
 }
 
 /// Whether this backend can evaluate JavaScript. A separate axis from [`support`]: web-dom loads
-/// pages but cannot evaluate in them, so the two answers differ there.
+/// pages but can evaluate only same-origin frames.
 pub fn eval_support() -> day_spec::Support {
     if cfg!(any(
-        all(feature = "appkit", target_os = "macos"),
+        all(
+            any(feature = "appkit", feature = "gtk"),
+            target_os = "macos"
+        ),
         all(feature = "uikit", target_os = "ios"),
         feature = "qt",
+        all(feature = "dom", target_arch = "wasm32"),
+        all(feature = "gtk", not(target_os = "macos")),
         all(feature = "xaml", target_os = "windows"),
         // `evaluateJavascript` in DayWebView.evalJs, with the outer-JSON unquote and the
         // null/empty→engine-error mapping (docs/webview-eval.md).
@@ -610,9 +614,7 @@ pub fn eval_support() -> day_spec::Support {
     )) {
         day_spec::Support::Native
     } else {
-        // GTK has an engine and an equivalent call; its arm is not written yet
-        // (docs/webview-eval.md). web-dom cannot ever do this for remote pages:
-        // `contentWindow.eval` throws across origins.
+        // No renderer with a JavaScript engine on this platform.
         day_spec::Support::Unsupported
     }
 }
@@ -762,18 +764,17 @@ impl WebView {
 /// Gate history controls on this: `.back()`, `.forward()` and `.stop()` are no-ops below `Native`,
 /// so an app should disable those buttons rather than offer ones that do nothing.
 pub fn support() -> day_spec::Support {
-    // WebKitGTK 6 ships as a package only on Linux, so the gtk arm is compiled out on macos-gtk and
-    // windows-gtk and those two combos realize the placeholder (Cargo.toml scopes `webkit6` to
-    // match). Checked first: the `gtk` feature is on for all three.
-    if cfg!(all(feature = "gtk", any(target_os = "macos", windows))) {
-        day_spec::Support::Unsupported
-    } else if cfg!(all(feature = "dom", target_arch = "wasm32")) {
+    // Browser frames retain remote-navigation restrictions. Native hosts supply an engine.
+    if cfg!(all(feature = "dom", target_arch = "wasm32")) {
         day_spec::Support::Emulated
     } else if cfg!(any(
-        all(feature = "appkit", target_os = "macos"),
+        all(
+            any(feature = "appkit", feature = "gtk"),
+            target_os = "macos"
+        ),
         all(feature = "uikit", target_os = "ios"),
         all(feature = "mdc", target_os = "android"),
-        all(feature = "gtk", not(target_os = "macos"), not(windows)),
+        all(feature = "gtk", not(target_os = "macos")),
         feature = "qt",
         all(feature = "xaml", windows),
         all(feature = "arkui", target_env = "ohos"),
@@ -896,14 +897,25 @@ impl Piece for WebView {
 // files grouped next to lib.rs.
 // ---------------------------------------------------------------------------
 
+#[cfg(all(any(target_os = "macos", windows), feature = "gtk"))]
+mod gtk_assets;
+#[cfg(all(target_os = "macos", feature = "gtk"))]
+#[path = "lib-gtk-macos.rs"]
+mod gtk_macos;
+#[cfg(all(windows, feature = "gtk"))]
+#[path = "lib-gtk-windows.rs"]
+mod gtk_windows;
+#[cfg(all(target_os = "macos", any(feature = "appkit", feature = "gtk")))]
+mod macos_web;
+#[cfg(all(windows, any(feature = "gtk", feature = "qt")))]
+mod windows_web;
+
 day_pieces::glue_modules!(appkit, qt, uikit, mdc, xaml, arkui, dom);
 
 #[cfg(any(test, all(feature = "xaml", windows)))]
 mod xaml_path;
 
-// GTK web view is Linux only: WebKitGTK 6 (webkit6) isn't viable on macOS and has no MSYS2
-// package on Windows, so both fall back to Day's placeholder leaf (see Cargo.toml's webkit6 target
-// gate).
+// Linux GTK uses WebKitGTK; the other GTK hosts are registered above.
 #[cfg(all(feature = "gtk", not(target_os = "macos"), not(windows)))]
 #[path = "lib-gtk.rs"]
 mod gtk_impl;

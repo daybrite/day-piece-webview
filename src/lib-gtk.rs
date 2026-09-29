@@ -81,6 +81,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             &gtk4::gdk::RGBA::new(0.0, 0.0, 0.0, 0.0),
         );
     }
+    wv.set_widget_name(&format!("day-webview-{}", id.0));
     // Report the current URL back on every navigation so a bound text field follows.
     wv.connect_uri_notify(move |wv| {
         if let Some(uri) = wv.uri() {
@@ -179,10 +180,37 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
         }
         WebPatch::Stop => wv.stop_loading(),
         WebPatch::Reload => wv.reload(),
-        // Not implemented on this backend yet (docs/webview-eval.md). `eval_support()`
-        // reports Unsupported, so the front-end resolves the future without dispatching
-        // and this arm is unreachable; it exists to keep the match exhaustive.
-        WebPatch::Eval { .. } => {}
+        // WebKitGTK replies asynchronously; forward the wrapped string on the request channel.
+        WebPatch::Eval { req, script } => {
+            let Some(id) = wv
+                .widget_name()
+                .strip_prefix("day-webview-")
+                .and_then(|s| s.parse::<u64>().ok())
+            else {
+                return;
+            };
+            let req = *req;
+            wv.evaluate_javascript(
+                script,
+                None,
+                None,
+                None::<&gtk4::gio::Cancellable>,
+                move |result| {
+                    let payload = match result {
+                        Ok(value) => value.to_str().to_string(),
+                        Err(error) => super::engine_error("WebKitError", &error.to_string()),
+                    };
+                    day_gtk::emit(
+                        NodeId(id),
+                        Event::Custom {
+                            tag: "webview:eval",
+                            num: req as f64,
+                            text: payload,
+                        },
+                    );
+                },
+            );
+        }
     }
 }
 

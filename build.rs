@@ -9,6 +9,7 @@
 fn main() {
     day_build::bridge::generate().expect("webview browser bridge");
     println!("cargo:rerun-if-changed=src/lib-qt-shim.cpp");
+    println!("cargo:rerun-if-changed=src/lib-qt-windows.inc");
     println!("cargo:rerun-if-changed=src/lib-xaml-shim.cpp");
     println!("cargo:rerun-if-changed=src/xaml-strings.h");
     println!("cargo:rerun-if-changed=build.rs");
@@ -36,8 +37,8 @@ fn build_qt() {
         "Qt6WebEngineWidgets" // --cflags pull in Qt6Core/Gui/Widgets too
     } else {
         println!(
-            "cargo:warning=Qt6WebEngineWidgets not found; day-piece-webview degrades to a URL \
-             label on qt (no native browser)."
+            "cargo:warning=Qt6WebEngineWidgets not found; day-piece-webview uses WebView2 on Windows, otherwise a URL \
+             label (no native browser)."
         );
         "Qt6Widgets"
     };

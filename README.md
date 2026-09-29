@@ -51,19 +51,23 @@ policy, and each platform's engine.
 
 | Target | Engine | Remote pages | Bundled site | JavaScript |
 |---|---|---|---|---|
-| macos-appkit, ios-uikit | `WKWebView` | Native | Native | Native |
+| macos-appkit, macos-gtk, ios-uikit | `WKWebView` | Native | Native | Native |
 | android-mdc | `android.webkit.WebView` | Native | Native | Native |
 | linux-qt, macos-qt | `QWebEngineView` | Native | Native | Native |
-| linux-gtk | WebKitGTK 6 | Native | Native | Unsupported |
-| windows-xaml | WebView2 | Native | Native | Native |
+| linux-gtk | WebKitGTK 6 | Native | Native | Native |
+| windows-xaml, windows-gtk, windows-qt | WebView2 | Native | Native | Native |
 | harmony-arkui | ArkWeb | Native | Native | Native |
-| web-dom | `<iframe>` | Emulated | Native | Unsupported |
+| web-dom | `<iframe>` | Emulated | Native | Same-origin only |
 
 `support()`, `inline_support()`, and `eval_support()` return these answers at run time, so an app
-can disable a control the platform cannot back. macos-gtk and windows-gtk have no WebKitGTK build
-and render Day's placeholder. MSYS2 packages no Qt WebEngine, so on windows-qt the view shows the
-page's URL as a label. On web-dom the browser keeps a cross-origin frame's history and URL from
-the host page, so Back, Forward, and Stop do nothing there.
+can disable a control the platform cannot back. macOS GTK hosts WKWebView in its Cocoa window;
+Windows GTK and Qt use WebView2 child windows through Wry when Qt WebEngine is unavailable.
+These child hosts need runtime testing on Windows; their Rust host cross-checks against MSVC,
+and the Qt shim has a local syntax check. Install the WebView2 Runtime on Windows.
+Native child hosts have normal window-composition limits: avoid overlapping toolkit popovers
+or placing them inside scrolling/clipped containers without testing those arrangements.
+On web-dom, evaluation works in bundled/same-origin frames and returns an engine error for
+cross-origin frames. Back, Forward, and Stop remain unavailable there.
 
 ## Demo
 
@@ -77,7 +81,7 @@ app, runs JavaScript in it, and receives a link the site sends to the app. From 
 any other primary target. CI builds and runs the demo on macOS AppKit, Linux GTK and Qt,
 Windows XAML, iOS UIKit, Android MDC, HarmonyOS ArkUI, and web-dom. It checks the support
 labels, bundled page, JavaScript and app links where supported, and reloads the page.
-GTK and web-dom capture the site without evaluation. On HarmonyOS the shared walkthrough checks
+GTK and web-dom also exercise bundled-site evaluation. On HarmonyOS the shared walkthrough checks
 the support rows, the view and the captures but skips the steps that need a page, because the
 x86_64 Oniro image CI boots cannot load ArkWeb (below). The dedicated [harmony webview workflow](.github/workflows/harmony-webview.yml)
 is the strict probe of that engine: boot errors, timeouts, missing engines, and assertion failures fail the job.

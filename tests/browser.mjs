@@ -79,3 +79,26 @@ test('inaccessible frame documents do not break the host', () => {
     assert.equal(click(old, 'webviewdemo://stale'), false);
     s.release();
 });
+
+test('same-origin evaluation delivers the wrapped result to the matching request', () => {
+    const events = [];
+    const frame = { contentDocument: {}, contentWindow: { eval: script => {
+        assert.equal(script, 'wrapped script'); return '1\u001f42';
+    } } };
+    const evaluate = runInNewContext(`${arm}\neval_browser`, {
+        dayHost: { dom: { element: () => frame, emit: (...args) => events.push(args) } },
+    });
+    evaluate(7, 123, 'wrapped script');
+    assert.deepEqual(events, [[7, 123, '1\u001f42']]);
+});
+
+test('cross-origin or destroyed frames answer with an error instead of stranding evaluation', () => {
+    const events = [];
+    const evaluate = runInNewContext(`${arm}\neval_browser`, {
+        dayHost: { dom: { element: () => ({ contentDocument: null }), emit: (...args) => events.push(args) } },
+    });
+    evaluate(8, 124, 'anything');
+    assert.equal(events[0][0], 8);
+    assert.equal(events[0][1], 124);
+    assert.match(events[0][2], /^0\u001fError\u001f.*cross-origin/);
+});
