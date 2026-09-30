@@ -112,6 +112,9 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                 response.set_status(r.status as u32, Some("Resource"));
                 let headers =
                     webkit6::soup::MessageHeaders::new(webkit6::soup::MessageHeadersType::Response);
+                // nosniff checks inspect the HTTP Content-Type header, not only the
+                // URISchemeResponse MIME property. Without it WebKit rejects JS/CSS.
+                headers.append("Content-Type", &r.mime);
                 for (k, v) in r.headers {
                     headers.append(&k, &v);
                 }
