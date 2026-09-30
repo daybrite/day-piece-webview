@@ -26,8 +26,8 @@ build = "build.rs"
 [features]
 appkit = ["dep:day-appkit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
 # GTK uses WebKitGTK on Linux, WKWebView on macOS, and WebView2 through Wry on Windows.
-gtk = ["dep:wry", "dep:serde_json", "dep:url", "dep:day-gtk", "dep:gtk4", "dep:webkit6", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
-qt = ["dep:day-qt", "dep:wry", "dep:serde_json", "dep:url"]                 # + build.rs compiles src/lib-qt-shim.cpp, linking Qt6WebEngineWidgets when present (else a URL-label fallback)
+gtk = ["dep:wry", "dep:day-gtk", "dep:gtk4", "dep:webkit6", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
+qt = ["dep:day-qt", "dep:wry", ]                 # + build.rs compiles src/lib-qt-shim.cpp, linking Qt6WebEngineWidgets when present (else a URL-label fallback)
 # objc2-web-kit 0.3 binds WKWebView for macOS only, so UIKit hand-rolls it via extern_class!/msg_send!.
 uikit = ["dep:day-uikit", "dep:objc2", "dep:objc2-ui-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:block2"]
 mdc = ["dep:day-android"]        # + [package.metadata.day.android]
@@ -50,8 +50,13 @@ compat = "0.4"
 # with no per-backend feature fan-out in its own Cargo.toml.
 [package.metadata.day.piece]
 backends = ["appkit", "gtk", "qt", "uikit", "mdc", "xaml", "arkui", "dom"]
+assets = ["web"]
 
 [dependencies]
+day-async = { git = "https://github.com/daybrite/day.git" }
+url = "2"
+percent-encoding = "2"
+serde_json = "1"
 day-bridge = { git = "https://github.com/daybrite/day.git" }
 log = "0.4"
 day-spec = { git = "https://github.com/daybrite/day.git" }
@@ -156,5 +161,3 @@ objc2-web-kit = { version = "0.3", optional = true, features = ["WKWebView", "WK
 
 [target.'cfg(windows)'.dependencies]
 wry = { version = "0.57", default-features = false, optional = true }
-serde_json = { version = "1", optional = true }
-url = { version = "2", optional = true }

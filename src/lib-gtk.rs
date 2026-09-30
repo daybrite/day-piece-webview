@@ -78,7 +78,49 @@ fn extract_tree(res_dir: &str, dest: &std::path::Path) -> Result<(), String> {
 }
 
 fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
-    let wv = webkit6::WebView::new();
+    let context = webkit6::WebContext::new();
+    if let Some(provider) = &p.resources {
+        let provider = provider.id();
+        if let Some(security) = context.security_manager() {
+            security.register_uri_scheme_as_secure("day-resource");
+            security.register_uri_scheme_as_cors_enabled("day-resource");
+        }
+        context.register_uri_scheme("day-resource", move |request| {
+            let uri = request.uri().map(|u| u.to_string()).unwrap_or_default();
+            let method = request
+                .http_method()
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| "GET".into());
+            let range = request
+                .http_headers()
+                .and_then(|h| h.one("Range"))
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let request = request.clone();
+            let (tx, rx) = day_async::oneshot();
+            super::resources::background(move || {
+                tx.send(super::resources::respond(provider, &uri, &method, &range))
+            });
+            gtk4::glib::MainContext::default().spawn_local(async move {
+                let Ok(r) = rx.await else { return };
+                let length = r.body.len() as i64;
+                let stream = gtk4::gio::MemoryInputStream::from_bytes(
+                    &gtk4::glib::Bytes::from_owned(r.body),
+                );
+                let response = webkit6::URISchemeResponse::new(&stream, length);
+                response.set_content_type(&r.mime);
+                response.set_status(r.status as u32, Some("Resource"));
+                let headers =
+                    webkit6::soup::MessageHeaders::new(webkit6::soup::MessageHeadersType::Response);
+                for (k, v) in r.headers {
+                    headers.append(&k, &v);
+                }
+                response.set_http_headers(headers);
+                request.finish_with_response(&response);
+            });
+        });
+    }
+    let wv = webkit6::WebView::builder().web_context(&context).build();
     if p.transparent {
         // WebKitGTK composites the page over this color; a zero alpha is its documented way to
         // draw no background of its own.
@@ -163,6 +205,33 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             Err(e) => log::warn!("day-piece-webview: inline site {:?}: {e}", p.inline_root),
         }
     } else if !p.url.is_empty() {
+        if let Some(provider) = &p.resources {
+            let base = provider.base_url();
+            wv.connect_decide_policy(move |_, decision, kind| {
+                if kind != webkit6::PolicyDecisionType::NavigationAction {
+                    return false;
+                }
+                let uri = decision
+                    .downcast_ref::<webkit6::NavigationPolicyDecision>()
+                    .and_then(|d| d.navigation_action())
+                    .and_then(|a| a.request())
+                    .and_then(|r| r.uri());
+                let Some(uri) = uri else { return false };
+                if uri.starts_with(&base) || uri.starts_with("about:") {
+                    return false;
+                }
+                decision.ignore();
+                day_gtk::emit(
+                    id,
+                    Event::Custom {
+                        tag: "webview:link",
+                        num: super::LINK_REPORT,
+                        text: uri.to_string(),
+                    },
+                );
+                true
+            });
+        }
         wv.load_uri(&p.url);
     }
     wv.upcast()

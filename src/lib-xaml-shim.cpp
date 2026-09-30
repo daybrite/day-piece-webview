@@ -50,6 +50,12 @@
 #include <string>
 
 #include "xaml-strings.h"
+#include "resources.h"
+#include <winrt/Windows.UI.Core.h>
+#include <memory>
+#include <algorithm>
+#include <cstdlib>
+#include <cwchar>
 
 using namespace winrt;
 namespace WF = winrt::Windows::Foundation;
@@ -102,12 +108,54 @@ struct WebViewCtx {
     // (empty = remote mode), the local folder that host maps to (empty = the exe-relative
     // default), and the callback a cancelled external navigation reports through.
     std::wstring inline_prefix;
+    uint64_t resource_provider = 0;
     std::wstring inline_dir;
     void (*link_cb)(uint64_t, const char *){};
     // WebView::transparent: the engine's default background is cleared once the controller is
     // up, and the URL label under the render visual is blanked so it cannot show through.
     bool transparent{};
 };
+
+// Hold COM objects on the UI apartment; workers only load immutable Rust bytes.
+struct ResourcePending {
+    wrl::ComPtr<ICoreWebView2Environment> environment;
+    wrl::ComPtr<ICoreWebView2WebResourceRequestedEventArgs> args;
+    wrl::ComPtr<ICoreWebView2Deferral> deferral;
+    winrt::Windows::UI::Core::CoreDispatcher dispatcher{nullptr};
+};
+static void resource_done(void *context, DayResourceResponse *response) {
+    auto pending=std::shared_ptr<ResourcePending>(static_cast<ResourcePending *>(context));
+    auto bytes=std::shared_ptr<DayResourceResponse>(response,day_web_resource_free);
+    try {
+        pending->dispatcher.RunAsync(winrt::Windows::UI::Core::CoreDispatcherPriority::Normal,[pending,bytes] {
+            wrl::ComPtr<IStream> stream;
+            if (SUCCEEDED(CreateStreamOnHGlobal(nullptr,TRUE,&stream))) {
+                ULONG written=0;
+                const auto length=day_web_resource_len(bytes.get());
+                // IStream::Write takes ULONG; never silently truncate a large response.
+                const auto data=day_web_resource_data(bytes.get());
+                size_t offset=0;
+                while (offset<length) {
+                    auto chunk=static_cast<ULONG>((std::min)(length-offset,size_t(64*1024)));
+                    if (FAILED(stream->Write(data+offset,chunk,&written)) || written!=chunk) break;
+                    offset+=written;
+                }
+                if (offset==length) {
+                    LARGE_INTEGER zero{};stream->Seek(zero,STREAM_SEEK_SET,nullptr);
+                    std::string headers=day_web_resource_headers(bytes.get());
+                    headers += std::string("Content-Type: ")+day_web_resource_mime(bytes.get())+"\r\n";
+                    wrl::ComPtr<ICoreWebView2WebResourceResponse> native;
+                    pending->environment->CreateWebResourceResponse(stream.Get(),day_web_resource_status(bytes.get()),L"Resource",hs(headers.c_str()).c_str(),&native);
+                    if(native)pending->args->put_Response(native.Get());
+                }
+            }
+            pending->deferral->Complete();
+        });
+    } catch (winrt::hresult_error const &) {
+        // The dispatcher can close while the worker is reading. Closing WebView2 cancels
+        // its requests; the owned response/deferral are released without re-entering a view.
+    }
+}
 
 // The virtual host the app's asset tree is mapped under for inline sites. `.example` is
 // reserved for exactly this use, the same convention Microsoft's own WebView2 docs model.
@@ -410,7 +458,7 @@ static void create_webview2(void *handle) {
                 const HRESULT creating = env3->CreateCoreWebView2CompositionController(
                     cc->parent,
                     wrl::Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
-                        [handle](HRESULT r2, ICoreWebView2CompositionController *comp) -> HRESULT {
+                        [handle, environment=wrl::ComPtr<ICoreWebView2Environment>(env)](HRESULT r2, ICoreWebView2CompositionController *comp) -> HRESULT {
                             auto *c2 = find_ctx(handle);
                             if (!c2)
                                 return S_OK;
@@ -462,6 +510,28 @@ static void create_webview2(void *handle) {
                                     tb.Text(L"");
                             }
 
+                            if (c2->webview && c2->resource_provider) {
+                                wrl::ComPtr<ICoreWebView2_22> resources;
+                                if (FAILED(c2->webview.As(&resources))) {
+                                    startup_failed(handle,"resource interception interface",E_NOINTERFACE);return S_OK;
+                                }
+                                resources->AddWebResourceRequestedFilterWithRequestSourceKinds(L"https://day-resource.invalid/*",COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_DOCUMENT);
+                                EventRegistrationToken token{};
+                                c2->webview->add_WebResourceRequested(wrl::Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+                                    [handle,environment](ICoreWebView2 *,ICoreWebView2WebResourceRequestedEventArgs *args)->HRESULT {
+                                        auto c=find_ctx(handle);if(!c)return S_OK;
+                                        wrl::ComPtr<ICoreWebView2WebResourceRequest> request;args->get_Request(&request);
+                                        LPWSTR url=nullptr,method=nullptr,range=nullptr;
+                                        request->get_Uri(&url);request->get_Method(&method);
+                                        wrl::ComPtr<ICoreWebView2HttpRequestHeaders> headers;request->get_Headers(&headers);
+                                        if(headers)headers->GetHeader(L"Range",&range);
+                                        auto pending=new ResourcePending();pending->environment=environment;pending->args=args;
+                                        pending->dispatcher=c->placeholder.Dispatcher();
+                                        if(FAILED(args->GetDeferral(&pending->deferral)) || !pending->deferral){delete pending;CoTaskMemFree(url);CoTaskMemFree(method);CoTaskMemFree(range);return E_FAIL;}
+                                        day_web_resource_start(c->resource_provider,to_string(url?url:L"").c_str(),to_string(method?method:L"GET").c_str(),to_string(range?range:L"").c_str(),pending,resource_done);
+                                        CoTaskMemFree(url);CoTaskMemFree(method);CoTaskMemFree(range);return S_OK;
+                                    }).Get(),&token);
+                            }
                             if (c2->webview && !c2->inline_prefix.empty()) {
                                 // Inline mode: map the exe-relative assets tree under the virtual
                                 // host before the first Navigate, then police top-level
@@ -469,7 +539,7 @@ static void create_webview2(void *handle) {
                                 // canceled and reported (the Rust side runs the LinkPolicy;
                                 // events are enqueue-only, so the verdict can't come back here).
                                 wrl::ComPtr<ICoreWebView2_3> wv3;
-                                if (SUCCEEDED(c2->webview->QueryInterface(IID_PPV_ARGS(&wv3))) &&
+                                if (!c2->resource_provider && SUCCEEDED(c2->webview->QueryInterface(IID_PPV_ARGS(&wv3))) &&
                                     wv3) {
                                     // The Rust side resolves the tree (lib-xaml.rs `inline_dir`),
                                     // since a dev run reads its assets from the project and a
@@ -495,8 +565,8 @@ static void create_webview2(void *handle) {
                                         return S_OK;
                                     }
                                 } else {
-                                    startup_failed(handle, "asset mapping interface", E_NOINTERFACE);
-                                    return S_OK;
+                                    if (!c2->resource_provider) { startup_failed(handle, "asset mapping interface", E_NOINTERFACE);
+                                    return S_OK; }
                                 }
                                 EventRegistrationToken navTok{};
                                 c2->webview->add_NavigationStarting(
@@ -634,6 +704,14 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
     c->cb = cb;
     c->pending_url = first;
     c->inline_prefix = prefix;
+    const std::wstring resourceRoot=L"https://day-resource.invalid/";
+    if(first.rfind(resourceRoot,0)==0) {
+        auto end=first.find(L'/',resourceRoot.size());
+        if(end!=std::wstring::npos) {
+            c->resource_provider=std::wcstoull(first.substr(resourceRoot.size(),end-resourceRoot.size()).c_str(),nullptr,10);
+            c->inline_prefix=first.substr(0,end+1);
+        }
+    }
     c->inline_dir = inlined && inline_dir ? std::wstring(hs(inline_dir).c_str()) : std::wstring();
     c->link_cb = link_cb;
     c->transparent = transparent;

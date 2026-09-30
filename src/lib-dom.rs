@@ -53,7 +53,10 @@ fn load(backend: &mut Dom, h: &DomHandle, url: &str) {
 
 fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
     let h = backend.element("iframe");
-    if !p.inline_root.is_empty() {
+    if let Some(provider)=&p.resources {
+        super::browser::resources(h.0 as i32,&provider.base_url(),&p.url);
+        LAST_SRC.with(|m|m.borrow_mut().insert(h,p.url.clone()));
+    } else if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the bundled site deploys under `assets/data/` beside
         // the host page (web.rs), so a relative src is same-origin and the browser resolves
         // the site's internal references natively. The crate's browser bridge arms its

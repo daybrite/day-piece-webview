@@ -40,6 +40,56 @@ static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 #include <QWebEnginePage>
 #include <QWebEngineSettings>
 #include <QWebEngineView>
+#include <QWebEngineProfile>
+#include <QWebEngineUrlScheme>
+#include <QWebEngineUrlSchemeHandler>
+#include <QWebEngineUrlRequestJob>
+#include <QBuffer>
+#include <QPointer>
+#include <QCoreApplication>
+#include "resources.h"
+static const bool resourceSchemeRegistered = [] {
+    QWebEngineUrlScheme scheme("day-resource");
+    scheme.setSyntax(QWebEngineUrlScheme::Syntax::Host);
+    scheme.setFlags(QWebEngineUrlScheme::SecureScheme | QWebEngineUrlScheme::CorsEnabled);
+    QWebEngineUrlScheme::registerScheme(scheme);
+    return true;
+}();
+class ResourceHandler : public QWebEngineUrlSchemeHandler {
+public:
+    uint64_t provider;
+    ResourceHandler(uint64_t p, QObject *parent): QWebEngineUrlSchemeHandler(parent), provider(p) {}
+    void requestStarted(QWebEngineUrlRequestJob *job) override {
+        auto pending = new QPointer<QWebEngineUrlRequestJob>(job);
+        day_web_resource_start(provider, job->requestUrl().toEncoded().constData(), job->requestMethod().constData(),
+            job->requestHeaders().value("Range").constData(), pending,
+            [](void *context, DayResourceResponse *response) {
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [context,response] {
+                    auto pending=static_cast<QPointer<QWebEngineUrlRequestJob> *>(context);
+                    auto job=pending->data(); delete pending;
+                    if (job) {
+                        auto status=day_web_resource_status(response);
+                        if (status >= 400) job->fail(status==404 ? QWebEngineUrlRequestJob::UrlNotFound : QWebEngineUrlRequestJob::RequestDenied);
+                        else {
+                            auto buffer=new QBuffer(job);
+                            buffer->setData(reinterpret_cast<const char *>(day_web_resource_data(response)), day_web_resource_len(response));
+                            buffer->open(QIODevice::ReadOnly);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+                            QMultiMap<QByteArray,QByteArray> headers;
+                            for (const auto &line : QByteArray(day_web_resource_headers(response)).split('\n')) {
+                                auto colon=line.indexOf(':'); if (colon>0) headers.insert(line.left(colon),line.mid(colon+1).trimmed());
+                            }
+                            job->setAdditionalResponseHeaders(headers);
+#endif
+                            job->reply(QByteArray(day_web_resource_mime(response)),buffer);
+                        }
+                    }
+                    day_web_resource_free(response);
+                }, Qt::QueuedConnection);
+            });
+    }
+};
+
 
 // Session id -> the retained engine view. Qt is the one backend whose `release` DELETES the handle
 // (day_qt_delete -> deleteLater), so a second pointer to the container would dangle. What is
@@ -65,7 +115,7 @@ protected:
         (void)type;
         if (pathPrefix.isEmpty() || !isMainFrame)
             return true;
-        const bool inside = (url.scheme() == QStringLiteral("qrc") &&
+        const bool inside = (pathPrefix.startsWith("day-resource:") && url.toString().startsWith(pathPrefix)) || (url.scheme() == QStringLiteral("qrc") &&
                              url.path().startsWith(pathPrefix)) ||
                             url.toString() == QStringLiteral("about:blank");
         if (inside)
@@ -135,7 +185,16 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
 
     QWebEngineView *v = new QWebEngineView();
     const QString prefix = QString::fromUtf8(inline_path_prefix ? inline_path_prefix : "");
-    if (!prefix.isEmpty()) {
+    if (prefix.startsWith("day-resource:")) {
+        auto profile=new QWebEngineProfile();
+        auto page=new DayWebPage(profile,v);
+        QObject::connect(page,&QObject::destroyed,profile,&QObject::deleteLater);
+        profile->installUrlSchemeHandler("day-resource",new ResourceHandler(QUrl(prefix).host().mid(1).toULongLong(),profile));
+        page->id=id;page->pathPrefix=prefix;page->linkCb=link_cb;
+        page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);
+        v->setPage(page);
+    }
+    if (!prefix.isEmpty() && !prefix.startsWith("day-resource:")) {
         DayWebPage *page = new DayWebPage(v);
         page->id = id;
         page->pathPrefix = prefix;

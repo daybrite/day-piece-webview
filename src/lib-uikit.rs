@@ -13,12 +13,12 @@ use super::*;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+use block2::RcBlock;
 use day_spec::NodeId;
 use day_uikit::Uikit;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, extern_class, msg_send};
-use block2::RcBlock;
 use objc2_foundation::{NSError, NSString, NSURL, NSURLRequest};
 use objc2_ui_kit::{UIResponder, UIView};
 
@@ -149,7 +149,6 @@ fn load_url(web: &WKWebView, url: &str) {
     let _: *mut AnyObject = unsafe { msg_send![web, loadRequest: &*req] };
 }
 
-
 /// A file URL for `page` inside `dir`, where `page` may carry a query or fragment
 /// (`"player.html?src=hello"`). `fileURLWithPath:` would percent-encode the `?` into the file
 /// name, so the path is built first and the tail re-attached as a relative reference against it,
@@ -182,7 +181,11 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
     }
 
     let mtm = MainThreadMarker::new().unwrap();
-    let web: Retained<WKWebView> = unsafe { msg_send![WKWebView::alloc(mtm), init] };
+    let config =
+        super::resources_apple::configuration(p.resources.as_ref().map(ResourceProvider::id), mtm);
+    let web: Retained<WKWebView> = unsafe {
+        msg_send![WKWebView::alloc(mtm), initWithFrame: objc2_foundation::NSRect::ZERO, configuration: &*config]
+    };
     if p.transparent {
         // A non-opaque view with a clear background, and the same for the scroll view the page
         // sits in, which paints its own color under an overscroll.
@@ -204,7 +207,11 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
         // starts inside the site either way, and policing stays on the site's URL prefix.
         if let Some(dir) = day_spec::resolve_asset_dir(&p.inline_root) {
             let site = NSURL::fileURLWithPath(&NSString::from_str(&dir.display().to_string()));
-            let read = match p.inline_assets.then(|| day_spec::resolve_asset_dir("")).flatten() {
+            let read = match p
+                .inline_assets
+                .then(|| day_spec::resolve_asset_dir(""))
+                .flatten()
+            {
                 Some(assets) => {
                     NSURL::fileURLWithPath(&NSString::from_str(&assets.display().to_string()))
                 }
@@ -223,6 +230,9 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
             );
         }
     } else if !p.url.is_empty() {
+        if let Some(provider) = &p.resources {
+            *nav.ivars().inline_base.borrow_mut() = Some(provider.base_url());
+        }
         load_url(&web, &p.url);
     }
     let view: Retained<UIView> = Retained::from(<WKWebView as AsRef<UIView>>::as_ref(&web));

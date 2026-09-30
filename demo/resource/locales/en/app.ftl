@@ -18,3 +18,6 @@ reload = Reload
 link_none = No link from the page yet.
 link_received = The page sent the app a link to "{ $route }".
 site_unsupported = This build has no web engine to show the site in.
+
+resource_demo = Resource provider
+resource_caption = This page, its styles, script, image, and nested frame are served on demand by the application.

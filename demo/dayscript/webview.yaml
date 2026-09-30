@@ -72,3 +72,38 @@ flow:
       script: "document.body.style.backgroundColor = '#12d9a4'; 'painted'"
       text: "painted"
   - screenshot: { name: webview-render-proof, title: "Browser paint verification" }
+
+  # Dynamic resources: relative HTML, CSS imports, JavaScript, images and a nested document.
+  - tap: { id: resource-demo }
+  - web_eval:
+      id: webview
+      script: "document.documentElement.dataset.resourceScript"
+      text: "yes"
+      timeout_secs: 30
+  - web_eval:
+      id: webview
+      script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()"
+      text: "yes"
+  - web_eval:
+      id: webview
+      script: "document.getElementById('resource-image').naturalWidth"
+      text: "120"
+  - web_eval:
+      id: webview
+      script: "document.getElementById('resource-child').contentDocument.body.dataset.relative"
+      text: "child"
+  - web_eval:
+      id: webview
+      script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()"
+      text: "yes"
+  - screenshot: { name: resource-provider, title: "Resources served by the application" }
+  - tap: { id: webview-reload }
+  - web_eval:
+      id: webview
+      script: "document.documentElement.dataset.resourceScript"
+      text: "yes"
+  - tap: { id: resource-demo }
+  - web_eval:
+      id: webview
+      script: "document.getElementById('script-status').textContent"
+      text: "The bundled script ran."

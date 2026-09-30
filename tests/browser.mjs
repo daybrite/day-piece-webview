@@ -17,6 +17,9 @@ function setup() {
     let release;
     const attach = runInNewContext(`${arm}\nattach_browser`, {
         URL,
+        crypto: {getRandomValues: a=>a.fill(123)},
+        Uint32Array,
+        navigator: {},
         document: { baseURI: 'https://example.test/app/' },
         dayHost: { dom: {
             element: () => frame,
@@ -86,6 +89,7 @@ test('same-origin evaluation delivers the wrapped result to the matching request
         assert.equal(script, 'wrapped script'); return '1\u001f42';
     } } };
     const evaluate = runInNewContext(`${arm}\neval_browser`, {
+        crypto: {getRandomValues: a=>a.fill(123)}, Uint32Array, navigator: {},
         dayHost: { dom: { element: () => frame, emit: (...args) => events.push(args) } },
     });
     evaluate(7, 123, 'wrapped script');
@@ -95,6 +99,7 @@ test('same-origin evaluation delivers the wrapped result to the matching request
 test('cross-origin or destroyed frames answer with an error instead of stranding evaluation', () => {
     const events = [];
     const evaluate = runInNewContext(`${arm}\neval_browser`, {
+        crypto: {getRandomValues: a=>a.fill(123)}, Uint32Array, navigator: {},
         dayHost: { dom: { element: () => ({ contentDocument: null }), emit: (...args) => events.push(args) } },
     });
     evaluate(8, 124, 'anything');

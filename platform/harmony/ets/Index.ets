@@ -42,6 +42,7 @@ class DayWebViewParams {
   // WebView::transparent: the component draws no background of its own, so a page whose own
   // background is transparent shows the app behind it.
   transparent: boolean = false;
+  resources: boolean = false;
   controller: webview.WebviewController;
   state: Controller;
   constructor(controller: webview.WebviewController, state: Controller) {
@@ -60,13 +61,13 @@ function dayWebViewBuilder(params: DayWebViewParams) {
   // window and the Web would cover the page. Day owns layout and sets this node's position + size
   // through the ArkUI C API like every other leaf, which is what the piece's `fill_measure` asks
   // for on every other backend too.
-  Web({ src: params.url, controller: params.controller })
+  Web({ src: params.resources ? 'about:blank' : params.url, controller: params.controller })
     .backgroundColor(params.transparent ? Color.Transparent : Color.White)
     .javaScriptAccess(true)
     .domStorageAccess(true)
     .onControllerAttached(() => {
       console.info(`day-piece-webview: controller attached for ${params.id}`);
-      setTimeout(() => params.state.attach(), 0);
+      setTimeout(() => {params.state.attach();if(params.resources)nativeEntry.pieceEvent(params.id,'day-web-'+params.id,-3);}, 0);
     })
     .onPageEnd((event) => {
       if (event !== undefined && !params.state.isDisposed()) {
@@ -118,7 +119,7 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
   if (!initializeEngine()) {
     return undefined;
   }
-  const controller: webview.WebviewController = new webview.WebviewController();
+  const controller: webview.WebviewController = new webview.WebviewController('day-web-'+id);
   const state: Controller = new Controller(controller, (request: number, payload: string) => {
     nativeEntry.pieceEvent(id, payload, request);
   });
@@ -131,6 +132,7 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
   const SEP: string = '\u001F';
   // A transparent view leads with its own marker (lib-arkui.rs), ahead of everything below.
   let rest: string = props;
+  if (rest.startsWith('day-resource'+SEP)) {params.resources=true;rest=rest.substring(('day-resource'+SEP).length);}
   if (rest.startsWith('day-transparent' + SEP)) {
     params.transparent = true;
     rest = rest.substring(('day-transparent' + SEP).length);
@@ -143,6 +145,7 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
     params.url = params.inlinePrefix + start;
   } else {
     params.url = rest;
+    if(params.resources)params.inlinePrefix=rest.substring(0,rest.indexOf('/','https://day-resource.invalid/'.length)+1);
   }
   const node: BuilderNode<[DayWebViewParams]> = new BuilderNode(ui);
   try {

@@ -47,6 +47,12 @@ features. The view grows to fill the space it is offered. A site bundled under
 JavaScript in either kind of page. [docs/webview.md](docs/webview.md) covers sessions, the link
 policy, and each platform's engine.
 
+For dynamic documents, `web_view_resources(provider, "chapters/first.xhtml")` serves bytes
+from a `ResourceProvider` while the engine resolves relative URLs normally.
+`ResourceProvider::with_site(res::assets::reader, handler)` combines a bundled shell with
+on-demand content under the same origin. See [resource providers](docs/resource-provider.md)
+for the API, worker/lifetime contract, deployment requirements and backend limits.
+
 ## Platforms
 
 | Target | Engine | Remote pages | Bundled site | JavaScript |
@@ -80,7 +86,8 @@ app, runs JavaScript in it, and receives a link the site sends to the app. From 
 `day launch -p macos-appkit --script dayscript/webview.yaml`, or the same command with
 any other primary target. CI builds and runs the demo on macOS AppKit, Linux GTK and Qt,
 Windows XAML, iOS UIKit, Android MDC, HarmonyOS ArkUI, and web-dom. It checks the support
-labels, bundled page, JavaScript and app links where supported, and reloads the page.
+labels, bundled page, JavaScript and app links where supported, and reloads the page. It also verifies relative scripts, images, CSS imports, bundled CSS and
+a nested document loaded through an application resource provider.
 GTK and web-dom also exercise bundled-site evaluation. On HarmonyOS the shared walkthrough checks
 the support rows, the view and the captures but skips the steps that need a page, because the
 x86_64 Oniro image CI boots cannot load ArkWeb (below). The dedicated [harmony webview workflow](.github/workflows/harmony-webview.yml)

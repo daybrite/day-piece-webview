@@ -25,36 +25,45 @@ fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
     // default). The URL is composed here; the Java side polices navigations against the
     // prefix and reports external ones back (LINK_REPORT).
     let (url, prefix) = if p.inline_root.is_empty() {
-        (p.url.clone(), String::new())
+        (
+            p.url.clone(),
+            p.resources
+                .as_ref()
+                .map(ResourceProvider::base_url)
+                .unwrap_or_default(),
+        )
     } else {
         (
-            format!(
-                "file:///android_asset/{}/{}",
-                p.inline_root, p.inline_start
-            ),
+            format!("file:///android_asset/{}/{}", p.inline_root, p.inline_start),
             format!("file:///android_asset/{}/", p.inline_root),
         )
     };
     with_env(|env| {
         // A Java throw (e.g. the staged DayWebView class missing) must not panic inside
         // realize: the panic unwinds the JNI up-call and aborts. Placeholder instead.
-        let made = env.new_string(&url).ok().and_then(|url| {
-            let prefix = env.new_string(&prefix).ok()?;
-            day_android::try_make_view_on(
-                env,
-                WEBVIEW_CLASS,
-                "makeWebView",
-                "(JLjava/lang/String;Ljava/lang/String;)Landroid/view/View;",
-                &[
-                    JValue::Long(id.0 as i64),
-                    JValue::Object(&url),
-                    JValue::Object(&prefix),
-                ],
-            )
-            .ok()
-        });
+        let made =
+            env.new_string(&url).ok().and_then(|url| {
+                let prefix = env.new_string(&prefix).ok()?;
+                day_android::try_make_view_on(
+                    env,
+                    WEBVIEW_CLASS,
+                    "makeWebView",
+                    "(JLjava/lang/String;Ljava/lang/String;J)Landroid/view/View;",
+                    &[
+                        JValue::Long(id.0 as i64),
+                        JValue::Object(&url),
+                        JValue::Object(&prefix),
+                        JValue::Long(
+                            p.resources.as_ref().map(ResourceProvider::id).unwrap_or(0) as i64
+                        ),
+                    ],
+                )
+                .ok()
+            });
         let view = made.unwrap_or_else(|| {
-            log::warn!("day-piece-webview: DayWebView.makeWebView failed; substituting a placeholder");
+            log::warn!(
+                "day-piece-webview: DayWebView.makeWebView failed; substituting a placeholder"
+            );
             day_android::placeholder_view(env, "web_view")
         });
         if p.transparent {
@@ -75,7 +84,9 @@ fn update(_backend: &mut Android, h: &AHandle, patch: &WebPatch) {
     // kind-12 channel keyed by `req`, like every other backend.
     if let WebPatch::Eval { req, script } = patch {
         with_env(|env| {
-            let Ok(s) = env.new_string(script) else { return };
+            let Ok(s) = env.new_string(script) else {
+                return;
+            };
             let _ = env.dcall_static(
                 WEBVIEW_CLASS,
                 "evalJs",
@@ -116,3 +127,45 @@ fn update(_backend: &mut Android, h: &AHandle, patch: &WebPatch) {
 day_pieces::renderer!(day_android::RENDERERS, Android,
     kind: KIND, props: WebProps, patch: WebPatch,
     make: make, update: update, measure: day_pieces::fill_measure);
+
+// Called by WebView's IO worker, never by the UI thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_daybrite_day_piece_webview_DayWebView_resource(
+    mut unowned: day_android::jni::EnvUnowned,
+    _class: day_android::jni::objects::JClass,
+    provider: i64,
+    url: day_android::jni::objects::JString,
+    method: day_android::jni::objects::JString,
+    range: day_android::jni::objects::JString,
+) -> day_android::jni::sys::jobject {
+    unowned
+        .with_env(|env| -> day_android::jni::errors::Result<_> {
+            let url = env.dstr(&url)?;
+            let method = env.dstr(&method)?;
+            let range = env.dstr(&range)?;
+            let r = super::resources::respond(provider as u64, &url, &method, &range);
+            let bytes = env.byte_array_from_slice(&r.body)?;
+            let mime = env.new_string(&r.mime)?;
+            let headers = env.new_string(
+                r.headers
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}\n"))
+                    .collect::<String>(),
+            )?;
+            let response = env
+                .dcall_static(
+                    WEBVIEW_CLASS,
+                    "response",
+                    "(Ljava/lang/String;ILjava/lang/String;[B)Landroid/webkit/WebResourceResponse;",
+                    &[
+                        JValue::Object(&mime),
+                        JValue::Int(r.status as i32),
+                        JValue::Object(&headers),
+                        JValue::Object(&bytes),
+                    ],
+                )?
+                .l()?;
+            Ok(response.into_raw())
+        })
+        .resolve::<day_android::jni::errors::ThrowRuntimeExAndDefault>()
+}

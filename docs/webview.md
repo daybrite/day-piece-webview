@@ -375,3 +375,9 @@ operation registry; its `web_eval` script command preserves existing scripts.
 `Cargo.toml` declares the Qt WebEngine Flatpak base and the library prefix that requires it.
 Day's generic packer matches this against the built executable, coalesces identical requirements,
 and rejects conflicting bases. There is no WebEngine-specific selection logic in the packer.
+
+## Dynamic resource trees
+
+Use [`ResourceProvider` and `web_view_resources`](resource-provider.md) for archive entries or
+generated content. The engine requests individual resources by relative URL. A bundled shell
+can share the provider origin through `ResourceProvider::with_site`.

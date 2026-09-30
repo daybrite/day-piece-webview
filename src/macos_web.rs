@@ -179,7 +179,11 @@ pub(crate) fn make(
     }
 
     // SAFETY: creates a WKWebView with a default configuration on the main thread.
-    let web = unsafe { WKWebView::new(mtm) };
+    let config =
+        super::resources_apple::configuration(p.resources.as_ref().map(ResourceProvider::id), mtm);
+    let web: Retained<WKWebView> = unsafe {
+        msg_send![WKWebView::alloc(mtm), initWithFrame: objc2_foundation::NSRect::ZERO, configuration: &*config]
+    };
     if p.transparent {
         // WKWebView paints a white sheet under the page unless told not to. `drawsBackground` is
         // the key Safari's own transparent views set (there is no public setter on macOS), read
@@ -227,6 +231,9 @@ pub(crate) fn make(
             );
         }
     } else if !p.url.is_empty() {
+        if let Some(provider) = &p.resources {
+            *nav.ivars().inline_base.borrow_mut() = Some(provider.base_url());
+        }
         load_url(&web, &p.url);
     }
     let view: Retained<NSView> = Retained::from(<WKWebView as AsRef<NSView>>::as_ref(&web));

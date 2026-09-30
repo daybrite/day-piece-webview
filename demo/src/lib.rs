@@ -38,6 +38,7 @@ pub fn root() -> impl Piece {
     info!("Web View Demo starting");
 
     // The script the console runs, and the JSON (or the error) the page answered with.
+    let resources = Signal::new(false);
     let script = Signal::new(String::new());
     let answer = Signal::new(String::new());
     // The route of the last app link the site sent; empty until the first one arrives.
@@ -104,7 +105,11 @@ pub fn root() -> impl Piece {
         })
         .font(Font::Footnote)
         .id("webview-link"),
-        site(js, received, reload),
+        button(res::str::resource_demo())
+            .action(move || resources.set(!resources.get_untracked()))
+            .id("resource-demo"),
+        when(move || resources.get(), move || resource_site(js, reload))
+            .otherwise(move || site(js, received, reload)),
     ))
     .spacing(10.0)
     .align(HAlign::Leading)
@@ -141,6 +146,32 @@ fn site(js: JsHandle, received: Signal<String>, reload: Trigger) -> AnyPiece {
             }
             None => LinkPolicy::OpenSystem,
         })
+        .id("webview")
+        .any()
+}
+
+fn resource_site(js: JsHandle, reload: Trigger) -> AnyPiece {
+    use day_piece_webview::{ResourceProvider, ResourceResponse, web_view_resources};
+    // Localize on the UI thread; the provider itself runs on native IO workers.
+    let title = res::str::resource_demo().format();
+    let caption = res::str::resource_caption().format();
+    let html = format!(
+        r#"<!doctype html><html><head><meta charset="utf-8"><title>{title}</title><link rel="stylesheet" href="../styles/main.css"></head><body><h1>{title}</h1><p>{caption}</p><img id="resource-image" src="../images/orb.svg"><iframe id="resource-child" src="child.html"></iframe><script src="../scripts/main.js"></script></body></html>"#
+    );
+    let provider = ResourceProvider::with_site(res::assets::site, move |request| {
+        match request.path.as_str() {
+        "pages/index.html" => ResourceResponse::new("text/html",html.clone().into_bytes()),
+        "pages/child.html" => ResourceResponse::new("text/html",b"<!doctype html><html><head><link rel=stylesheet href=../styles/main.css></head><body data-relative=child></body></html>".to_vec()),
+        "styles/main.css" => ResourceResponse::new("text/css",b"@import '../__day_assets/css/style.css';@import './colors.css';body{font:18px system-ui;padding:24px;background:#182236;color:white}img{width:120px;height:120px}iframe{border:0;width:120px;height:120px}".to_vec()),
+        "styles/colors.css" => ResourceResponse::new("text/css",b":root{--resource-loaded:yes}body{background-image:url('../images/orb.svg');background-repeat:no-repeat;background-position:right bottom}".to_vec()),
+        "images/orb.svg" => ResourceResponse::new("image/svg+xml",br##"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><defs><radialGradient id="g" cx="30%" cy="25%"><stop stop-color="#fff"/><stop offset=".4" stop-color="#30dcc5"/><stop offset="1" stop-color="#176caa"/></radialGradient></defs><circle cx="60" cy="60" r="55" fill="url(#g)"/></svg>"##.to_vec()),
+        "scripts/main.js" => ResourceResponse::new("text/javascript",b"document.documentElement.dataset.resourceScript='yes';".to_vec()),
+        _=>ResourceResponse::not_found(),
+    }
+    });
+    web_view_resources(provider, "pages/index.html")
+        .js(js)
+        .reload(reload)
         .id("webview")
         .any()
 }

@@ -39,30 +39,30 @@ fn make(_: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
     });
     let native = view.clone();
     anchor.add_tick_callback(move |w, _| {
-        if let Some(root) = w.root().and_then(|r| r.dynamic_cast::<gtk4::Widget>().ok()) {
-            if let (Some(bounds), Some(surface)) = (
+        if let Some(root) = w.root().and_then(|r| r.dynamic_cast::<gtk4::Widget>().ok())
+            && let (Some(bounds), Some(surface)) = (
                 w.compute_bounds(&root),
                 w.native().and_then(|n| n.surface()),
-            ) {
-                let ptr: *mut gtk4::gdk::ffi::GdkSurface = surface.to_glib_none().0;
-                let window = unsafe { gdk_macos_surface_get_native_window(ptr.cast()) };
-                if let Some(window) = unsafe { window.as_ref() } {
-                    if let Some(content) = window.contentView() {
-                        if unsafe { native.superview() }.is_none() {
-                            content.addSubview(&native)
-                        }
-                        let height = content.bounds().size.height;
-                        let y = if content.isFlipped() {
-                            bounds.y() as f64
-                        } else {
-                            height - bounds.y() as f64 - bounds.height() as f64
-                        };
-                        native.setFrame(NSRect::new(
-                            NSPoint::new(bounds.x() as f64, y),
-                            NSSize::new(bounds.width() as f64, bounds.height() as f64),
-                        ));
-                    }
+            )
+        {
+            let ptr: *mut gtk4::gdk::ffi::GdkSurface = surface.to_glib_none().0;
+            let window = unsafe { gdk_macos_surface_get_native_window(ptr.cast()) };
+            if let Some(window) = unsafe { window.as_ref() }
+                && let Some(content) = window.contentView()
+            {
+                if unsafe { native.superview() }.is_none() {
+                    content.addSubview(&native)
                 }
+                let height = content.bounds().size.height;
+                let y = if content.isFlipped() {
+                    bounds.y() as f64
+                } else {
+                    height - bounds.y() as f64 - bounds.height() as f64
+                };
+                native.setFrame(NSRect::new(
+                    NSPoint::new(bounds.x() as f64, y),
+                    NSSize::new(bounds.width() as f64, bounds.height() as f64),
+                ));
             }
         }
         gtk4::glib::ControlFlow::Continue

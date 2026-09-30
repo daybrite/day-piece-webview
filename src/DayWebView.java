@@ -25,6 +25,12 @@ import dev.daybrite.day.bridge.DayBridge;
 /** Wraps android.webkit.WebView, reporting the finished URL back via the open Custom-event kind (12). */
 public final class DayWebView {
     private DayWebView() {}
+    private static android.webkit.WebResourceResponse response(String mime, int status, String headerLines, byte[] body) {
+        Map<String,String> headers=new java.util.HashMap<>();
+        for(String line:headerLines.split("\n")){int colon=line.indexOf(':');if(colon>0)headers.put(line.substring(0,colon),line.substring(colon+1).trim());}
+        return new android.webkit.WebResourceResponse(mime,"UTF-8",status,"Resource",headers,new java.io.ByteArrayInputStream(body));
+    }
+    private static native android.webkit.WebResourceResponse resource(long provider, String url, String method, String range);
 
     // The day node each live view reports to: evaluation replies need it, and `evalJs` receives
     // only the View (weak keys: a released view must not pin itself here).
@@ -59,12 +65,20 @@ public final class DayWebView {
         }
     }
 
-    public static View makeWebView(long id, String url, String inlinePrefix) {
+    public static View makeWebView(long id, String url, String inlinePrefix, long provider) {
         WebView web = new WebView(DayBridge.ctx);
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         final boolean inline = inlinePrefix != null && !inlinePrefix.isEmpty();
         web.setWebViewClient(new WebViewClient() {
+            @Override
+            public android.webkit.WebResourceResponse shouldInterceptRequest(WebView view, android.webkit.WebResourceRequest request) {
+                if (provider == 0 || !"day-resource.invalid".equals(request.getUrl().getHost())) return null;
+                // WebView calls this on a worker thread; binary bytes never cross JavaScript.
+                String range = request.getRequestHeaders().get("Range");
+                if (range == null) range = request.getRequestHeaders().get("range");
+                return resource(provider, request.getUrl().toString(), request.getMethod(), range == null ? "" : range);
+            }
             @Override
             public void onPageFinished(WebView view, String finishedUrl) {
                 // kind 12 = a piece-defined Custom event (§8.2's open channel): the front-end's

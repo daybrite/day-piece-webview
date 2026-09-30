@@ -22,7 +22,7 @@ public:
     bool started = false;
     DayWebView(uint64_t node, QString address, QString root) : id(node), url(address), prefix(root) {
         setAttribute(Qt::WA_NativeWindow);
-        if (!root.isEmpty()) {
+        if (!root.isEmpty() && !root.startsWith("http://day-resource.")) {
             QDirIterator it(":/day/assets", QDir::Files, QDirIterator::Subdirectories);
             while (it.hasNext()) {
                 QString source=it.next(), dest=assets.path()+source.mid(QString(":/day/assets").size());

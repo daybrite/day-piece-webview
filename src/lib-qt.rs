@@ -98,7 +98,7 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
     // normalizes qrc URL spellings, and a string compare would cancel the site's own first
     // load (the AppKit arm learned the same lesson with file URLs).
     let (url, path_prefix) = if p.inline_root.is_empty() {
-        (p.url.clone(), String::new())
+        (p.url.clone(), p.resources.as_ref().map(ResourceProvider::base_url).unwrap_or_default())
     } else {
         (
             format!("qrc:/day/assets/{}/{}", p.inline_root, p.inline_start),

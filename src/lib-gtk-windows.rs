@@ -19,7 +19,13 @@ fn make(_: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             .insert(anchor.as_ptr() as usize, live.clone())
     });
     let (url, prefix) = if p.inline_root.is_empty() {
-        (p.url.clone(), String::new())
+        (
+            p.url.clone(),
+            p.resources
+                .as_ref()
+                .map(ResourceProvider::base_url)
+                .unwrap_or_default(),
+        )
     } else {
         match super::gtk_assets::extract_site(&p.inline_root) {
             Ok(dir) => {

@@ -7,11 +7,13 @@
 //! (MSVC) + the Windows SDK cppwinrt projection, mirroring day-xaml-sys.
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(day_qt_webengine)");
     day_build::bridge::generate().expect("webview browser bridge");
     println!("cargo:rerun-if-changed=src/lib-qt-shim.cpp");
     println!("cargo:rerun-if-changed=src/lib-qt-windows.inc");
     println!("cargo:rerun-if-changed=src/lib-xaml-shim.cpp");
     println!("cargo:rerun-if-changed=src/xaml-strings.h");
+    println!("cargo:rerun-if-changed=src/resources.h");
     println!("cargo:rerun-if-changed=build.rs");
 
     if std::env::var("CARGO_FEATURE_QT").is_ok() {
@@ -46,6 +48,7 @@ fn build_qt() {
     let mut build = cc::Build::new();
     build.cpp(true).std("c++17").file("src/lib-qt-shim.cpp");
     if has_webengine {
+        println!("cargo:rustc-cfg=day_qt_webengine");
         build.define("DAY_WEBVIEW_QT_ENGINE", None);
     }
     for tok in cflags.split_whitespace() {

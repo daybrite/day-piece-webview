@@ -26,11 +26,24 @@ use day_core::{BuildCx, Flex, Piece, RNode, with_tree};
 use day_reactive::{Signal, Trigger, watch};
 use day_spec::Event;
 
+mod resources;
+pub use resources::{ResourceProvider, ResourceRequest, ResourceResponse};
+
+#[cfg(all(
+    any(target_os = "macos", target_os = "ios"),
+    any(feature = "appkit", feature = "uikit", feature = "gtk")
+))]
+mod resources_apple;
+
+#[cfg(all(feature = "arkui", target_env = "ohos"))]
+mod resources_arkui;
+
 pub const KIND: &str = "day.piece.webview";
 
 /// Full props (realize). The initial `url` is loaded when the native view is created.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WebProps {
+    pub resources: Option<ResourceProvider>,
     pub url: String,
     /// The [`WebSession`] this view belongs to, or `0` for none. A non-zero id asks the backend to
     /// hand back the session's existing native view instead of creating one, so the loaded page
@@ -625,6 +638,7 @@ pub fn eval_support() -> day_spec::Support {
 type LinkDecider = Rc<dyn Fn(&str) -> LinkPolicy>;
 
 pub struct WebView {
+    resources: Option<ResourceProvider>,
     url: Signal<String>,
     go: Option<Trigger>,
     back: Option<Trigger>,
@@ -664,6 +678,7 @@ pub fn web_view(url: Signal<String>) -> WebView {
         inline_assets: false,
         transparent: false,
         on_link: None,
+        resources: None,
     }
 }
 
@@ -680,6 +695,13 @@ pub fn web_view_inline(site: impl IntoInlineSite) -> WebView {
     v.inline = Some(site.into_inline_site());
     v.inline_start = "index.html".into();
     v
+}
+
+/// Display an application-provided resource tree. Relative references are resolved by the engine.
+pub fn web_view_resources(provider: ResourceProvider, page: &str) -> WebView {
+    let mut view = web_view(Signal::new(provider.url(page)));
+    view.resources = Some(provider);
+    view
 }
 
 impl WebView {
@@ -747,7 +769,7 @@ impl WebView {
         self.transparent = true;
         self
     }
-    /// Inline mode only: decide what happens to a navigation that leaves the site. Runs on the
+    /// Inline and resource modes: decide what happens to a navigation that leaves the site. Runs on the
     /// main thread with the target URL; without it every external link is
     /// [`LinkPolicy::OpenSystem`]. The closure may do arbitrary in-app work (navigate the day
     /// app, log) and return [`LinkPolicy::Ignore`].
@@ -801,9 +823,28 @@ impl Piece for WebView {
             inline_assets,
             transparent,
             on_link,
+            mut resources,
         } = self;
+        let mut initial_url = url.get_untracked();
+        if let (Some(session), Some(provider)) = (session, &resources) {
+            // A retained engine still needs its original namespace while detached. Like the
+            // retained page itself, the first provider wins until process shutdown.
+            day_core::tls_group! {
+                static SESSION_RESOURCES: RefCell<HashMap<u64, (ResourceProvider, String)>> = RefCell::new(HashMap::new());
+            }
+            let retained = SESSION_RESOURCES.with(|m| {
+                m.borrow_mut()
+                    .entry(session.id())
+                    .or_insert_with(|| (provider.clone(), initial_url.clone()))
+                    .clone()
+            });
+            resources = Some(retained.0);
+            initial_url = retained.1;
+            url.set(initial_url.clone());
+        }
         let initial = WebProps {
-            url: url.get_untracked(),
+            resources: resources.clone(),
+            url: initial_url,
             session: session.map(WebSession::id).unwrap_or(0),
             inline_root: inline.as_ref().map(|s| s.root.clone()).unwrap_or_default(),
             inline_start: if inline.is_some() {
@@ -860,8 +901,23 @@ impl Piece for WebView {
         // evaluation reply keyed by its request id. In-process backends also tag them, but a
         // cross-boundary Custom (JNI, C-ABI) carries only `num`/`text`, so `num` is the
         // discriminator that works everywhere (§8.2's opened event channel).
+        #[cfg(all(feature = "arkui", target_env = "ohos"))]
+        let registration = RefCell::new(None);
+        #[cfg(all(feature = "arkui", target_env = "ohos"))]
+        let resource_start = initial.url.clone();
         cx.on(node, move |ev| {
+            let _keep_resources_alive = &resources;
             if let Event::Custom { num, text, .. } = ev {
+                #[cfg(all(feature = "arkui", target_env = "ohos"))]
+                if *num == -3.0 {
+                    if let Some(provider) = &resources {
+                        *registration.borrow_mut() = resources_arkui::install(provider.id(), text);
+                        if registration.borrow().is_some() {
+                            send(WebPatch::Load(resource_start.clone()));
+                        }
+                    }
+                    return;
+                }
                 if *num >= 1.0 {
                     resolve(*num as u64, text);
                 } else if *num == LINK_REPORT {

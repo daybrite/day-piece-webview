@@ -25,7 +25,8 @@ fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
     } else {
         format!(
             "day-inline{SEP}{}{SEP}{}",
-            p.inline_root, p.inline_start,
+            p.inline_root,
+            p.inline_start,
             SEP = super::SEP
         )
     };
@@ -33,6 +34,11 @@ fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
     // strips before reading the rest: the component's background is set when it is built.
     let props = if p.transparent {
         format!("day-transparent{}{props}", super::SEP)
+    } else {
+        props
+    };
+    let props = if p.resources.is_some() {
+        format!("day-resource{SEP}{props}", SEP = super::SEP)
     } else {
         props
     };

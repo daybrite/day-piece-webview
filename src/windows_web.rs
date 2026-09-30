@@ -31,7 +31,43 @@ impl Host {
         emit: fn(NodeId, Event),
     ) -> Result<Self, String> {
         let parent = Parent(NonZeroIsize::new(hwnd).ok_or("No native window")?);
-        let view = wry::WebViewBuilder::new()
+        let provider = prefix
+            .strip_prefix("http://day-resource.p")
+            .and_then(|s| s.trim_end_matches('/').parse::<u64>().ok())
+            .unwrap_or(0);
+        let mut builder = wry::WebViewBuilder::new();
+        if provider != 0 {
+            builder = builder.with_asynchronous_custom_protocol(
+                "day-resource".into(),
+                move |_, request, responder| {
+                    super::resources::background(move || {
+                        let url = request.uri().to_string().replacen(
+                            &format!("day-resource://p{provider}/"),
+                            &format!("http://day-resource.p{provider}/"),
+                            1,
+                        );
+                        let r = super::resources::respond(
+                            provider,
+                            &url,
+                            request.method().as_str(),
+                            request
+                                .headers()
+                                .get("Range")
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or(""),
+                        );
+                        let mut response = wry::http::Response::builder()
+                            .status(r.status)
+                            .header("Content-Type", &r.mime);
+                        for (k, v) in r.headers {
+                            response = response.header(k, v);
+                        }
+                        responder.respond(response.body(r.body.to_vec()).unwrap());
+                    });
+                },
+            );
+        }
+        let view = builder
             .with_url(url)
             .with_navigation_handler(move |url| {
                 let allowed = prefix.is_empty()
