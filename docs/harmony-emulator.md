@@ -1,31 +1,50 @@
-# Harmony WebView tests
+<!-- Copyright © The Daybrite Project; SPDX-License-Identifier: CC-BY-SA-4.0 -->
+# Harmony WebView testing
 
-The standard `ci.yml` matrix runs `demo/dayscript/webview.yaml` on all primary
-targets, including `harmony-arkui`. There is no separate Harmony walkthrough.
-The shared `daybrite/actions` workflow automatically installs the verified x86_64
-ArkWeb runtime, applies the Oniro namespace/EGL fixes, and reboots before launching
-the demo. No app-specific runtime setup is required.
+The standard [CI workflow](../.github/workflows/ci.yml) runs the common
+[demo walkthrough](../demo/dayscript/webview.yaml) on Harmony phone and tablet emulators.
+There is no separate Harmony walkthrough and no exclusion of provider/page assertions.
+The [CI audit](testing.md#observed-results) records the actual results and the separate
+screenshot-verification gap.
 
-The common walkthrough checks bundled JavaScript and CSS, Unicode, the console,
-custom links, and reload. Its final screenshot includes a distinctive browser-only
-background. The `harmony-rendering` job checks the downloaded Harmony screenshots
-for actual browser paint, catching a blank surface even when JavaScript succeeds.
+## Engine setup
 
-Runtime sources, checksums, compatibility details, and manual setup commands now
-live with the [shared action](https://github.com/daybrite/actions/tree/main/.github/actions/setup-harmony-webview).
-The runtime is Chromium 114 and the namespace workaround reduces browser-process
-isolation; use fresh disposable emulators and bundled test content.
+The shared `daybrite/actions` workflow installs a matching x86_64 ArkWeb runtime, applies the
+Oniro namespace/EGL setup, and reboots before launching the demo. An ARM64-only ArkWeb package
+on an x86_64 image cannot render the page, regardless of whether the Rust app and HAP compile.
+Check the installed engine ABI when diagnosing a blank view.
 
-After preparing a local test emulator using that helper:
+Runtime sources, checksums, and manual setup commands live with the
+[shared setup action](https://github.com/daybrite/actions/tree/main/.github/actions/setup-harmony-webview).
+Its Chromium 114 test runtime and namespace workaround are emulator provisions, not guidance
+for shipping a production browser runtime. The workaround reduces browser-process isolation;
+use disposable emulators and controlled test content.
+
+After preparing a local emulator, run from `demo/`:
 
 ```sh
-cd demo
 DAY_OHOS_ARCH=x86_64 day launch -p harmony-arkui \
   --ohos-device 127.0.0.1:55556 --script dayscript/webview.yaml
-cd ..
+```
+
+## Diagnose execution separately from painting
+
+The walkthrough checks bundled content, evaluation replies, app links, reload, and resource
+loading. A JavaScript result can succeed even if the GPU surface is blank. It therefore also
+captures `webview-render-proof.png`, where the bundled page paints a distinctive green marker.
+
+With Pillow installed, run from the repository root:
+
+```sh
 python3 scripts/verify-webview-render.py demo/build/day/screenshots/harmony-arkui
 ```
 
-The screenshot verifier requires Pillow (`Pillow==11.3.0` in CI). Consumers of
-`dayapp.yml@v1` need the shared workflow changes released to that ref before
-removing their Harmony WebView exclusions.
+The verifier fails if no marker capture exists or too few expected pixels are visible. It checks
+the bundled page, not the later provider screenshot. In CI the `harmony-rendering` job currently
+depends on the whole demo matrix; an unrelated target failure can skip this check. Do not count
+a skipped verifier as evidence of successful painting.
+
+For failures, inspect the dayscript report, screenshot artifacts, device logs, runtime ABI
+report, and ArkWeb renderer-exit messages. The host-side `tests/harmony-controller.mjs` harness
+covers queueing, attachment, errors, and disposal. Native resource interception is exercised
+by the emulator walkthrough, not by that Node harness.

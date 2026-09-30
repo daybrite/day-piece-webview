@@ -42,8 +42,9 @@ struct NavIvars {
     node: Cell<NodeId>,
     /// Inline mode (docs/webview.md): the `file://` URL prefix of the bundled site's root.
     /// A main-frame navigation outside it is cancelled and reported (`LINK_REPORT`); `None`
-    /// (remote mode) polices nothing.
+    /// permits ordinary document navigation; `external_links` separately intercepts clicks.
     inline_base: RefCell<Option<String>>,
+    external_links: Cell<bool>,
 }
 
 /// WKNavigationActionPolicy, hand-rolled like the class itself: Cancel = 0, Allow = 1.
@@ -77,37 +78,28 @@ define_class!(
         #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
         fn decide_policy(
             &self,
-            _web_view: &WKWebView,
+            web_view: &WKWebView,
             action: &AnyObject,
             handler: &block2::DynBlock<dyn Fn(isize)>,
         ) {
-            let policy = match &*self.ivars().inline_base.borrow() {
-                None => POLICY_ALLOW,
-                Some(base) => {
-                    let frame: *mut AnyObject = unsafe { msg_send![action, targetFrame] };
-                    // Subframes stay the page's business; a nil target frame (window.open,
-                    // target=_blank) is external by definition.
-                    let main_frame =
-                        !frame.is_null() && unsafe { msg_send![&*frame, isMainFrame] };
-                    let sub_frame = !frame.is_null() && !main_frame;
-                    let req: Retained<NSURLRequest> = unsafe { msg_send![action, request] };
-                    let url = req
-                        .URL()
-                        .and_then(|u| u.absoluteString())
-                        .map(|s| s.to_string())
-                        .unwrap_or_default();
-                    let inside = url.starts_with(base.as_str()) || url == "about:blank";
-                    if sub_frame || inside {
-                        POLICY_ALLOW
-                    } else {
-                        day_uikit::emit(self.ivars().node.get(), Event::Custom {
-                            tag: "webview:link",
-                            num: super::LINK_REPORT,
-                            text: url,
-                        });
-                        POLICY_CANCEL
-                    }
-                }
+            let frame: *mut AnyObject = unsafe { msg_send![action, targetFrame] };
+            let subframe = !frame.is_null() && !unsafe { msg_send![&*frame, isMainFrame] };
+            let req: Retained<NSURLRequest> = unsafe { msg_send![action, request] };
+            let url = req.URL().and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default();
+            let kind: isize = unsafe { msg_send![action, navigationType] };
+            let activated = kind == 0; // WKNavigationTypeLinkActivated
+            let external = match &*self.ivars().inline_base.borrow() {
+                Some(base) => !subframe && !url.starts_with(base.as_str()) && url != "about:blank",
+                None => self.ivars().external_links.get() && super::external_document_link(
+                    current_url(web_view).as_deref(), &url, activated, frame.is_null(), subframe),
+            };
+            let policy = if external {
+                day_uikit::emit(self.ivars().node.get(), Event::Custom {
+                    tag: "webview:link", num: super::LINK_REPORT, text: url,
+                });
+                POLICY_CANCEL
+            } else {
+                POLICY_ALLOW
             };
             handler.call((policy,));
         }
@@ -119,6 +111,7 @@ impl WebNav {
         let this = Self::alloc(mtm).set_ivars(NavIvars {
             node: Cell::new(node),
             inline_base: RefCell::new(None),
+            external_links: Cell::new(false),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -175,6 +168,7 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
         DELEGATES.with(|m| {
             if let Some(nav) = m.borrow().get(&key) {
                 nav.ivars().node.set(id);
+                nav.ivars().external_links.set(p.external_links);
             }
         });
         return view;
@@ -198,6 +192,7 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
         }
     }
     let nav = WebNav::new(mtm, id);
+    nav.ivars().external_links.set(p.external_links);
     let _: () = unsafe { msg_send![&web, setNavigationDelegate: &*nav] };
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the assets tree is loose files in the app bundle, so

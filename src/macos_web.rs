@@ -30,8 +30,9 @@ struct NavIvars {
     node: Cell<NodeId>,
     /// Inline mode (docs/webview.md): the `file://` URL prefix of the bundled site's root.
     /// A main-frame navigation outside it is cancelled and reported (`LINK_REPORT`); `None`
-    /// (remote mode) polices nothing.
+    /// permits ordinary document navigation; `external_links` separately intercepts clicks.
     inline_base: RefCell<Option<String>>,
+    external_links: Cell<bool>,
 }
 
 define_class!(
@@ -59,39 +60,44 @@ define_class!(
         #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
         fn decide_policy(
             &self,
-            _web_view: &WKWebView,
+            web_view: &WKWebView,
             action: &WKNavigationAction,
             handler: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy)>,
         ) {
-            let policy = match &*self.ivars().inline_base.borrow() {
-                None => WKNavigationActionPolicy::Allow,
-                Some(base) => {
-                    // Subframe navigations stay the page's own business; a nil target frame
-                    // (window.open / target=_blank) is external by definition.
-                    let main_frame = unsafe { action.targetFrame() }
-                        .map(|f| unsafe { f.isMainFrame() })
-                        .unwrap_or(false);
-                    let url = unsafe { action.request() }
-                        .URL()
-                        .and_then(|u| u.absoluteString())
-                        .map(|s| s.to_string())
-                        .unwrap_or_default();
-                    let inside = url.starts_with(base.as_str()) || url == "about:blank";
-                    let subframe = !main_frame && unsafe { action.targetFrame() }.is_some();
-                    if subframe || inside {
-                        WKNavigationActionPolicy::Allow
-                    } else {
-                        (self.ivars().emit)(
-                            self.ivars().node.get(),
-                            Event::Custom {
-                                tag: "webview:link",
-                                num: super::LINK_REPORT,
-                                text: url,
-                            },
-                        );
-                        WKNavigationActionPolicy::Cancel
-                    }
+            let frame = unsafe { action.targetFrame() };
+            let subframe = frame.as_ref().is_some_and(|f| !unsafe { f.isMainFrame() });
+            let url = unsafe { action.request() }
+                .URL()
+                .and_then(|u| u.absoluteString())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let activated = unsafe { action.navigationType() }
+                == objc2_web_kit::WKNavigationType::LinkActivated;
+            let external = match &*self.ivars().inline_base.borrow() {
+                Some(base) => !subframe && !url.starts_with(base.as_str()) && url != "about:blank",
+                None => {
+                    self.ivars().external_links.get()
+                        && super::external_document_link(
+                            current_url(web_view).as_deref(),
+                            &url,
+                            activated,
+                            frame.is_none(),
+                            subframe,
+                        )
                 }
+            };
+            let policy = if external {
+                (self.ivars().emit)(
+                    self.ivars().node.get(),
+                    Event::Custom {
+                        tag: "webview:link",
+                        num: super::LINK_REPORT,
+                        text: url,
+                    },
+                );
+                WKNavigationActionPolicy::Cancel
+            } else {
+                WKNavigationActionPolicy::Allow
             };
             handler.call((policy,));
         }
@@ -104,6 +110,7 @@ impl WebNav {
             node: Cell::new(node),
             emit,
             inline_base: RefCell::new(None),
+            external_links: Cell::new(false),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -173,6 +180,7 @@ pub(crate) fn make(
         DELEGATES.with(|m| {
             if let Some(nav) = m.borrow().get(&key) {
                 nav.ivars().node.set(id);
+                nav.ivars().external_links.set(p.external_links);
             }
         });
         return view;
@@ -195,6 +203,7 @@ pub(crate) fn make(
         }
     }
     let nav = WebNav::new(mtm, id, emit);
+    nav.ivars().external_links.set(p.external_links);
     unsafe { web.setNavigationDelegate(Some(ProtocolObject::from_ref(&*nav))) };
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the bundled site is loose files (the assets tree in

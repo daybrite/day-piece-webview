@@ -1,136 +1,212 @@
 <!-- Copyright © The Daybrite Project; SPDX-License-Identifier: CC-BY-SA-4.0 -->
 # Resource providers
 
-A `ResourceProvider` serves a tree of application-owned bytes to a web view. Open a document
-with `web_view_resources(provider, path)`. The browser resolves relative images, stylesheets,
-CSS imports, fonts, scripts and child documents itself. There is no loopback server, archive
-extraction, base64 bridge or blob-URL rewriting.
+A `ResourceProvider` serves application-owned bytes by path. Open a document with
+`web_view_resources(provider, path)`; the browser requests its images, stylesheets, scripts,
+fonts, and child documents as needed. Relative links keep their ordinary meaning.
 
-Use this for EPUB readers, archive viewers, generated reports and other documents whose
-resources are available by path but are not a deployed website. Continue using
-`web_view_inline(res::assets::site)` for a wholly bundled site.
+Use this for EPUBs, archive viewers, generated reports, or a bundled editor with runtime data.
+Use `web_view_inline(res::assets::site)` when everything is already bundled. Providers avoid
+whole-archive extraction, base64 transport, and rewriting every resource reference. They do
+not implement an HTTP server or an asynchronous network client.
 
-## API
+## A generated report
+
+This helper accepts already-rendered HTML, including any localized headings, and shares the
+response bytes across repeated requests:
 
 ```rust
-use day_piece_webview::{ResourceProvider, ResourceResponse, web_view_resources};
+use day_piece_webview::{ResourceProvider, ResourceResponse, WebView, web_view_resources};
 
-// `archive` is application state implementing a path → (MIME, bytes) lookup.
-// Its captured state must be Send + Sync. It should read only the requested entry.
-let provider = ResourceProvider::new(move |request| {
-    match archive.read(&request.path) {
-        Ok((mime, bytes)) => ResourceResponse::new(mime, bytes),
-        Err(_) => ResourceResponse::not_found(),
-    }
-});
-let view = web_view_resources(provider, "chapters/first.xhtml");
+fn report_view(html: String) -> WebView {
+    let document = ResourceResponse::new("text/html", html.into_bytes());
+    let provider = ResourceProvider::new(move |request| match request.path.as_str() {
+        "report.html" => document.clone(),
+        _ => ResourceResponse::not_found(),
+    });
+    web_view_resources(provider, "report.html")
+}
 ```
 
-A document at `chapters/first.xhtml` can use `../images/cover.jpg`, `../styles/book.css`,
-`second.xhtml#heading`, and CSS `url('../fonts/body.woff2')` unchanged. Publication paths and
-text are data supplied by the publication, not application resource names or translations.
+Generate app-owned text from `res::str` accessors on the UI thread before calling the helper.
+Use an HTML template engine that escapes text and attribute values. Publication text and
+user-entered content are data; neither should be interpreted as markup without validation.
 
-`ResourceRequest` contains a decoded, root-relative `path`, an optional raw `query`, and
-`method` (`GET` or `HEAD`). Fragments stay in the browser. Traversal components, backslashes,
-NULs, invalid UTF-8 and requests for another provider's namespace are rejected before the
-callback. An archive provider should additionally restrict access to its manifest; do not
-join arbitrary request paths to an unrestricted filesystem root.
+For a report with existing binary attachments, use a path-to-response map:
 
-`ResourceResponse` contains `status`, `mime`, `body: Arc<[u8]>` and `headers`. `new` accepts
-shared bytes or a `Vec<u8>`; cloned responses share their body. Return the complete requested
-resource for both GET and HEAD. The adapter supplies lengths, removes the HEAD body, and
-handles a single byte range, including suffix ranges. Unsatisfiable/multiple ranges return
-416. Statuses 2xx and 4xx–5xx are accepted; redirects and informational statuses are not.
-Qt cannot expose the same HTTP status semantics (see below).
+```rust
+use std::collections::HashMap;
+use day_piece_webview::{ResourceProvider, ResourceResponse};
 
-Responses are `no-store`, preventing a previous provider from surviving in an engine cache.
-Retain a bounded application cache if decompression is expensive. The API buffers one resource
-at a time; it is not an unbounded streaming or video API. Keep individual resources bounded.
+fn report_resources(entries: HashMap<String, ResourceResponse>) -> ResourceProvider {
+    ResourceProvider::new(move |request| {
+        entries.get(&request.path).cloned().unwrap_or_else(ResourceResponse::not_found)
+    })
+}
+```
+
+For example, a runtime-generated `reports/month.html` entry can reference
+`../images/chart.png`. Return `image/png` for the image and `text/css` for a stylesheet.
+`ResourceResponse::clone()` shares its `Arc<[u8]>` body. This map is suitable for small reports;
+use on-demand reads for large archives.
+
+## Load an archive one entry at a time
+
+The piece does not parse ZIP or EPUB. Keep the archive parser and manifest checks in the app.
+The following adapter defines the boundary explicitly:
+
+```rust
+use std::sync::Arc;
+use day_piece_webview::{ResourceProvider, ResourceResponse};
+
+trait Publication: Send + Sync + 'static {
+    // Read one manifest-approved entry. Return None for unknown/disallowed paths.
+    // The result contains its media type and complete, bounded bytes.
+    fn read_resource(&self, path: &str) -> Option<(String, Vec<u8>)>;
+}
+
+fn publication_provider(publication: Arc<dyn Publication>) -> ResourceProvider {
+    ResourceProvider::new(move |request| {
+        match publication.read_resource(&request.path) {
+            Some((mime, bytes)) => ResourceResponse::new(mime, bytes),
+            None => ResourceResponse::not_found(),
+        }
+    })
+}
+```
+
+Open `OPS/chapters/first.xhtml` with `web_view_resources`. The chapter can reference
+`../images/cover.jpg`, `../styles/book.css`, or `second.xhtml#heading`. CSS can contain
+`url('../fonts/body.woff2')`. These paths come from the publication, not from bundled app
+resource names. Return `application/xhtml+xml` for XHTML and the actual MIME type for each
+resource; the adapters send `nosniff`.
+
+A ZIP library requiring mutable access can be protected by a mutex, but a single archive lock
+serializes reads. Keep decompression and resource-size limits explicit. Cache frequently used
+stylesheets and fonts in a bounded cache; do not preload the entire book to satisfy this API.
 
 ## Bundled shell and dynamic content
 
-`with_site` mounts a generated asset directory at `__day_assets/`. All other paths go to the
-callback. The shell and dynamic documents share the same origin, so the shell can manage a
-child document without modifying its relative references.
+`with_site` mounts an app's generated asset directory at `__day_assets/`. Other paths go to the
+provider callback. This lets a reader shell and a publication share an origin:
 
 ```rust
-let provider = ResourceProvider::with_site(res::assets::reader, move |request| {
-    // Serve publication resources under book/, for example book/OPS/chapter.xhtml.
-    publication_response(request)
-});
-let view = web_view_resources(provider, "__day_assets/index.html")
-    .js(reader_js)
-    .on_external_link(handle_reader_link);
+use day_piece_webview::{
+    JsHandle, ResourceProvider, ResourceRequest, ResourceResponse, WebView, web_view_resources,
+};
+
+fn reader_shell(
+    js: JsHandle,
+    serve_publication: impl Fn(ResourceRequest) -> ResourceResponse + Send + Sync + 'static,
+) -> WebView {
+    let provider = ResourceProvider::with_site(res::assets::reader, serve_publication);
+    web_view_resources(provider, "__day_assets/index.html").js(js)
+}
 ```
 
-In this example the shell opens `../book/OPS/chapter.xhtml` in an iframe. References inside
-that chapter resolve under `book/OPS/`. Use the generated `res::assets::reader` constant;
-links *inside* the directory remain document-relative. Format app-owned UI text using
-localized generated accessors on the UI thread before capturing it in a provider.
+Inside `resource/assets/reader/index.html`, a document-relative frame source such as
+`../book/OPS/chapter.xhtml` requests `book/OPS/chapter.xhtml` from the callback. Resolve that
+prefix against the publication manifest. Within the chapter, relative resources resolve from
+`book/OPS/`. The shell's own `./reader.css` remains under the bundled mount.
 
-`provider.url(path)` encodes a root-relative path; `base_url()` returns its base. Treat these
-URLs as opaque and temporary. Native custom schemes and synthetic HTTPS/browser paths differ
-by engine. Do not persist them, concatenate a hardcoded scheme, or register an OS URL handler.
-`__day_assets/` and the `X-Day-Bundled-Asset` response header are reserved for the bundled mount.
+For chapter changes, update the frame's `src` to the next publication path. A bundled shell
+can animate the transition, track reading position, and communicate through the
+[JavaScript API](webview-eval.md). Supply app-owned web UI translations through generated
+accessors; do not ship English fallback labels in the shell.
 
-## Execution and lifetime
+`__day_assets/` and the `X-Day-Bundled-Asset` response header are reserved. Use the generated
+`res::assets::reader` constant to mount the bundle, rather than loading bundled resources with
+literal names in the callback.
 
-The callback is synchronous. Native adapters invoke it on I/O workers (a fixed four-worker
-pool where the toolkit does not supply its own worker). Web DOM invokes it on the app's WASM
-thread; a slow callback will block that tab. Do not read Day signals, create toolkit objects,
-format localized messages or panic inside the callback. Capture immutable data, shared bytes
-or a thread-safe archive handle instead.
+## Requests and responses
 
-A view retains its provider. Shared provider handles can keep the namespace alive longer;
-a request after its last handle is dropped receives 410. Native adapters retain request
-objects while loading, and stopped/destroyed views do not receive a late callback. A callback
-already reading bytes is not forcibly interrupted: finishing that synchronous read may still
-consume work after the browser abandons a request. This is not a cancellable network client.
+| Request field | Meaning |
+|---|---|
+| `path: String` | Percent-decoded path relative to the provider root; no leading slash |
+| `query: Option<String>` | Raw query string, without `?`; parse it if needed |
+| `method: String` | `GET` or `HEAD`; other methods are rejected before the callback |
 
-A `WebSession` retains its first provider and starting URL along with its engine, including
-while detached. Like existing sessions, this lasts for the process lifetime. Reuse a stable
-session only for a persistent document surface, not one session per book. Ordinary views
-release their namespace when removed.
+Fragments remain in the browser. The dispatcher rejects invalid UTF-8, NULs, backslashes,
+traversal components, and requests outside the provider namespace. Browser URL normalization
+may resolve `..` before sending a request. The provider must still restrict reads to its
+manifest/root; these checks do not authorize arbitrary filesystem access.
 
-Top-level navigation outside the provider follows the existing external-link policy.
-Subresource loading is not a sandbox: providers serve bytes; they do not sanitize HTML or
-prevent remote requests. For untrusted documents, remove active content and supply a CSP.
-Stanza also embeds the CSP in the document for Qt versions without response-header support.
-Providers must not expose secrets merely because the URL contains a generated identifier.
+| Response field | Meaning |
+|---|---|
+| `status: u16` | Defaults to 200; 2xx and 4xx–5xx accepted; redirects/informational statuses rejected |
+| `mime: String` | Resource media type, such as `text/css` or `image/jpeg` |
+| `body: Arc<[u8]>` | Complete bytes for this resource; `new` also accepts `Vec<u8>` |
+| `headers: Vec<(String, String)>` | Additional valid response headers, subject to backend limitations |
 
-## Backends
+`ResourceResponse::not_found()` returns 404 with an empty body. `ResourceResponse::error(500)`
+returns an empty error response. Supply the complete resource even for HEAD. The dispatcher
+sets its length, strips the HEAD body, and applies a single byte range, including suffix ranges.
+Invalid, multiple, or unsatisfiable ranges return 416. Statuses 204 and 205 have empty bodies.
 
-| Target | Resource channel | Particulars |
-|---|---|---|
-| macOS AppKit, macOS GTK, iOS UIKit | `WKURLSchemeHandler` | Installed in the configuration before creating the web view. Stopped tasks cannot receive responses. |
-| Android MDC | `WebViewClient.shouldInterceptRequest` | Reserved synthetic HTTPS origin; binary `WebResourceResponse` on the WebView I/O thread. No localhost listener or cleartext permission. |
-| Linux GTK | `WebContext.register_uri_scheme` | WebKitGTK response streams, status and headers; completion on the GTK main context. |
-| macOS/Linux Qt | `QWebEngineUrlSchemeHandler` | Scheme registered before Qt startup; isolated profile per resource view. Qt 6.6+ supports custom response headers. Qt exposes reply/error rather than arbitrary HTTP statuses; do not depend on fetch status or HTTP range/media semantics here. |
-| Windows XAML | WebView2 `WebResourceRequested` | Reserved HTTPS origin, document/iframe filter, deferral while workers read, response completion on the UI dispatcher. Requires the WebView2 runtime and its iframe-aware request-filter API. |
-| Windows GTK/Qt | Wry's asynchronous WebView2 protocol handler | Uses Wry's synthetic HTTP origin mapping; same provider callback. Windows Qt builds with WebEngine use the Qt handler above. |
-| Harmony ArkUI | ArkWeb NDK scheme handlers, API 12+ | Registers the reserved HTTPS handler by web tag after controller attachment and before document navigation. Response data bypasses ArkTS. |
-| Web DOM | Scoped service worker and transferable byte buffers | HTTPS or localhost required. The worker controls only `assets/data/day-piece-webview/`, leaving the app/PWA scope alone. The owning tab must remain alive. Responses preserve Day's cross-origin isolation headers. |
+Invalid header names/values are removed. Content type, length, range, cache, and `nosniff`
+headers belong to the adapter. Responses use `Cache-Control: no-store` so engine caches do not
+retain old provider data. Qt cannot expose arbitrary HTTP status semantics, and custom response
+headers require Qt 6.6+. Do not assume identical `fetch` status or media-seeking behavior across
+engines; see [Platforms](platforms.md#resource-loading).
 
-Web deployment must include the piece's `web/` assets; `day build` stages these automatically.
-Serving the app from a subdirectory works without a root-scope service worker. Missing owners
-time out with 410; content is not stored in the service-worker cache. Generated page URLs are
-session-local, not bookmarks. Private-browsing/browser policies that prohibit service workers
-also prohibit resource views; regular bundled views do not need a service worker.
+## URLs
 
-Native API references: [Apple scheme handler](https://developer.apple.com/documentation/webkit/wkurlschemehandler),
-[Android request interception](https://developer.android.com/reference/android/webkit/WebViewClient#shouldInterceptRequest(android.webkit.WebView,%20android.webkit.WebResourceRequest)),
-[WebKitGTK scheme registration](https://webkitgtk.org/reference/webkit2gtk/stable/method.WebContext.register_uri_scheme.html),
-[Qt request jobs](https://doc.qt.io/qt-6/qwebengineurlrequestjob.html),
-[WebView2 local content](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/working-with-local-content).
+`provider.url(path)` percent-encodes each path segment. Literal `?`, `#`, and `%` in filenames
+are encoded as filename characters. Append a separately encoded query or fragment if needed.
+`base_url()` includes a trailing slash. Both are engine-specific and temporary; the web base
+is relative to the deployed app. Do not persist these URLs or reconstruct their scheme.
 
-## Tests
+Prefer relative URLs inside the served document. There is no OS scheme registration to perform
+and no public web address for another app to open.
 
-`demo/dayscript/webview.yaml` opens generated HTML and verifies a relative script, CSS import,
-image, nested document and stylesheet from a generated bundled asset directory. It reloads
-the resource view, then returns to the regular bundled view. The shared CI matrix runs the
-same assertions on every primary platform, including Windows and HarmonyOS.
+## Threads, memory, and lifetime
 
-`cargo test` covers path validation, provider isolation/lifetime, shared bodies, byte ranges,
-HEAD, response validation and reentrant/concurrent providers. `node --test tests/*.mjs`
-exercises the shipped browser bridge, service worker and Harmony controller lifecycle.
-Native engine execution still matters: a Rust cross-check does not establish working rendering.
+The callback is `Fn(ResourceRequest) -> ResourceResponse + Send + Sync + 'static`. Native
+adapters run it on I/O workers: a fixed four-worker pool where the toolkit does not supply its
+own worker. Android uses WebView's request thread. **On web-dom the callback runs synchronously
+on the app's WASM thread and can block the UI.** It cannot await a network request.
+
+Capture shared bytes or thread-safe archive state. Do not access Day signals, create widgets,
+or format localized messages inside the callback. Native requests may run concurrently. Do not
+panic; normal read failures should become responses.
+
+The API buffers a complete resource, not a stream. `Arc` avoids copying bodies when responses
+are cloned, but ranges and native/browser transfers may still copy bytes. A large individual
+image or chapter can still consume substantial memory. Bound input sizes and cache usage.
+
+A view retains its provider; clones can retain it longer. Requests after the last owner is gone
+receive 410. Request cancellation is adapter-specific; a callback already reading/decompressing
+bytes is not forcibly interrupted. Do not use cancellation as a memory or computation bound.
+
+A `WebSession` pins its first provider and initial URL for the process lifetime. Engine retention
+is supported only on [some backends](webview.md#retain-a-page-across-app-navigation); it is not
+a way to swap publications under one stable key. Use ordinary views for transient documents.
+
+## Browser deployment
+
+`day build` stages `web/resource-worker.js`. Resource views use that service worker beneath
+`assets/data/day-piece-webview/`; it does not claim the application's root/PWA scope. HTTPS or
+localhost is required, service workers must be permitted, and the owning app tab must stay alive.
+A deployment under a subdirectory is supported. An unknown owner returns 410; a nonresponsive
+owner times out. No document bodies are stored in the service-worker cache.
+
+The browser path uses transferable buffers and preserves Day's cross-origin isolation headers.
+It still follows browser origin/CSP rules. Regular inline sites do not require this worker.
+There is currently no dedicated `resource_support()` or provider-startup result API;
+`inline_support()` alone cannot verify service-worker availability.
+
+## Untrusted documents
+
+Resource providers route bytes; they do not sanitize HTML, disable scripts, or block remote
+requests. Restrict access to known resources, sanitize imported content, and apply a CSP suited
+to the document. If the policy must work on older Qt, embed an appropriate CSP in the document
+as well as using response headers. Do not serve secrets based only on possession of a generated
+URL. External-link handling is a navigation convenience, not a security boundary.
+
+## Verification
+
+The [demo](../demo/src/lib.rs) and [walkthrough](../demo/dayscript/webview.yaml) exercise relative
+JavaScript, CSS imports, a binary image response, a nested document, bundled CSS, and reload.
+The [testing guide](testing.md) distinguishes native execution from host mocks and records the
+Linux GTK failure found in the first CI run. Range, lifetime, and validation tests exist, but
+not every native response/lifecycle path has end-to-end coverage yet.

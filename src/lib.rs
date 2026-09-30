@@ -38,12 +38,37 @@ mod resources_apple;
 #[cfg(all(feature = "arkui", target_env = "ohos"))]
 mod resources_arkui;
 
+/// Ordinary documents opt in through `on_external_link`. Loading a document, reloading,
+/// fragment navigation, and embedded frames must not be mistaken for an outbound click.
+#[cfg(any(
+    test,
+    all(
+        any(target_os = "macos", target_os = "ios"),
+        any(feature = "appkit", feature = "uikit", feature = "gtk")
+    )
+))]
+fn external_document_link(
+    current: Option<&str>,
+    target: &str,
+    activated: bool,
+    new_window: bool,
+    subframe: bool,
+) -> bool {
+    if subframe || target.is_empty() || target == "about:blank" || !(activated || new_window) {
+        return false;
+    }
+    let without_fragment = |url: &str| url.split('#').next().unwrap_or("").to_owned();
+    !current.is_some_and(|url| without_fragment(url) == without_fragment(target))
+}
+
 pub const KIND: &str = "day.piece.webview";
 
 /// Full props (realize). The initial `url` is loaded when the native view is created.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WebProps {
     pub resources: Option<ResourceProvider>,
+    /// On Apple backends, report user-activated links in ordinary documents as well.
+    pub external_links: bool,
     pub url: String,
     /// The [`WebSession`] this view belongs to, or `0` for none. A non-zero id asks the backend to
     /// hand back the session's existing native view instead of creating one, so the loaded page
@@ -652,6 +677,7 @@ pub struct WebView {
     inline_assets: bool,
     transparent: bool,
     on_link: Option<LinkDecider>,
+    on_load: Option<Rc<dyn Fn()>>,
 }
 
 /// `web_view(url)`: a native web view showing `url`. The initial value loads on creation; call
@@ -678,6 +704,7 @@ pub fn web_view(url: Signal<String>) -> WebView {
         inline_assets: false,
         transparent: false,
         on_link: None,
+        on_load: None,
         resources: None,
     }
 }
@@ -705,6 +732,13 @@ pub fn web_view_resources(provider: ResourceProvider, page: &str) -> WebView {
 }
 
 impl WebView {
+    /// Called on the UI thread after the backend reports a completed navigation. Useful for
+    /// applying the latest presentation state through `JsHandle`, including same-URL reloads.
+    /// Available on native backends that report navigation; not on emulated iframe hosts.
+    pub fn on_load(mut self, callback: impl Fn() + 'static) -> Self {
+        self.on_load = Some(Rc::new(callback));
+        self
+    }
     /// Load the current value of the bound `url` whenever `trigger` fires.
     pub fn go(mut self, trigger: Trigger) -> Self {
         self.go = Some(trigger);
@@ -769,7 +803,9 @@ impl WebView {
         self.transparent = true;
         self
     }
-    /// Inline and resource modes: decide what happens to a navigation that leaves the site. Runs on the
+    /// Decide what happens to a navigation that leaves an inline/resource site. On Apple
+    /// backends, also opts ordinary documents into reporting user-activated links and new
+    /// windows; initial loads, subframes and same-document fragments stay in view. Runs on the
     /// main thread with the target URL; without it every external link is
     /// [`LinkPolicy::OpenSystem`]. The closure may do arbitrary in-app work (navigate the day
     /// app, log) and return [`LinkPolicy::Ignore`].
@@ -823,6 +859,7 @@ impl Piece for WebView {
             inline_assets,
             transparent,
             on_link,
+            on_load,
             mut resources,
         } = self;
         let mut initial_url = url.get_untracked();
@@ -844,6 +881,7 @@ impl Piece for WebView {
         }
         let initial = WebProps {
             resources: resources.clone(),
+            external_links: on_link.is_some(),
             url: initial_url,
             session: session.map(WebSession::id).unwrap_or(0),
             inline_root: inline.as_ref().map(|s| s.root.clone()).unwrap_or_default(),
@@ -939,6 +977,9 @@ impl Piece for WebView {
                     }
                 } else {
                     url.set(text.clone());
+                    if let Some(callback) = &on_load {
+                        callback();
+                    }
                 }
             }
         });
@@ -1166,5 +1207,64 @@ mod tests {
         // A literal line terminator would end the string mid-source.
         assert_eq!(js_string_literal("a\u{2028}b"), "\"a\\u2028b\"");
         assert_eq!(js_string_literal("a\u{1}b"), "\"a\\u0001b\"");
+    }
+}
+
+#[cfg(test)]
+mod external_link_tests {
+    use super::external_document_link as external;
+    #[test]
+    fn user_navigation_leaves_reader_but_loading_and_anchors_do_not() {
+        let page = Some("file:///tmp/fixture.html");
+        assert!(external(
+            page,
+            "https://example.test/story",
+            true,
+            false,
+            false
+        ));
+        assert!(external(
+            page,
+            "https://example.test/story",
+            true,
+            true,
+            false
+        ));
+        assert!(external(
+            page,
+            "https://example.test/story",
+            false,
+            true,
+            false
+        ));
+        assert!(!external(
+            page,
+            "file:///tmp/fixture.html#note",
+            true,
+            false,
+            false
+        ));
+        assert!(!external(
+            page,
+            "file:///tmp/next.html",
+            false,
+            false,
+            false
+        ));
+        assert!(!external(
+            page,
+            "https://example.test/frame",
+            true,
+            false,
+            true
+        ));
+        assert!(!external(page, "about:blank", false, true, false));
+        assert!(external(
+            Some("https://example.test/story?a=1#x"),
+            "https://example.test/story?a=2",
+            true,
+            false,
+            false
+        ));
     }
 }

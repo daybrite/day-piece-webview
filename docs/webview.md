@@ -1,383 +1,213 @@
 ---
-title: "Web view"
-description: "The web view piece: remote pages and bundled inline sites, sessions, link policy, and per-platform engines."
+title: "Web view integration"
+description: "Load web content in a Day app, handle navigation, and manage view lifetime."
 ---
+<!-- Copyright © The Daybrite Project; SPDX-License-Identifier: CC-BY-SA-4.0 -->
+# Web view integration
 
-<!--
-Copyright © The Daybrite Project
-SPDX-License-Identifier: CC-BY-SA-4.0
--->
+Use `web_view` for URLs, `web_view_inline` for bundled sites, and
+[`web_view_resources`](resource-provider.md) for app-provided bytes. All return a `WebView`
+that implements Day's `Piece` and accepts layout, accessibility, and ID decorators.
 
-# Web view (external piece)
+The examples below belong in a Day app with `day::resources!()`. Names such as
+`res::str::go()` and `res::assets::site` stand for the app's generated translations and asset
+directories. Define the strings in each supported locale. Do not replace them with hardcoded
+UI text or string-based resource lookups.
 
-> **Status: implemented** as `day-piece-webview`, an external Day Piece in its own repository
-> (moved out of `daybrite/day` with its history in 2026-09), registered link-time into each
-> backend's renderer slice without touching day. It wraps each toolkit's native web view and fills
-> the space it's offered. It is a reference for pieces whose native backend is heavier than a
-> control: a whole embedded browser, with commands in and URL events out.
-
-## Authoring
+## A browser with navigation controls
 
 ```rust
-use day_piece_webview::web_view;
+use day::prelude::*;
+use day_piece_webview::{support, web_view};
 
-let url = Signal::new("https://daybrite.dev".to_string());
-let (go, back, fwd, stop, reload) = (Trigger::new(), Trigger::new(), Trigger::new(),
-                                     Trigger::new(), Trigger::new());
-
-// The URL bar is bound two-way: type + Go loads it; navigation reports the URL back so the field follows.
-text_field(url).id("url");
-button("Go").action(move || go.notify());
-button("Back").action(move || back.notify());          // + Forward / Stop / Reload the same way
-
-web_view(url).go(go).back(back).forward(fwd).stop(stop).reload(reload).id("web")
+fn browser() -> impl Piece {
+    let url = Signal::new("https://daybrite.dev".to_owned());
+    let go = Trigger::new();
+    let back = Trigger::new();
+    let reload = Trigger::new();
+    let history = support() == Support::Native;
+    column((
+        row((
+            button(res::str::back())
+                .enabled(move || history)
+                .action(move || back.notify()),
+            text_field(url).id("browser-url"),
+            button(res::str::go()).action(move || go.notify()),
+            button(res::str::reload()).action(move || reload.notify()),
+        )).spacing(8.0),
+        web_view(url).go(go).back(back).reload(reload).id("browser"),
+    ))
+}
 ```
 
-`web_view(url)` takes a `Signal<String>`. The initial value loads when the view is created; firing the
-`.go()` trigger (re)loads whatever the signal currently holds. History is driven imperatively with `Copy`
-`Trigger`s (`.back()/.forward()/.stop()/.reload()`), each `watch`ed to a command. Native navigation
-reports the current URL back into the bound signal, so a bound `text_field` follows along. `WebView`
-implements `Piece`, so `.id()`/`.a11y()`/`.frame()` chain via `Decorate`. It's a growing leaf
-(`Flex { grow_w, grow_h }`), so put it last in a `column` and it fills the remaining space.
+The initial URL loads when the view is created. Editing the signal alone does not navigate;
+notify the `go` trigger to load its current value. Native navigation updates the signal with
+the reported URL. web-dom does not report iframe URL changes.
 
-`day_piece_webview::support()` reports what the running backend realizes. `Native` is an embedded
-browser engine with the full command set. `Emulated` loads pages but cannot drive history or report
-navigation back (web-dom's `<iframe>`; see the note below). `Unsupported` renders day's placeholder
-leaf where no renderer is compiled. Gate history controls on it:
+| Modifier | On trigger notification |
+|---|---|
+| `.go(trigger)` | Load the current URL signal |
+| `.back(trigger)` / `.forward(trigger)` | Move through browser history |
+| `.stop(trigger)` | Stop the current load |
+| `.reload(trigger)` | Reload; web-dom instead reloads the last URL supplied by the app |
+
+There is no public `can_go_back` or loading-progress signal. `support() == Native` indicates a
+compiled command implementation, not that history is nonempty or the engine started successfully.
+
+The web view grows in both directions. A `column` containing controls followed by the web view
+lets it use the remaining height. Give an embedded preview a bounded frame; avoid putting an
+unbounded web view inside a scrolling container. Native child-window hosts need particular care
+with clipping and overlapping controls; see [Platforms](platforms.md).
+
+## Bundled help, editors, and players
+
+Place the complete web document tree under a generated asset directory:
+
+```text
+resource/assets/site/
+  index.html
+  css/style.css
+  js/main.js
+  pages/shortcuts.html
+```
+
+Open it with its generated constant:
 
 ```rust
-let history = support() == Support::Native;
-button("Back").enabled(move || history).action(move || back.notify());
+use day::prelude::*;
+use day_piece_webview::web_view_inline;
+
+fn shortcuts() -> impl Piece {
+    web_view_inline(res::assets::site)
+        .start_page("pages/shortcuts.html?mode=compact#keyboard")
+        .id("shortcuts")
+}
 ```
 
-`.back()`, `.forward()` and `.stop()` are no-ops below `Native`, so a button left enabled there is one
-that does nothing when pressed.
+`.start_page()` applies only to inline sites. Without it the first page is `index.html`.
+The query and fragment reach the page unchanged. Within HTML and CSS, use relative links such
+as `../css/style.css`; do not construct platform-specific bundle URLs.
 
-**`file://` URLs** (an app-written local document such as a feed reader's article file) load on every
-`Native` backend. On Android, API 30 turned `WebSettings.setAllowFileAccess` off by default, which
-refuses even the app's own `loadUrl("file://…")`; the piece's Java re-enables it **only for a
-WebView the app pointed at a `file://` URL**, so remote-browsing views keep the modern
-lockdown. The switches that would let a file page read other files or reach other origins
-(`setAllowFileAccessFromFileURLs`, `setAllowUniversalAccessFromFileURLs`) stay off, and web
-content can never navigate a WebView to `file://` itself; only the app's load can. web-dom is
-the exception with no filesystem at all: a `file://` URL renders nothing there, so a document an
-app wants shown on web too must arrive as content rather than as a file (an open gap; the piece has no
-direct-HTML API yet).
-
-Evaluating JavaScript and reading a value back is covered in day's [docs/webview-eval.md](https://github.com/daybrite/day/blob/main/docs/webview-eval.md), which keeps the per-platform support list current:
-`JsHandle::eval(script).await` returns the value as JSON, or the error the script threw. Ask
-`eval_support()` before offering it. AppKit, UIKit, Qt, XAML, Android, ArkWeb and Linux GTK
-have evaluation arms. macOS GTK uses WKWebView; Windows GTK/Qt use WebView2 through Wry.
-web-dom evaluates bundled/same-origin frames; remote cross-origin frames answer an engine error.
-See [webview-eval.md](webview-eval.md) for the value envelope and lifetime contract.
-
-### Sessions (surviving navigation)
-
-Day rebuilds a destination's whole subtree on every navigation, so a plain `web_view` gets a fresh
-native view each visit and reloads from scratch. `.session(…)` moves the engine out of that lifetime:
+For an explicit preparation step:
 
 ```rust
-web_view(url).session(WebSession::global("myapp.browser"))
+use day_piece_webview::{AssetDirSiteExt, PrepareError, WebView, web_view_inline};
+
+async fn prepared_help() -> Result<WebView, PrepareError> {
+    let site = res::assets::site.prepare_site().await?;
+    Ok(web_view_inline(site))
+}
 ```
 
-The piece keeps the native web view alive against that id, and the next `web_view` bound to the same
-session re-attaches it with its page, scroll position, history and **JavaScript context** intact.
-Apple's newer API has the same shape (`WebPage` holds the session, `WebView` renders it), and it
-works for the same reason: a web view's content lives in the object and its content process
-rather than in its attachment to a parent view.
+`prepare_site()` checks for `index.html` on native targets and prepares Linux GTK's extracted
+cache. Its current implementation performs the work synchronously and returns an immediately
+ready future; `await` does not move extraction off the UI thread. web-dom skips the presence
+check, so missing pages fail when the iframe loads. Map preparation errors to localized UI
+messages; the error's `Display` text is a diagnostic, not a translated label.
 
-Sessions are keyed by a `&'static str` so `WebSession::global` is idempotent, which matters because
-the page function runs again on every navigation. There is no anonymous constructor, because an
-id that changed per build would retain a new engine each visit and leak them all. A retained view is
-never freed; **one session is one live web view for the process's lifetime**, so use them for pages
-a user returns to, not per list item.
+### Share other bundled assets
 
-Reactive state is a separate problem with a separate answer: signals declared in a page function are
-minted fresh per visit too, so hoist them with `Signal::global` behind a `OnceCell` (the showcase's
-`pages/webview.rs` and `pages/scripting.rs` both do this).
-
-**Per-backend.** AppKit and UIKit release a handle by *detaching* it (`removeFromSuperview`), so the
-piece holding its own reference is all it takes. Qt is the exception (its `release` calls
-`deleteLater()` on the handle), so what the shim retains is the `QWebEngineView` *inside* the
-container, and `~DayWebView` re-parents it out before `~QWidget` deletes its children. All three
-also have to keep the node the retained view reports to up to date: the view outlives the node that
-first realized it, so `make` re-points it at whichever node is showing it now, and `release` leaves
-a retained view's bookkeeping alone.
-
-Verified on macos-appkit, ios-uikit and macos-qt by setting `window.__dayMarker` in the live page,
-navigating away and back, and reading it again; the showcase walkthrough asserts that, so a
-backend that starts rebuilding instead of retaining fails CI rather than degrading quietly.
-
-GTK, Android, XAML, ArkUI and web-dom ignore `session` and rebuild as before. GTK's `release` also
-only detaches, so it is the next one that could carry this; the others would each need the same work
-Qt needed.
-
-## Inline sites: `web_view_inline` (app-embedded content)
-
-A directory under `resource/assets/` can ship a whole site (pages, stylesheets, scripts,
-images, structure preserved, per the asset tree in day's
-[docs/resources.md](https://github.com/daybrite/day/blob/main/docs/resources.md)), and the view serves it from
-inside the app without a network:
+A player can opt into reading sibling asset directories:
 
 ```rust
-// resource/assets/web/minisite/{index.html, css/, js/, img/, pages/}
-web_view_inline(res::assets::web::minisite)         // lazy: loads index.html directly
-    .session(WebSession::global("app.embedded"))
-    .start_page("pages/intro.html")                  // optional, instead of index.html
-    .on_external_link(|url| LinkPolicy::OpenSystem)  // optional; this IS the default
+use day::prelude::*;
+use day_piece_webview::web_view_inline;
 
-// the checked route: index.html presence validated before the view exists
-let site = res::assets::web::minisite.prepare_site().await?;   // InlineSite
-web_view_inline(site)
+fn player() -> impl Piece {
+    web_view_inline(res::assets::player).app_assets().transparent()
+}
 ```
 
-A page may carry a query or a fragment (`start_page("player.html?src=hello")`), and the site
-reads it back through `location.search` / `location.hash` as it would from a server. That is the
-one channel a site has on every backend, including the two with no JavaScript evaluation arm.
+`.app_assets()` widens Apple's file read-access root and GTK's extraction scope. Other engines
+already expose the staged asset tree. It is not a portable filesystem sandbox. File-origin
+`fetch` and XMLHttpRequest rules also vary by engine. Use a
+[resource provider with a bundled shell](resource-provider.md#bundled-shell-and-dynamic-content)
+when the page needs app-owned data at relative URLs.
 
-Two rules define the mode. **Relative references resolve natively**: the arm loads the site
-through the platform's local-content channel, so the engine itself resolves `css/style.css`
-or `../index.html`, with no interception layer rewriting anything. **Navigations that leave the site
-are cancelled in-view** and dispatched per `LinkPolicy`: `OpenSystem` (the default: the OS
-browser for `https://`, the mail client for `mailto:`, whatever the scheme maps to), `InView`
-(allow it after all), or `Ignore` (the `on_external_link` closure already did the in-app work;
-the showcase intercepts `day-showcase://<route>` links and navigates the app itself). The
-decision runs in Rust: events are enqueue-only (§8.3), so the native side always cancels and
-reports (`num = -1` on the shared Custom channel), and the policy's verdict follows as a
-command. `prepare_site()` is a future because backends whose engine cannot read embedded stores
-in place will extract to the platform cache dir here; on every v1 backend it resolves on first
-poll.
+`.transparent()` clears the native view background. The document must also leave its own
+background transparent, for example `html, body { background: transparent; }`. An opaque CSS
+background remains opaque. Test compositing on the intended platforms; the walkthrough does
+not currently assert transparency.
 
-Bundled pages on Qt allow custom-scheme requests from JavaScript as well as mouse clicks.
-Qt's default user-gesture restriction would otherwise suppress those requests before Day's
-navigation callback sees them. The callback still cancels outgoing main-frame navigation and
-passes the URL through the same `LinkPolicy`.
+## Links from web content into the app
 
-### Reading the app's own files: `app_assets`
-
-A site is confined to its own directory. Ask for more when the page's job is to show the app's
-files rather than its own — a player, a viewer, a renderer — because those files live in the
-app's asset namespace, one or more directories away from the site:
+Inline and resource views keep internal navigation in the web view. By default, links that
+leave their content root open through the operating system. Override that policy for routes
+owned by the application:
 
 ```rust
-web_view_inline(res::assets::player)
-    .app_assets()                     // the page may read all of resource/assets/
-    .start_page("index.html?src=hello")
+use day::prelude::*;
+use day_piece_webview::{LinkPolicy, web_view_inline};
+
+fn help_with_settings(open_settings: impl Fn() + 'static) -> impl Piece {
+    web_view_inline(res::assets::site).on_external_link(move |url| {
+        if url == "myapp://settings" {
+            open_settings();
+            LinkPolicy::Ignore
+        } else if url.starts_with("https://") || url.starts_with("mailto:") {
+            LinkPolicy::OpenSystem
+        } else {
+            LinkPolicy::Ignore
+        }
+    })
+}
 ```
 
-What that changes is per backend, because the confinement is: WebKit's file-URL read access
-widens from the site's directory to the asset tree, and the GTK arm extracts the whole tree to
-the cache instead of the site alone. The backends whose browsable base is already the asset tree
-(Qt's qrc, Android's `file:///android_asset/`, WebView2's virtual host, the deployed
-`assets/data/` on web-dom) read the same either way. Navigation policing does not widen: the
-page still starts inside the site, and a navigation out of it is still reported.
+The bundled page can link to `myapp://settings`. This is an in-view message convention, not
+OS-level scheme registration. The callback runs on the UI thread. Match known routes and validate
+parameters before acting on them.
 
-What `app_assets` covers on every backend is what the engine loads as a subresource: `<img>`,
-`<script>`, `<link>`, a stylesheet's `url()`. Reading a file with `XMLHttpRequest` or `fetch` is
-a separate question, answered by each engine's origin policy: WebKit refuses it for any page
-opened from a `file:` URL, with no public setting to change that, while WebKitGTK has one and
-`app_assets` turns it on. A page that has to parse the app's data is therefore better handed it
-through [JavaScript evaluation](https://github.com/daybrite/day/blob/main/docs/webview-eval.md),
-which is how `day-piece-lottie` gives its player an animation on the backends that evaluate.
+| Policy | Effect |
+|---|---|
+| `OpenSystem` | Open using the OS URL handler, usually a browser or mail client |
+| `Ignore` | Cancel navigation; the callback can handle the request itself |
+| `InView` | Request navigation inside the web view |
 
-Per backend (gate on `inline_support()`):
+Ordinary `web_view(url)` documents opt into this callback on AppKit/UIKit when a handler is
+provided. User-activated links and new-window requests (`target="_blank"`) are cancelled
+before the UI-thread callback runs. Initial loads, `.go()` reloads, embedded frames, and
+same-document fragments remain in the web view. `LinkPolicy::InView` deliberately reissues
+the request without re-triggering a click callback. Session reuse updates the opt-in.
+Other backends retain their ordinary-document navigation behavior; use inline/resource
+mode for portable site-boundary policies.
 
-| Backend | Channel | Policy hook |
-|---|---|---|
-| AppKit / UIKit | `loadFileURL:allowingReadAccessToURL:` with the site's directory, or the whole assets tree under `app_assets` (canonicalized, since WebKit reports standardized URLs, so the policed base must match). A start page's query or fragment is re-attached to the file URL as a relative reference, because `fileURLWithPath:` would encode it into the file name | `decidePolicyForNavigationAction` |
-| Android | `file:///android_asset/<dir>/…` (the assets tree is the APK `assets/` root; the URL family is exempt from the API-30 file-access default) | `shouldOverrideUrlLoading` |
-| Qt | `qrc:/day/assets/<dir>/…`; QWebEngine reads the qrc-staged tree natively; policed by (scheme, path-prefix), since Chromium normalizes qrc spellings | `acceptNavigationRequest` (the shim's `DayWebPage`) |
-| XAML | `SetVirtualHostNameToFolderMapping` maps the asset tree holding the site under `day-assets.example` (resolved in Rust, since a dev run reads its assets from the project and a packed app from beside the exe; an unmapped host fails DNS resolution rather than 404); `NewWindowRequested` is swallowed and reported as external | `NavigationStarting` |
-| GTK (linux) | extract-to-cache; WebKitGTK cannot browse a GResource, so `prepare_site()` (or realize, on the lazy path) copies the tree to the user cache once per process and the view loads the canonical `file://` URL. Under `app_assets` it copies the whole asset tree, opens the site inside it, and allows file-URL fetches (`allow-file-access-from-file-urls`) | `decide-policy` |
-| ArkWeb | `resource://rawfile/day/<dir>/…` over the rawfile staging; the inline marker crosses in the piece's props string and the ArkTS side composes and polices the URL | `onLoadIntercept` |
-| web-dom | the deployed `assets/data/<dir>/…` URL, same origin as the host page, so the browser resolves the site and the crate's capture-phase click hook in `src/browser.rs` polices leaving links | in-frame click hook → `dayHost.dom.emit` |
+## Retain a page across app navigation
 
-Every backend with a web engine reports `Native`; `Unsupported` remains only where there is no
-engine compiled in. Qt, XAML and GTK have
-passed their CI walkthroughs; Qt was additionally exercised live on macos-qt. ArkWeb is
-compile-verified through HAP packaging and signing, but its browser behavior still needs
-validation in the dedicated `harmony webview` CI workflow.
+```rust
+use day::prelude::*;
+use day_piece_webview::{WebSession, web_view_inline};
 
-The showcase's Web View page shows both modes as tabs: **Remote** (the browsing demo above) and
-**Embedded** (`resource/assets/web/minisite/`, with all three link dispositions live). This
-repository's [demo/](../demo/) loads a bundled site, runs JavaScript in it, and follows its app
-link from `dayscript/webview.yaml`.
+fn retained_editor() -> impl Piece {
+    web_view_inline(res::assets::editor)
+        .session(WebSession::global("app.editor"))
+}
+```
 
-### A transparent view: `transparent`
+A normal view is recreated when its Day subtree is rebuilt. Supported backends retain a
+session's browser engine, including page state, scroll position, JavaScript context, and history.
+Use one stable key for a persistent surface. Attach it to only one visible view at a time.
+Hoist any associated Day signals separately; retaining the browser does not retain page-local
+Rust state.
 
-A web view normally paints a white sheet under its page. `.transparent()` turns that off, so
-wherever the page's own background is transparent the app shows through, the way an image with
-an alpha channel sits on whatever is behind it. It is for content that belongs to the app's own
-surface (an animation player, a rendered diagram, a badge), where the white sheet reads as a hole
-in the window; `day-piece-lottie`'s web player asks for it. A page that sets a background of its
-own still draws it.
+Retention is implemented for AppKit, UIKit, macOS GTK, and Qt WebEngine. Linux GTK, Android,
+Windows XAML, Wry hosts, Harmony, and web-dom currently ignore the engine-retention request.
+There is no disposal API: a session lasts for the process lifetime. Do not allocate one per
+book, list item, or transient preview. Resource sessions also pin their first provider and
+initial URL; passing a different provider under the same key does not replace that content.
 
-| Backend | How |
-| --- | --- |
-| AppKit | `drawsBackground` off, through key-value coding |
-| UIKit | a non-opaque view, clear behind the page and its scroll view |
-| GTK | `webkit_web_view_set_background_color` with a zero alpha |
-| Qt | the page's background color set to `Qt::transparent` |
-| Android | `setBackgroundColor(Color.TRANSPARENT)` |
-| XAML | WebView2's `DefaultBackgroundColor` cleared, and the placeholder label blanked once the view is up |
-| HarmonyOS | the `Web` component's `backgroundColor(Color.Transparent)` |
-| web-dom | a transparent frame with `color-scheme: normal`, so the browser paints no opaque canvas under a page whose scheme differs from the host's |
+## Choose the right data channel
 
-The XAML and HarmonyOS arms are written but not yet verified on a device.
+Use [JavaScript evaluation](webview-eval.md) for small commands and structured state, such as a
+chart dataset, selected item, or reader position. Use [resource providers](resource-provider.md)
+for documents and binary resources. For an EPUB, serve one requested chapter or image at a time;
+do not serialize the entire book into a JavaScript call.
 
-## Per-backend native realization
+The public API does not currently provide a general load-completion event, download manager,
+cookie-store API, arbitrary request-header injection, or a general JavaScript message bridge.
+Build a readiness convention for bundled pages and handle evaluation errors during navigation.
+[Platform notes](platforms.md) describe the remaining differences.
 
-| | AppKit | UIKit | Qt | Android | GTK | XAML |
-|---|---|---|---|---|---|---|
-| control | `WKWebView` | `WKWebView` | `QWebEngineView` | `android.webkit.WebView` | WebKitGTK `WebView` | UWP-XAML `WebView` |
-| native code | objc2-web-kit | hand-rolled `extern_class!` + `msg_send!` | `src/lib-qt-shim.cpp` (+ links `Qt6WebEngineWidgets`) | `src/DayWebView.java` | `webkit6` crate | `src/lib-xaml-shim.cpp` |
-| URL-back event | `Custom("webview:url", …)` | `Custom("webview:url", …)` | `Custom("webview:url", …)` | `TextChanged` (kind 1) | `Custom("webview:url", …)` | `Custom("webview:url", …)` |
-
-Rendering, two-way URL binding, and controls are verified on AppKit, Qt, UIKit (iOS sim), and Android.
-GTK and XAML are written blind (no WebKitGTK / Windows host on the reference machine) to build and run
-in CI; the GTK `webkit6` API is verified against the crate source, and both are captured in the CI
-gallery.
-
-**Backend notes:**
-- **GTK**: Linux uses WebKitGTK 6 (`webkit6`). macOS uses WKWebView attached to the
-  GTK window's Cocoa content view. A GTK allocation anchor and frame-clock callback keep
-  its bounds current; unmap detaches it and release drops its delegate. Windows uses Wry's
-  WebView2 child host positioned from the GTK allocation. GTK bundled resources are extracted
-  into a per-app cache before navigation. Windows rendering/input still needs runtime validation.
-- **Windows Qt without Qt WebEngine**: a native QWidget hosts a WebView2 child. Bundled qrc
-  files are extracted to the widget's temporary directory; disposal closes the browser before
-  removing those files. The browser follows the widget's native clipping and visibility. This
-  arm does not retain `WebSession` instances across navigation. Install WebView2 Runtime.
-- **ArkUI (HarmonyOS)**: the ArkTS `Web` component. The ArkUI **C** node API has no Web node kind, so
-  this is the first piece whose native half is ArkTS: the crate ships `platform/harmony/ets/Index.ets`, `day build`
-  stages it into the app's hvigor project (`[package.metadata.day.ohos]`), and day-arkui's generic piece
-  bridge builds it in a `BuilderNode` and mounts its FrameNode in the Day tree. The engine is explicitly
-  initialized before building the component. Commands queue until the UI turn after
-  `onControllerAttached`; evaluation before attachment answers an error so callers can retry.
-  `onPageEnd` reports each committed URL back. Disposal and renderer exit settle pending evaluations
-  once and suppress late replies. Failed builders release their nodes. Link interception only
-  dispatches main-frame navigation; load errors and renderer exits are logged.
-  These lifecycle paths have host-side regression coverage in `tests/harmony-controller.mjs`;
-  the ArkTS source is also compiled by hvigor. **Rendering remains CI-unverified**: the stock Oniro
-  v6.1 x86_64 image contains an ARM64-only `ArkWebCore.hap`, which can leave the engine null and stall
-  its compositor. The demo now attempts the real component on every architecture. The dedicated
-  `harmony webview` workflow requires the full walkthrough, bounds its runtime, and uploads hilog,
-  engine ABI diagnostics, and screenshots. It does not count an unavailable-state screen as a pass.
-  Initializing the engine cannot repair incompatible native libraries; that still requires a
-  compatible system image/runtime. See [HarmonyOS CI](../.github/workflows/harmony-webview.yml).
-- **web-dom**: an `<iframe>`, the one backend with no engine to embed, because the host page already
-  is one. `Load` and `Reload` work. `Back`, `Forward` and `Stop` are no-ops, and navigation does not
-  report back into the bound signal, because the same-origin policy forbids a parent document from
-  reading or driving a cross-origin child: `contentWindow.history.back()` and
-  `contentWindow.location.href` both throw `SecurityError`. Driving the **top-level** history instead
-  would navigate the app off the page hosting the frame, because day's web router owns that stack
-  (`pushState` on hash routes).
-
-  History and URL readback remain `Support::Emulated`. Evaluation explicitly checks frame access
-  and supports same-origin content; an inaccessible frame returns an error. `Reload` re-assigns the last URL day set,
-  not wherever the frame has since navigated to, and the arm keeps that URL itself because day-dom is
-  write-only (`set_attr` with no getter). No `sandbox` attribute is set: present-but-empty is
-  deny-everything, which breaks scripts and forms on nearly every real site. A site that refuses
-  embedding (`X-Frame-Options`, CSP `frame-ancestors`) renders blank and the parent cannot detect it;
-  the load event fires either way, so no arm of this piece can report it.
-- **XAML**: **WebView2**, hosted windowless. The obvious choice, the UWP-XAML
-  `Windows.UI.Xaml.Controls.WebView` (EdgeHTML), already in the base SDK projection day-xaml uses,
-  does not work in Day's Win32 XAML-Islands host: it renders blank, never raises
-  `NavigationCompleted`, and crashes on navigation. A plain child HWND over the island does not work
-  either, because the island's `ContentIsland` InputSite owns pointer input for the whole surface, so
-  the web view never sees a click.
-
-  So the shim (`src/lib-xaml-shim.cpp`) boxes a transparent XAML `Border` as the day handle, renders
-  the page into a `Windows.UI.Composition` visual through a `CoreWebView2CompositionController`, and
-  splices that visual in with `ElementCompositionPreview::SetElementChildVisual`. The web view is
-  then a real node in the XAML visual tree, with correct z-order, clipping, DPI, and layout and no
-  second window to track, and pointer events arrive at the Border and are
-  forwarded to `SendMouseInput`. This is the same technique the official XAML WebView2 controls use
-  internally.
-
-  `WebView2LoaderStatic.lib` is linked statically (from the Microsoft.Web.WebView2 NuGet package, not
-  the base SDK), so there is no DLL to bundle; the WebView2 Runtime itself is a system-wide install,
-  supplied by Windows 11 but installed explicitly in CI (`webview2-runtime`). Edge Stable and the
-  NuGet SDK do not substitute for that runtime. If startup fails, the Border displays the failing
-  operation and HRESULT; stderr and evaluation replies carry the same diagnostic.
-
-  The virtual-host folder uses ordinary DOS/UNC path syntax. The asset resolver canonicalizes
-  directories, so the XAML adapter removes Windows' extended-length `\\?\` prefix (restoring
-  `\\server\share` for UNC paths) before calling WebView2. Without this conversion a valid
-  on-disk player page can load as `ERR_INVALID_URL`. `src/xaml_path.rs` tests drive and UNC paths,
-  Unicode and spaces, and a real canonicalized directory on Windows. Mapping failures report
-  their HRESULT, and failed navigations log the URL and WebView2 error status.
-
-  Evaluation replies use a length-counted UTF-16 → UTF-8 conversion, preserving the protocol's
-  separators and non-ASCII text. `tests/xaml` exercises that conversion against the Windows API;
-  the Windows demo walkthrough checks that the bundled page loads and JavaScript replies arrive.
-
-## CI screenshots + gallery
-
-The dayscript walkthrough (`Day-Showcase/dayscript/walkthrough.yaml`) visits the web-view page last,
-`pause`s (runner-side) for the page to load, and captures `webview.png`. The showcase's own CI
-publishes that capture in its gallery index (`day screenshot index`), and daybrite.dev's
-`/gallery/Day-Showcase/` reads the index, so the web view shows there across every platform that
-produced a capture, with no list to maintain on either side.
-
-## What this piece taught the extension system
-
-Building `day-piece-webview` as a fully self-contained piece surfaced (and fixed) three things; see
-day's [extending.md](https://github.com/daybrite/day/blob/main/docs/extending.md):
-
-1. **Android manifest permissions.** A web view needs `INTERNET`, but a piece can't edit the app manifest.
-   `[package.metadata.day.android]` gained a `permissions = [...]` key; `day build` writes them to a
-   generated overlay manifest that AGP merges into the app manifest, so the app needs no edits.
-2. **iOS framework loading.** objc2-web-kit only binds the macOS `WKWebView`, so the iOS class is
-   hand-rolled, and WebKit.framework has to be loaded for its Objective-C class to register. A `#[link]`
-   autolink hint is unreliable across the cargo-staticlib → xcode link boundary, so the piece `dlopen`s the
-   (public) framework once at first use. The piece is self-contained, and the app's xcode project
-   needs no framework entry.
-3. **Grow-leaf sizing on Android.** day-android's default `measure` (for `measure: None`) returns a view's
-   *natural* size, which is ~0 for a `WebView`. A fill leaf must return the *proposal* from `measure`
-   (as the built-in `list` does); AppKit/Qt/UIKit already do this in their `measure: None` default.
-
-4. **ArkTS-built components on HarmonyOS.** The ArkUI C API can't construct a `Web` at all, so a piece
-   needed a way to ship ArkTS and have it mounted in the native tree. `[package.metadata.day.ohos] ets =
-   [...]` stages a piece's `.ets` into the hvigor project, `day build` generates the `DayPieces.ets`
-   aggregator the host page registers, and the shim's `registerPiece`/`pieceEvent` pair carries
-   make/update/dispose and events across generically, so `map`/`lottie` need no new bridge.
-
-Two more findings handled within existing contracts: native→URL reporting uses `Custom("webview:url", …)`
-on Apple/Qt but the public `TextChanged` kind on Android (its `Custom` kind is reserved for deep links);
-and `text_field`'s `Submitted` event is currently a no-op, so loading is driven by a **Go** button.
-
-## Browser implementation
-
-`src/lib-dom.rs` creates the iframe and applies Rust property updates. For bundled sites, it calls
-`src/browser.rs` through `day-bridge` before assigning the first URL. That JavaScript arm installs
-a click listener on each loaded same-origin document. Links within the bundled directory navigate
-normally; links outside it become custom events for the Rust `LinkPolicy`.
-
-`build.rs` uses `day-build` to generate the bridge. The Day CLI includes its JavaScript module in
-the web build alongside the app's Wasm. The shared browser shim contains no webview URL policy or
-special iframe attributes: the piece uses the generic `dayHost.dom` interface for element access,
-events, and release callbacks. Reloading detaches the previous document listener; releasing the
-piece removes both document and frame listeners and clears the remembered source URL.
-
-This hook handles anchor clicks in same-origin bundled pages. It cannot observe cross-origin
-frame content, redirects, form submissions, or navigation initiated by page scripts. It is a
-navigation convenience for trusted bundled content, not a sandbox.
-
-## Automation and packaging
-
-The constructors register `day.webview.eval` for this piece's kind using
-`day_core::register_piece_operation`. The input is raw JavaScript; the successful result is JSON
-text. Both `JsHandle::eval` and dayscript use the same envelope and native reply handling.
-See [JavaScript evaluation](webview-eval.md) for platform details. Core Day owns only the generic
-operation registry; its `web_eval` script command preserves existing scripts.
-
-`Cargo.toml` declares the Qt WebEngine Flatpak base and the library prefix that requires it.
-Day's generic packer matches this against the built executable, coalesces identical requirements,
-and rejects conflicting bases. There is no WebEngine-specific selection logic in the packer.
-
-## Dynamic resource trees
-
-Use [`ResourceProvider` and `web_view_resources`](resource-provider.md) for archive entries or
-generated content. The engine requests individual resources by relative URL. A bundled shell
-can share the provider origin through `ResourceProvider::with_site`.
+`on_load(callback)` runs on the UI thread after a native backend reports completed navigation,
+including a same-URL reload. Pair it with `JsHandle` to apply the latest UI state after loading;
+use a reactive watcher for subsequent changes to avoid reloading and losing reading position.
+Emulated iframe hosts do not report navigation and therefore do not invoke this callback.
