@@ -25,7 +25,9 @@ unsafe extern "C" {
         inline_dir: *const c_char,
         link_cb: extern "C" fn(u64, *const c_char),
         transparent: bool,
+        session: u64,
     ) -> *mut c_void;
+    fn day_webview_xaml_release(handle: *mut c_void);
     fn day_webview_xaml_load(handle: *mut c_void, url: *const c_char);
     fn day_webview_xaml_back(handle: *mut c_void);
     fn day_webview_xaml_forward(handle: *mut c_void);
@@ -149,6 +151,7 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
             cstr(&dir).as_ptr(),
             on_link,
             p.transparent,
+            p.session,
         )
     })
 }
@@ -168,6 +171,10 @@ fn update(_backend: &mut Xaml, h: &WinHandle, patch: &WebPatch) {
     }
 }
 
+fn release(_backend: &mut Xaml, h: &WinHandle) {
+    unsafe { day_webview_xaml_release(h.0) };
+}
+
 day_pieces::renderer!(day_xaml::RENDERERS, Xaml,
     kind: KIND, props: WebProps, patch: WebPatch,
-    make: make, update: update, measure: day_pieces::fill_measure);
+    make: make, update: update, measure: day_pieces::fill_measure, release: release);

@@ -3,7 +3,7 @@
 
 // The web-view piece's C++/WinRT shim, parallel to src/lib-qt-shim.cpp.
 //
-// day-xaml hosts UWP system XAML (winrt::Windows::UI::Xaml, base Windows SDK, no WinAppSDK) inside a
+// day-xaml hosts UWP system XAML (DAY_XAML_NS, base Windows SDK, no WinAppSDK) inside a
 // Win32 window via XAML Islands. The system-XAML web view, Windows.UI.Xaml.Controls.WebView (EdgeHTML),
 // is unsupported in that host: it renders blank, never raises NavigationCompleted, and crashes on
 // navigation. The supported engine is WebView2, hosted here in windowless / visual-hosting mode,
@@ -20,7 +20,7 @@
 //     that around: the InputSite delivers pointer events to the Border (XAML), and we forward them
 //     to the controller's SendMouseInput. So clicks/scroll/drag work, routed through XAML's own
 //     input.
-//   * The browser's lifetime follows the Border's tree membership (Unloaded → detach visual + Close).
+//   * Unmount closes an anonymous browser; a named WebSession keeps its engine for the next mount.
 //   * If WebView2 creation fails, the Border shows the operation and HRESULT; eval replies and
 //     stderr report the same error (including a hint for a missing runtime).
 //
@@ -31,17 +31,52 @@
 #include <winrt/Windows.UI.h>             // Color (transparent, hit-testable Border background)
 #include <winrt/Windows.UI.Composition.h> // Compositor, ContainerVisual (the render target)
 #include <winrt/Windows.UI.Input.h>       // PointerPoint(Properties), PointerUpdateKind
+// One shim, two XAML stacks (docs/winui.md): windows-xaml builds it against system XAML,
+// windows-winui (DAY_WINUI) against WinUI 3. The namespaces differ; the controls do not.
+#ifdef DAY_WINUI
+#define DAY_XAML_NS winrt::Microsoft::UI::Xaml
+#else
+#define DAY_XAML_NS winrt::Windows::UI::Xaml
+#endif
+#ifdef DAY_WINUI
+#include <winrt/Microsoft.UI.Xaml.h>
+#else
 #include <winrt/Windows.UI.Xaml.h>
+#endif
+#ifdef DAY_WINUI
+#include <winrt/Microsoft.UI.Xaml.Controls.h>
+#else
 #include <winrt/Windows.UI.Xaml.Controls.h>
+#endif
+#ifdef DAY_WINUI
+#include <winrt/Microsoft.UI.Xaml.Hosting.h> // ElementCompositionPreview (splice visual into the tree)
+#else
 #include <winrt/Windows.UI.Xaml.Hosting.h> // ElementCompositionPreview (splice visual into the tree)
+#endif
+#ifdef DAY_WINUI
+#include <winrt/Microsoft.UI.Xaml.Input.h>   // PointerRoutedEventArgs
+#else
 #include <winrt/Windows.UI.Xaml.Input.h>   // PointerRoutedEventArgs
+#endif
+#ifdef DAY_WINUI
+#include <winrt/Microsoft.UI.Xaml.Media.h>
+#else
 #include <winrt/Windows.UI.Xaml.Media.h>
+#endif
 
 #include <windows.h>
 #include <wrl.h>
 #include <wrl/event.h>
 #include <WebView2.h>
 #include <WebView2EnvironmentOptions.h>
+#ifdef DAY_WINUI
+// WinUI 3 has a real WebView2 control; its core object is the same ICoreWebView2 the system-XAML
+// path drives, reached through ICoreWebView2Interop2.
+#include <winrt/Microsoft.Web.WebView2.Core.h>
+#include <winrt/Microsoft.UI.Dispatching.h> // DispatcherQueue (completions back to the UI thread)
+#include <functional>
+#include <WebView2Interop.h>
+#endif
 
 #include <cmath>
 #include <cstdio>
@@ -62,18 +97,19 @@ namespace WF = winrt::Windows::Foundation;
 namespace WUI = winrt::Windows::UI;
 namespace WUC = winrt::Windows::UI::Composition;
 namespace WUInput = winrt::Windows::UI::Input;
-namespace WUX = winrt::Windows::UI::Xaml;
-namespace WUXC = winrt::Windows::UI::Xaml::Controls;
-namespace WUXH = winrt::Windows::UI::Xaml::Hosting;
-namespace WUXI = winrt::Windows::UI::Xaml::Input;
-namespace WUXM = winrt::Windows::UI::Xaml::Media;
-namespace wrl = Microsoft::WRL;
+namespace WUX = DAY_XAML_NS;
+namespace WUXC = DAY_XAML_NS::Controls;
+namespace WUXH = DAY_XAML_NS::Hosting;
+namespace WUXI = DAY_XAML_NS::Input;
+namespace WUXM = DAY_XAML_NS::Media;
+namespace wrl = ::Microsoft::WRL;
 
 // Exported by day-xaml-sys (already linked into the app). The host HWND is the composition
 // controller's parentWindow (for DPI / IME / input association); the page still renders windowless.
 extern "C" void *day_xaml_box(void *iinspectable_abi);
 extern "C" void *day_xaml_unbox(void *handle);
 extern "C" void *day_xaml_host_hwnd();
+extern "C" void day_xaml_delete(void *handle);
 
 static winrt::hstring hs(const char *s) {
     if (!s || !*s)
@@ -98,7 +134,13 @@ struct WebViewCtx {
     wrl::ComPtr<ICoreWebView2Controller> controller; // Bounds, IsVisible, focus, Close (same object)
     wrl::ComPtr<ICoreWebView2> webview;
     WUXC::Border placeholder{nullptr}; // XAML host element; the render visual is its child
+#ifdef DAY_WINUI
+    // WinUI: the WebView2 control, the placeholder's child once created. It owns the controller
+    // (bounds, DPI, input, focus), so `compositionController`/`controller` stay null here.
+    WUXC::WebView2 control{nullptr};
+#else
     WUC::ContainerVisual rootVisual{nullptr};
+#endif
     uint64_t id{};
     void (*cb)(uint64_t, const char *){};
     std::wstring pending_url; // navigated once the controller is ready
@@ -114,6 +156,8 @@ struct WebViewCtx {
     // WebView::transparent: the engine's default background is cleared once the controller is
     // up, and the URL label under the render visual is blanked so it cannot show through.
     bool transparent{};
+    uint64_t session{};
+    void *engine_handle{}; // privately owned; callbacks never capture a released Day node handle
 };
 
 // Hold COM objects on the UI apartment; workers only load immutable Rust bytes.
@@ -121,13 +165,17 @@ struct ResourcePending {
     wrl::ComPtr<ICoreWebView2Environment> environment;
     wrl::ComPtr<ICoreWebView2WebResourceRequestedEventArgs> args;
     wrl::ComPtr<ICoreWebView2Deferral> deferral;
+#ifdef DAY_WINUI
+    winrt::Microsoft::UI::Dispatching::DispatcherQueue dispatcher{nullptr};
+#else
     winrt::Windows::UI::Core::CoreDispatcher dispatcher{nullptr};
+#endif
 };
 static void resource_done(void *context, DayResourceResponse *response) {
     auto pending=std::shared_ptr<ResourcePending>(static_cast<ResourcePending *>(context));
     auto bytes=std::shared_ptr<DayResourceResponse>(response,day_web_resource_free);
     try {
-        pending->dispatcher.RunAsync(winrt::Windows::UI::Core::CoreDispatcherPriority::Normal,[pending,bytes] {
+        auto deliver=[pending,bytes] {
             wrl::ComPtr<IStream> stream;
             if (SUCCEEDED(CreateStreamOnHGlobal(nullptr,TRUE,&stream))) {
                 ULONG written=0;
@@ -150,7 +198,12 @@ static void resource_done(void *context, DayResourceResponse *response) {
                 }
             }
             pending->deferral->Complete();
-        });
+        };
+#ifdef DAY_WINUI
+        pending->dispatcher.TryEnqueue(deliver);
+#else
+        pending->dispatcher.RunAsync(winrt::Windows::UI::Core::CoreDispatcherPriority::Normal,deliver);
+#endif
     } catch (winrt::hresult_error const &) {
         // The dispatcher can close while the worker is reading. Closing WebView2 cancels
         // its requests; the owned response/deferral are released without re-entering a view.
@@ -162,6 +215,7 @@ static void resource_done(void *context, DayResourceResponse *response) {
 static const wchar_t *kDayAssetsHost = L"day-assets.example";
 
 static std::map<void *, WebViewCtx *> g_webviews;
+static std::map<uint64_t, WebViewCtx *> g_sessions;
 
 static WebViewCtx *find_ctx(void *handle) {
     auto it = g_webviews.find(handle);
@@ -247,6 +301,9 @@ static bool json_string_to_utf8(std::wstring const &json, std::string &out) {
     return true;
 }
 
+#ifndef DAY_WINUI
+// System XAML only: sizing the hand-hosted visual and forwarding pointer input to it. WinUI's
+// WebView2 control does both itself.
 // Match the render visual + controller Bounds to the Border's current size. BoundsMode is
 // UseRasterizationScale, so Bounds/visual are in DIPs and RasterizationScale carries the DPI. The
 // visual follows the element's position/clipping/transforms automatically (it is a child of the
@@ -380,17 +437,28 @@ static void wire_input(void *handle) {
     });
 }
 
+#endif // !DAY_WINUI
+
 static void destroy_ctx(void *handle) {
     auto it = g_webviews.find(handle);
     if (it == g_webviews.end())
         return;
     WebViewCtx *c = it->second;
+#ifdef DAY_WINUI
+    if (c->control) {
+        try {
+            c->control.Close();
+        } catch (...) {
+        }
+    }
+#else
     if (c->placeholder) {
         try {
             WUXH::ElementCompositionPreview::SetElementChildVisual(c->placeholder, nullptr);
         } catch (...) {
         }
     }
+#endif
     if (c->controller) {
         try {
             c->controller->Close();
@@ -399,6 +467,7 @@ static void destroy_ctx(void *handle) {
     }
     g_webviews.erase(it);
     delete c;
+    day_xaml_delete(handle);
 }
 
 static std::wstring user_data_folder() {
@@ -420,12 +489,316 @@ static void startup_failed(void *handle, const char *stage, HRESULT hr) {
         c->startup_error += "; install the Microsoft Edge WebView2 Runtime";
     std::fprintf(stderr, "day-piece-webview: %s\n", c->startup_error.c_str());
     std::fflush(stderr);
-    if (auto label = c->placeholder.Child().try_as<WUXC::TextBlock>()) {
+    auto label = c->placeholder.Child().try_as<WUXC::TextBlock>();
+#ifdef DAY_WINUI
+    // Under WinUI the control has taken the label's place by now: put a label back.
+    if (!label) {
+        label = WUXC::TextBlock{};
+        label.Margin(WUX::Thickness{8, 8, 8, 8});
+        label.Opacity(0.6);
+        c->placeholder.Child(label);
+    }
+#endif
+    if (label) {
         label.Text(hs(c->startup_error.c_str()));
         label.TextWrapping(WUX::TextWrapping::Wrap);
     }
 }
 
+// The engine is up (both stacks): its background, the inline asset host, the link and
+// navigation handlers, then the first navigation. Split out of the controller callback so the
+// WinUI build, whose engine comes from the WebView2 control instead, runs the same wiring.
+static void on_engine_ready(void *handle, WebViewCtx *c2) {
+    if (c2->transparent) {
+#ifdef DAY_WINUI
+        if (c2->control)
+            c2->control.DefaultBackgroundColor(WUI::Color{0, 0, 0, 0});
+#else
+        wrl::ComPtr<ICoreWebView2Controller2> ctl2;
+        if (SUCCEEDED(c2->controller.As(&ctl2)) && ctl2)
+            ctl2->put_DefaultBackgroundColor(COREWEBVIEW2_COLOR{0, 0, 0, 0});
+        if (auto tb = c2->placeholder.Child().try_as<WUXC::TextBlock>())
+            tb.Text(L"");
+#endif
+    }
+
+    if (c2->webview && c2->resource_provider) {
+        // The environment builds the responses; both stacks reach it through the core object.
+        wrl::ComPtr<ICoreWebView2_2> wv2;
+        wrl::ComPtr<ICoreWebView2Environment> environment;
+        if (SUCCEEDED(c2->webview.As(&wv2)) && wv2)
+            wv2->get_Environment(&environment);
+        wrl::ComPtr<ICoreWebView2_22> resources;
+        if (!environment || FAILED(c2->webview.As(&resources))) {
+            startup_failed(handle,"resource interception interface",E_NOINTERFACE);return;
+        }
+        resources->AddWebResourceRequestedFilterWithRequestSourceKinds(L"https://day-resource.invalid/*",COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_DOCUMENT);
+        EventRegistrationToken token{};
+        c2->webview->add_WebResourceRequested(wrl::Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+            [handle,environment](ICoreWebView2 *,ICoreWebView2WebResourceRequestedEventArgs *args)->HRESULT {
+                auto c=find_ctx(handle);if(!c)return S_OK;
+                wrl::ComPtr<ICoreWebView2WebResourceRequest> request;args->get_Request(&request);
+                LPWSTR url=nullptr,method=nullptr,range=nullptr;
+                request->get_Uri(&url);request->get_Method(&method);
+                wrl::ComPtr<ICoreWebView2HttpRequestHeaders> headers;request->get_Headers(&headers);
+                if(headers)headers->GetHeader(L"Range",&range);
+                auto pending=new ResourcePending();pending->environment=environment;pending->args=args;
+#ifdef DAY_WINUI
+                pending->dispatcher=c->placeholder.DispatcherQueue();
+#else
+                pending->dispatcher=c->placeholder.Dispatcher();
+#endif
+                if(FAILED(args->GetDeferral(&pending->deferral)) || !pending->deferral){delete pending;CoTaskMemFree(url);CoTaskMemFree(method);CoTaskMemFree(range);return E_FAIL;}
+                day_web_resource_start(c->resource_provider,to_string(url?url:L"").c_str(),to_string(method?method:L"GET").c_str(),to_string(range?range:L"").c_str(),pending,resource_done);
+                CoTaskMemFree(url);CoTaskMemFree(method);CoTaskMemFree(range);return S_OK;
+            }).Get(),&token);
+    }
+    if (c2->webview && !c2->inline_prefix.empty()) {
+        // Inline mode: map the exe-relative assets tree under the virtual
+        // host before the first Navigate, then police top-level
+        // navigations against the site prefix; leaving ones are
+        // canceled and reported (the Rust side runs the LinkPolicy;
+        // events are enqueue-only, so the verdict can't come back here).
+        wrl::ComPtr<ICoreWebView2_3> wv3;
+        if (!c2->resource_provider && SUCCEEDED(c2->webview->QueryInterface(IID_PPV_ARGS(&wv3))) &&
+            wv3) {
+            // The Rust side resolves the tree (lib-xaml.rs `inline_dir`),
+            // since a dev run reads its assets from the project and a
+            // packed app from beside the exe. The exe-relative path is
+            // the fallback for a caller that passed nothing: mapping a
+            // folder that does not exist leaves the host unmapped, and
+            // the site's first navigation then fails DNS resolution.
+            std::wstring assets = c2->inline_dir;
+            if (assets.empty()) {
+                wchar_t exe[MAX_PATH]{};
+                GetModuleFileNameW(nullptr, exe, MAX_PATH);
+                assets = exe;
+                size_t slash = assets.find_last_of(L"\\/");
+                if (slash != std::wstring::npos)
+                    assets.resize(slash);
+                assets += L"\\assets";
+            }
+            const HRESULT mapped = wv3->SetVirtualHostNameToFolderMapping(
+                kDayAssetsHost, assets.c_str(),
+                COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+            if (FAILED(mapped)) {
+                startup_failed(handle, "asset folder mapping", mapped);
+                return;
+            }
+        } else if (!c2->resource_provider) {
+            startup_failed(handle, "asset mapping interface", E_NOINTERFACE);
+            return;
+        }
+        EventRegistrationToken navTok{};
+        c2->webview->add_NavigationStarting(
+            wrl::Callback<ICoreWebView2NavigationStartingEventHandler>(
+                [handle](ICoreWebView2 *,
+                         ICoreWebView2NavigationStartingEventArgs *args)
+                    -> HRESULT {
+                    auto *cn = find_ctx(handle);
+                    if (!cn || cn->inline_prefix.empty())
+                        return S_OK;
+                    LPWSTR uri = nullptr;
+                    if (FAILED(args->get_Uri(&uri)) || !uri)
+                        return S_OK;
+                    std::wstring u(uri);
+                    CoTaskMemFree(uri);
+                    const bool inside =
+                        u.rfind(cn->inline_prefix, 0) == 0 ||
+                        u == L"about:blank";
+                    if (!inside) {
+                        args->put_Cancel(TRUE);
+                        if (cn->link_cb) {
+                            std::string s = to_utf8(winrt::hstring{u});
+                            cn->link_cb(cn->id, s.c_str());
+                        }
+                    }
+                    return S_OK;
+                })
+                .Get(),
+            &navTok);
+        // window.open / target=_blank: external by definition, since no new
+        // window exists in day's tree, so report and swallow.
+        EventRegistrationToken winTok{};
+        c2->webview->add_NewWindowRequested(
+            wrl::Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+                [handle](ICoreWebView2 *,
+                         ICoreWebView2NewWindowRequestedEventArgs *args)
+                    -> HRESULT {
+                    auto *cn = find_ctx(handle);
+                    if (!cn || cn->inline_prefix.empty())
+                        return S_OK;
+                    args->put_Handled(TRUE);
+                    LPWSTR uri = nullptr;
+                    if (SUCCEEDED(args->get_Uri(&uri)) && uri) {
+                        std::string s =
+                            to_utf8(winrt::hstring{std::wstring(uri)});
+                        if (cn->link_cb)
+                            cn->link_cb(cn->id, s.c_str());
+                        CoTaskMemFree(uri);
+                    }
+                    return S_OK;
+                })
+                .Get(),
+            &winTok);
+    }
+    if (c2->webview) {
+        // Report the settled URL back so the app's URL bar follows navigation.
+        EventRegistrationToken tok{};
+        c2->webview->add_NavigationCompleted(
+            wrl::Callback<ICoreWebView2NavigationCompletedEventHandler>(
+                [handle](ICoreWebView2 *wv,
+                         ICoreWebView2NavigationCompletedEventArgs *args)
+                    -> HRESULT {
+                    auto *c3n = find_ctx(handle);
+                    if (!c3n)
+                        return S_OK;
+                    LPWSTR src = nullptr;
+                    if (SUCCEEDED(wv->get_Source(&src)) && src) {
+                        std::string s = to_utf8(winrt::hstring{src});
+                        BOOL success = FALSE;
+                        args->get_IsSuccess(&success);
+                        if (!success) {
+                            COREWEBVIEW2_WEB_ERROR_STATUS error{};
+                            args->get_WebErrorStatus(&error);
+                            std::fprintf(stderr,
+                                "day-piece-webview: navigation failed "
+                                "(WebErrorStatus %d): %s\n",
+                                static_cast<int>(error), s.c_str());
+                            std::fflush(stderr);
+                        }
+                        if (c3n->cb)
+                            c3n->cb(c3n->id, s.c_str());
+                        CoTaskMemFree(src);
+                    }
+                    return S_OK;
+                })
+                .Get(),
+            &tok);
+    }
+#ifndef DAY_WINUI
+    wire_input(handle);
+    sync_size(c2);
+#endif
+    if (c2->webview && !c2->pending_url.empty())
+        c2->webview->Navigate(c2->pending_url.c_str());
+}
+
+#ifdef DAY_WINUI
+// WinUI 3: the engine lives in the platform's own WebView2 control, which owns hosting, input,
+// DPI and focus. It is created in the placeholder, given an environment with the same user-data
+// folder and browser arguments the system-XAML path uses, and once its core exists that core's
+// COM object (the ICoreWebView2 the rest of this file drives) goes through on_engine_ready.
+// Completion handlers hop to the UI thread through the control's DispatcherQueue, since the
+// asynchronous operations promise nothing about which thread completes them.
+static void on_ui(void *handle, std::function<void(WebViewCtx *)> fn) {
+    auto *c = find_ctx(handle);
+    if (!c || !c->placeholder)
+        return;
+    c->placeholder.DispatcherQueue().TryEnqueue([handle, fn] {
+        if (auto *cc = find_ctx(handle))
+            fn(cc);
+    });
+}
+
+// WebView2Loader.dll, which the control's Microsoft.Web.WebView2.Core.dll loads by name and which
+// is the app's to supply (it is not in the Windows App SDK). Loaded once, from beside the exe (a
+// packed app) or else from the package the build used (a development build); a module already
+// in the process satisfies the later load by name. Without it the control fails with
+// 0x8007007E (module not found).
+// The same holds for the control's WinRT core, Microsoft.Web.WebView2.Core.dll: the WebView2
+// package ships it for the app to carry, and the class registrations name it by file name.
+static void preload_one(const wchar_t *name, const wchar_t *fallback) {
+    if (GetModuleHandleW(name))
+        return;
+    wchar_t exe[MAX_PATH]{};
+    DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        std::wstring local(exe);
+        local.resize(local.find_last_of(L"\\/") + 1);
+        local += name;
+        if (LoadLibraryExW(local.c_str(), nullptr, 0))
+            return;
+    }
+    if (fallback && !LoadLibraryExW(fallback, nullptr, 0))
+        std::fprintf(stderr, "day-piece-webview: could not load %ls (0x%08lX)\n", name,
+                     static_cast<unsigned long>(GetLastError()));
+}
+
+static void preload_webview2_loader() {
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+#ifdef DAY_WEBVIEW2_LOADER_DLL
+    preload_one(L"WebView2Loader.dll", DAY_WEBVIEW2_LOADER_DLL);
+#else
+    preload_one(L"WebView2Loader.dll", nullptr);
+#endif
+#ifdef DAY_WEBVIEW2_CORE_DLL
+    preload_one(L"Microsoft.Web.WebView2.Core.dll", DAY_WEBVIEW2_CORE_DLL);
+#else
+    preload_one(L"Microsoft.Web.WebView2.Core.dll", nullptr);
+#endif
+}
+
+static void create_webview2(void *handle) {
+    namespace WV2 = winrt::Microsoft::Web::WebView2::Core;
+    auto *c = find_ctx(handle);
+    if (!c)
+        return;
+    preload_webview2_loader();
+    try {
+        WUXC::WebView2 control;
+        control.HorizontalAlignment(WUX::HorizontalAlignment::Stretch);
+        control.VerticalAlignment(WUX::VerticalAlignment::Stretch);
+        c->control = control;
+        c->placeholder.Child(control);
+        WV2::CoreWebView2EnvironmentOptions options;
+        options.AdditionalBrowserArguments(L"--disable-features=CalculateNativeWinOcclusion");
+        auto env = WV2::CoreWebView2Environment::CreateWithOptionsAsync(
+            L"", winrt::hstring{user_data_folder()}, options);
+        env.Completed([handle](auto const &op, WF::AsyncStatus status) {
+            const HRESULT failed = status == WF::AsyncStatus::Completed ? S_OK : op.ErrorCode().value;
+            WV2::CoreWebView2Environment environment{nullptr};
+            if (SUCCEEDED(failed))
+                environment = op.GetResults();
+            on_ui(handle, [handle, failed, environment](WebViewCtx *cc) {
+                if (FAILED(failed) || !environment) {
+                    startup_failed(handle, "environment creation", FAILED(failed) ? failed : E_POINTER);
+                    return;
+                }
+                auto ensure = cc->control.EnsureCoreWebView2Async(environment);
+                ensure.Completed([handle](auto const &op2, WF::AsyncStatus status2) {
+                    const HRESULT failed2 =
+                        status2 == WF::AsyncStatus::Completed ? S_OK : op2.ErrorCode().value;
+                    on_ui(handle, [handle, failed2](WebViewCtx *c2) {
+                        if (FAILED(failed2)) {
+                            startup_failed(handle, "engine creation", failed2);
+                            return;
+                        }
+                        auto core = c2->control.CoreWebView2();
+                        HRESULT got = E_POINTER;
+                        if (core) {
+                            auto interop = core.try_as<ICoreWebView2Interop2>();
+                            got = interop ? interop->GetComICoreWebView2(
+                                                c2->webview.ReleaseAndGetAddressOf())
+                                          : E_NOINTERFACE;
+                        }
+                        if (FAILED(got) || !c2->webview) {
+                            startup_failed(handle, "engine interface", FAILED(got) ? got : E_POINTER);
+                            return;
+                        }
+                        on_engine_ready(handle, c2);
+                    });
+                });
+            });
+        });
+    } catch (winrt::hresult_error const &e) {
+        startup_failed(handle, "control creation", e.code().value);
+    }
+}
+#else
 // Kick off async WebView2 creation: environment → composition controller → attach the render visual,
 // wire input + NavigationCompleted, size, navigate. All callbacks run on the UI thread (WebView2 posts
 // to the creating thread), so touching XAML / composition / g_webviews here is safe.
@@ -458,7 +831,7 @@ static void create_webview2(void *handle) {
                 const HRESULT creating = env3->CreateCoreWebView2CompositionController(
                     cc->parent,
                     wrl::Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
-                        [handle, environment=wrl::ComPtr<ICoreWebView2Environment>(env)](HRESULT r2, ICoreWebView2CompositionController *comp) -> HRESULT {
+                        [handle](HRESULT r2, ICoreWebView2CompositionController *comp) -> HRESULT {
                             auto *c2 = find_ctx(handle);
                             if (!c2)
                                 return S_OK;
@@ -502,163 +875,7 @@ static void create_webview2(void *handle) {
                             // A transparent view: no default background under the page, and no
                             // URL label under the view (a startup failure never reaches here, so
                             // its diagnostic keeps the label).
-                            if (c2->transparent) {
-                                wrl::ComPtr<ICoreWebView2Controller2> ctl2;
-                                if (SUCCEEDED(c2->controller.As(&ctl2)) && ctl2)
-                                    ctl2->put_DefaultBackgroundColor(COREWEBVIEW2_COLOR{0, 0, 0, 0});
-                                if (auto tb = c2->placeholder.Child().try_as<WUXC::TextBlock>())
-                                    tb.Text(L"");
-                            }
-
-                            if (c2->webview && c2->resource_provider) {
-                                wrl::ComPtr<ICoreWebView2_22> resources;
-                                if (FAILED(c2->webview.As(&resources))) {
-                                    startup_failed(handle,"resource interception interface",E_NOINTERFACE);return S_OK;
-                                }
-                                resources->AddWebResourceRequestedFilterWithRequestSourceKinds(L"https://day-resource.invalid/*",COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_DOCUMENT);
-                                EventRegistrationToken token{};
-                                c2->webview->add_WebResourceRequested(wrl::Callback<ICoreWebView2WebResourceRequestedEventHandler>(
-                                    [handle,environment](ICoreWebView2 *,ICoreWebView2WebResourceRequestedEventArgs *args)->HRESULT {
-                                        auto c=find_ctx(handle);if(!c)return S_OK;
-                                        wrl::ComPtr<ICoreWebView2WebResourceRequest> request;args->get_Request(&request);
-                                        LPWSTR url=nullptr,method=nullptr,range=nullptr;
-                                        request->get_Uri(&url);request->get_Method(&method);
-                                        wrl::ComPtr<ICoreWebView2HttpRequestHeaders> headers;request->get_Headers(&headers);
-                                        if(headers)headers->GetHeader(L"Range",&range);
-                                        auto pending=new ResourcePending();pending->environment=environment;pending->args=args;
-                                        pending->dispatcher=c->placeholder.Dispatcher();
-                                        if(FAILED(args->GetDeferral(&pending->deferral)) || !pending->deferral){delete pending;CoTaskMemFree(url);CoTaskMemFree(method);CoTaskMemFree(range);return E_FAIL;}
-                                        day_web_resource_start(c->resource_provider,to_string(url?url:L"").c_str(),to_string(method?method:L"GET").c_str(),to_string(range?range:L"").c_str(),pending,resource_done);
-                                        CoTaskMemFree(url);CoTaskMemFree(method);CoTaskMemFree(range);return S_OK;
-                                    }).Get(),&token);
-                            }
-                            if (c2->webview && !c2->inline_prefix.empty()) {
-                                // Inline mode: map the exe-relative assets tree under the virtual
-                                // host before the first Navigate, then police top-level
-                                // navigations against the site prefix; leaving ones are
-                                // canceled and reported (the Rust side runs the LinkPolicy;
-                                // events are enqueue-only, so the verdict can't come back here).
-                                wrl::ComPtr<ICoreWebView2_3> wv3;
-                                if (!c2->resource_provider && SUCCEEDED(c2->webview->QueryInterface(IID_PPV_ARGS(&wv3))) &&
-                                    wv3) {
-                                    // The Rust side resolves the tree (lib-xaml.rs `inline_dir`),
-                                    // since a dev run reads its assets from the project and a
-                                    // packed app from beside the exe. The exe-relative path is
-                                    // the fallback for a caller that passed nothing: mapping a
-                                    // folder that does not exist leaves the host unmapped, and
-                                    // the site's first navigation then fails DNS resolution.
-                                    std::wstring assets = c2->inline_dir;
-                                    if (assets.empty()) {
-                                        wchar_t exe[MAX_PATH]{};
-                                        GetModuleFileNameW(nullptr, exe, MAX_PATH);
-                                        assets = exe;
-                                        size_t slash = assets.find_last_of(L"\\/");
-                                        if (slash != std::wstring::npos)
-                                            assets.resize(slash);
-                                        assets += L"\\assets";
-                                    }
-                                    const HRESULT mapped = wv3->SetVirtualHostNameToFolderMapping(
-                                        kDayAssetsHost, assets.c_str(),
-                                        COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
-                                    if (FAILED(mapped)) {
-                                        startup_failed(handle, "asset folder mapping", mapped);
-                                        return S_OK;
-                                    }
-                                } else {
-                                    if (!c2->resource_provider) { startup_failed(handle, "asset mapping interface", E_NOINTERFACE);
-                                    return S_OK; }
-                                }
-                                EventRegistrationToken navTok{};
-                                c2->webview->add_NavigationStarting(
-                                    wrl::Callback<ICoreWebView2NavigationStartingEventHandler>(
-                                        [handle](ICoreWebView2 *,
-                                                 ICoreWebView2NavigationStartingEventArgs *args)
-                                            -> HRESULT {
-                                            auto *cn = find_ctx(handle);
-                                            if (!cn || cn->inline_prefix.empty())
-                                                return S_OK;
-                                            LPWSTR uri = nullptr;
-                                            if (FAILED(args->get_Uri(&uri)) || !uri)
-                                                return S_OK;
-                                            std::wstring u(uri);
-                                            CoTaskMemFree(uri);
-                                            const bool inside =
-                                                u.rfind(cn->inline_prefix, 0) == 0 ||
-                                                u == L"about:blank";
-                                            if (!inside) {
-                                                args->put_Cancel(TRUE);
-                                                if (cn->link_cb) {
-                                                    std::string s = to_utf8(winrt::hstring{u});
-                                                    cn->link_cb(cn->id, s.c_str());
-                                                }
-                                            }
-                                            return S_OK;
-                                        })
-                                        .Get(),
-                                    &navTok);
-                                // window.open / target=_blank: external by definition, since no new
-                                // window exists in day's tree, so report and swallow.
-                                EventRegistrationToken winTok{};
-                                c2->webview->add_NewWindowRequested(
-                                    wrl::Callback<ICoreWebView2NewWindowRequestedEventHandler>(
-                                        [handle](ICoreWebView2 *,
-                                                 ICoreWebView2NewWindowRequestedEventArgs *args)
-                                            -> HRESULT {
-                                            auto *cn = find_ctx(handle);
-                                            if (!cn || cn->inline_prefix.empty())
-                                                return S_OK;
-                                            args->put_Handled(TRUE);
-                                            LPWSTR uri = nullptr;
-                                            if (SUCCEEDED(args->get_Uri(&uri)) && uri) {
-                                                std::string s =
-                                                    to_utf8(winrt::hstring{std::wstring(uri)});
-                                                if (cn->link_cb)
-                                                    cn->link_cb(cn->id, s.c_str());
-                                                CoTaskMemFree(uri);
-                                            }
-                                            return S_OK;
-                                        })
-                                        .Get(),
-                                    &winTok);
-                            }
-                            if (c2->webview) {
-                                // Report the settled URL back so the app's URL bar follows navigation.
-                                EventRegistrationToken tok{};
-                                c2->webview->add_NavigationCompleted(
-                                    wrl::Callback<ICoreWebView2NavigationCompletedEventHandler>(
-                                        [handle](ICoreWebView2 *wv,
-                                                 ICoreWebView2NavigationCompletedEventArgs *args)
-                                            -> HRESULT {
-                                            auto *c3n = find_ctx(handle);
-                                            if (!c3n)
-                                                return S_OK;
-                                            LPWSTR src = nullptr;
-                                            if (SUCCEEDED(wv->get_Source(&src)) && src) {
-                                                std::string s = to_utf8(winrt::hstring{src});
-                                                BOOL success = FALSE;
-                                                args->get_IsSuccess(&success);
-                                                if (!success) {
-                                                    COREWEBVIEW2_WEB_ERROR_STATUS error{};
-                                                    args->get_WebErrorStatus(&error);
-                                                    std::fprintf(stderr,
-                                                        "day-piece-webview: navigation failed "
-                                                        "(WebErrorStatus %d): %s\n",
-                                                        static_cast<int>(error), s.c_str());
-                                                    std::fflush(stderr);
-                                                }
-                                                if (c3n->cb)
-                                                    c3n->cb(c3n->id, s.c_str());
-                                                CoTaskMemFree(src);
-                                            }
-                                            return S_OK;
-                                        })
-                                        .Get(),
-                                    &tok);
-                            }
-                            wire_input(handle);
-                            sync_size(c2);
-                            if (c2->webview && !c2->pending_url.empty())
-                                c2->webview->Navigate(c2->pending_url.c_str());
+                            on_engine_ready(handle, c2);
                             return S_OK;
                         })
                         .Get());
@@ -670,13 +887,29 @@ static void create_webview2(void *handle) {
     if (FAILED(started))
         startup_failed(handle, "environment request", started);
 }
+#endif
 
 extern "C" {
 
 void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, const char *),
                            const char *inline_root, const char *inline_start,
                            const char *inline_dir,
-                           void (*link_cb)(uint64_t, const char *), bool transparent) {
+                           void (*link_cb)(uint64_t, const char *), bool transparent,
+                           uint64_t session) {
+    if (session) {
+        auto known = g_sessions.find(session);
+        if (known != g_sessions.end()) {
+            auto *c = known->second;
+            c->id = id;
+            c->cb = cb;
+            c->link_cb = link_cb;
+            // A fresh Day handle owns this mount; the private handle and engine survive it.
+            void *mounted = day_xaml_box(winrt::get_abi(c->placeholder));
+            g_webviews[mounted] = c;
+            if (c->controller) c->controller->put_IsVisible(TRUE);
+            return mounted;
+        }
+    }
     // The boxed element day lays out: a transparent (hit-testable) Border carrying a faint URL label.
     // The browser's render visual is spliced in as the Border's child visual and covers the label;
     // if startup fails, the label displays the diagnostic instead of remaining just a URL.
@@ -715,21 +948,39 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
     c->inline_dir = inlined && inline_dir ? std::wstring(hs(inline_dir).c_str()) : std::wstring();
     c->link_cb = link_cb;
     c->transparent = transparent;
+    c->session = session;
+    c->engine_handle = handle;
     UINT dpi = c->parent ? GetDpiForWindow(c->parent) : 96;
     c->scale = (dpi ? dpi : 96) / 96.0;
     g_webviews[handle] = c;
+    if (session) g_sessions[session] = c;
 
-    // Keep the render visual + Bounds matched to the Border as it resizes.
+#ifndef DAY_WINUI
+    // Keep the render visual + Bounds matched to the Border as it resizes. (WinUI's control
+    // sizes itself: it stretches to fill the Border.)
     placeholder.SizeChanged([handle](WF::IInspectable const &, WUX::SizeChangedEventArgs const &) {
         if (auto *cc = find_ctx(handle))
             sync_size(cc);
     });
-    // Tie the browser to the element's tree membership: day removing the node raises Unloaded.
-    placeholder.Unloaded(
-        [handle](WF::IInspectable const &, WUX::RoutedEventArgs const &) { destroy_ctx(handle); });
-
+#endif
     create_webview2(handle);
-    return handle;
+    void *mounted = day_xaml_box(winrt::get_abi(placeholder));
+    g_webviews[mounted] = c;
+    return mounted;
+}
+
+void day_webview_xaml_release(void *handle) {
+    auto *c = find_ctx(handle);
+    if (!c) return;
+    g_webviews.erase(handle);
+    if (c->session) {
+        c->id = 0;
+        c->cb = nullptr;
+        c->link_cb = nullptr;
+        if (c->controller) c->controller->put_IsVisible(FALSE);
+    } else {
+        destroy_ctx(c->engine_handle);
+    }
 }
 
 void day_webview_xaml_load(void *handle, const char *url) {
@@ -768,7 +1019,7 @@ void day_webview_xaml_set_eval_cb(void (*cb)(uint64_t, uint64_t, const char *)) 
 // reports failures at the engine level, so it catches the one case the JS wrapper structurally
 // cannot: a syntax error, where the wrapper and the user's script compile as a single unit and
 // the wrapper's own `try` never runs. The interface arrived in SDK 1.0.2277.86 (this crate pins
-// 1.0.3179.45, so the header is always present) but the runtime is not guaranteed, so a failed
+// 1.0.3719.77, so the header is always present) but the runtime is not guaranteed, so a failed
 // query falls back to plain `ExecuteScript` + the wrapper's own error reporting.
 //
 // Handlers run on the creating UI thread, serially and never re-entrantly, so touching

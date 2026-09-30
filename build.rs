@@ -94,11 +94,43 @@ fn build_xaml() {
         .std("c++20")
         .define("_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS", None)
         .file("src/lib-xaml-shim.cpp")
-        .include(&cppwinrt)
+        .includes(day_toolchain::winappsdk::shim_includes(&cppwinrt))
         .include(webview2.join("build/native/include"))
         .flag("/EHsc")
         .flag("/bigobj")
         .flag_if_supported("/permissive-");
+    // WinUI hosts the engine in its own WebView2 control, whose core object the shim reaches
+    // through WebView2Interop.h (ICoreWebView2Interop2), which the package ships separately.
+    if day_toolchain::winappsdk::shim_is_winui() {
+        build.include(webview2.join("build/native/include-winrt"));
+        // WinUI's WebView2 control loads WebView2Loader.dll by name (through
+        // Microsoft.Web.WebView2.Core.dll), and a WinUI app carries that loader itself. A packed
+        // app has it beside the exe; a development build preloads this copy (the shim's
+        // preload_webview2_loader), so nothing has to be copied next to a cargo-built exe.
+        let loader = webview2
+            .join("runtimes")
+            .join(format!("win-{arch}"))
+            .join("native")
+            .join("WebView2Loader.dll");
+        let escaped = loader.to_string_lossy().replace('\\', "\\\\");
+        build.define(
+            "DAY_WEBVIEW2_LOADER_DLL",
+            format!("L\"{escaped}\"").as_str(),
+        );
+        // …and the control's WinRT core, Microsoft.Web.WebView2.Core.dll, which is not in the
+        // Windows App SDK runtime either: the WebView2 package ships it for WinUI apps to carry.
+        let core = webview2
+            .join("runtimes")
+            .join(format!("win-{arch}"))
+            .join("native_uap")
+            .join("Microsoft.Web.WebView2.Core.dll");
+        let escaped = core.to_string_lossy().replace('\\', "\\\\");
+        build.define("DAY_WEBVIEW2_CORE_DLL", format!("L\"{escaped}\"").as_str());
+    }
+    // WinUI 3 (windows-winui): the same shim against Microsoft.UI.Xaml (docs/winui.md).
+    if day_toolchain::winappsdk::shim_is_winui() {
+        build.define("DAY_WINUI", None);
+    }
     build.compile("daywebviewxamlshim");
     // WindowsApp.lib (WinRT umbrella) and the day_xaml_box/unbox functions are already linked by
     // day-xaml-sys. Add the statically-linked WebView2 loader (pulls in the runtime at first use).
@@ -115,7 +147,7 @@ fn build_xaml() {
 /// dev machines that already have the package restored.
 fn webview2_sdk_root() -> std::path::PathBuf {
     use std::path::PathBuf;
-    const VERSION: &str = "1.0.3179.45";
+    const VERSION: &str = "1.0.3719.77"; // the one WinUI (Windows App SDK 2.5) pins: its WebView2 control needs this Core or newer
     let has_header = |root: &std::path::Path| root.join("build/native/include/WebView2.h").exists();
 
     println!("cargo:rerun-if-env-changed=DAY_WEBVIEW2_SDK");

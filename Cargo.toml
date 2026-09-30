@@ -32,6 +32,8 @@ qt = ["dep:day-qt", "dep:wry", ]                 # + build.rs compiles src/lib-q
 uikit = ["dep:day-uikit", "dep:objc2", "dep:objc2-ui-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:block2"]
 mdc = ["dep:day-android"]        # + [package.metadata.day.android]
 xaml = ["dep:day-xaml", "dep:day-xaml-sys"]     # + build.rs compiles src/lib-xaml-shim.cpp
+# WinUI 3 (windows-winui, docs/winui.md): the xaml half, built against Microsoft.UI.Xaml.
+winui = ["xaml", "day-xaml-sys/winui"]
 # The ArkUI C node API has no Web node, so this backend is the crate's ArkTS half
 # (platform/harmony/ets/Index.ets) staged by `day build`, and it needs no Rust dependency beyond
 # the toolkit.
@@ -49,7 +51,7 @@ compat = "0.4"
 # into an app build (Tier A.2), so an app depends on this piece with a plain `{ git = "…" }` line,
 # with no per-backend feature fan-out in its own Cargo.toml.
 [package.metadata.day.piece]
-backends = ["appkit", "gtk", "qt", "uikit", "mdc", "xaml", "arkui", "dom"]
+backends = ["appkit", "gtk", "qt", "uikit", "mdc", "xaml", "winui", "arkui", "dom"]
 assets = ["web"]
 
 [dependencies]
