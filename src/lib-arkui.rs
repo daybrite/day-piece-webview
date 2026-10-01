@@ -8,7 +8,7 @@
 // `[package.metadata.day.ohos]`, the HarmonyOS counterpart of the android `java` contribution.
 // day-arkui's generic piece bridge builds it and returns its FrameNode as an ordinary handle
 // (docs/extending.md); commands cross as this piece's own (cmd, arg) strings, and each committed
-// navigation comes back through the shim's `pieceEvent` as the Custom event kind (12): §8.2's
+// navigation comes back through day-arkui's `pieceEvent` export as the Custom event kind (12): §8.2's
 // piece-defined channel, the same one the Android renderer uses.
 // ---------------------------------------------------------------------------
 
