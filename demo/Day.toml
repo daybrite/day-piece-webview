@@ -6,7 +6,7 @@ schema = 1
 id = "dev.daybrite.webviewdemo"
 title = "Web View Demo"
 build = 1
-targets = ["macos-appkit", "linux-gtk", "linux-qt", "windows-xaml", "ios-uikit", "android-mdc", "web-dom", "harmony-arkui"]
+targets = ["macos-appkit", "linux-gtk", "linux-qt", "windows-winui", "windows-xaml", "ios-uikit", "android-mdc", "web-dom", "harmony-arkui"]
 
 # The window's geometry in points (https://daybrite.dev/docs/size-classes). `width`/`height` are
 # the desktop default and the size a desktop-windowing Android window opens at; the minimum is

@@ -40,6 +40,7 @@ jobs:
           - { os: ubuntu-latest, features: gtk }
           - { os: ubuntu-latest, features: qt }
           - { os: macos-15, features: appkit }
+          - { os: windows-latest, features: winui }
           - { os: windows-latest, features: xaml }
     runs-on: ${{ matrix.os }}
     steps:
@@ -107,10 +108,10 @@ jobs:
     secrets: inherit
     with:
       project-path: demo
-      targets: macos-appkit, linux-gtk, linux-qt, windows-xaml, ios-uikit, android-mdc,
+      targets: macos-appkit, linux-gtk, linux-qt, windows-winui, ios-uikit, android-mdc,
         harmony-arkui, web-dom
       target-packages: |
-        windows-xaml: webview2-runtime
+        windows-winui: webview2-runtime
       update-day-deps: true
       scripts: dayscript/webview.yaml
       preflight-checks: fmt, clippy, test
