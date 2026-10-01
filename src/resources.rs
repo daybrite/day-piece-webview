@@ -406,6 +406,7 @@ fn mime_for_path(path: &str) -> &'static str {
         "css" => "text/css",
         "js" | "mjs" => "text/javascript",
         "json" => "application/json",
+        "wasm" => "application/wasm",
         "svg" => "image/svg+xml",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",

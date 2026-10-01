@@ -65,10 +65,62 @@ public final class DayWebView {
         }
     }
 
+    /** HTML fullscreen uses a temporary Activity overlay; restore flags on every exit. */
+    private static final class FullscreenClient extends android.webkit.WebChromeClient {
+        private final WebView web;
+        private android.view.ViewGroup decor;
+        private View custom;
+        private CustomViewCallback callback;
+        private int previousFlags;
+        FullscreenClient(WebView web) { this.web = web; }
+        @Override @SuppressWarnings("deprecation")
+        public void onShowCustomView(View view, CustomViewCallback done) {
+            if (custom != null) { done.onCustomViewHidden(); return; }
+            android.content.Context context = web.getContext();
+            while (context instanceof android.content.ContextWrapper && !(context instanceof android.app.Activity)) {
+                context = ((android.content.ContextWrapper) context).getBaseContext();
+            }
+            if (!(context instanceof android.app.Activity)) { done.onCustomViewHidden(); return; }
+            decor = (android.view.ViewGroup) ((android.app.Activity) context).getWindow().getDecorView();
+            previousFlags = decor.getSystemUiVisibility();
+            custom = view;
+            callback = done;
+            decor.addView(view, new android.view.ViewGroup.LayoutParams(-1, -1));
+            decor.setSystemUiVisibility(previousFlags | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+            view.setFocusableInTouchMode(true);
+            view.requestFocus();
+            view.setOnKeyListener((v, key, event) -> {
+                if ((key == android.view.KeyEvent.KEYCODE_BACK || key == android.view.KeyEvent.KEYCODE_ESCAPE)
+                        && event.getAction() == android.view.KeyEvent.ACTION_UP) {
+                    onHideCustomView(); return true;
+                }
+                return false;
+            });
+        }
+        @Override @SuppressWarnings("deprecation")
+        public void onHideCustomView() {
+            if (custom == null) return;
+            decor.removeView(custom);
+            decor.setSystemUiVisibility(previousFlags);
+            custom = null;
+            CustomViewCallback done = callback;
+            callback = null;
+            done.onCustomViewHidden();
+            web.requestFocus();
+        }
+    }
+
     public static View makeWebView(long id, String url, String inlinePrefix, long provider) {
         WebView web = new WebView(DayBridge.ctx);
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
+        FullscreenClient chrome = new FullscreenClient(web);
+        web.setWebChromeClient(chrome);
+        web.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            public void onViewAttachedToWindow(View view) {}
+            public void onViewDetachedFromWindow(View view) { chrome.onHideCustomView(); }
+        });
         final boolean inline = inlinePrefix != null && !inlinePrefix.isEmpty();
         web.setWebViewClient(new WebViewClient() {
             @Override

@@ -210,3 +210,15 @@ JavaScript, CSS imports, a binary image response, a nested document, bundled CSS
 The [testing guide](testing.md) distinguishes native execution from host mocks and records the
 Linux GTK failure found in the first CI run. Range, lifetime, and validation tests exist, but
 not every native response/lifecycle path has end-to-end coverage yet.
+
+Godot/WebAssembly consumers require `application/wasm` for `.wasm` resources. Qt 6.6+
+registers the provider scheme with `FetchApiAllowed` as well as CORS and secure-origin
+flags, so ordinary `fetch` can read runtime binaries and game packs. Qt versions before
+6.6 cannot use Fetch API with this custom scheme.
+
+Interactive content may request fullscreen from a user gesture. DOM delegates fullscreen,
+autoplay and gamepad access to the iframe; Apple enables the public element-fullscreen
+preference when the OS supports it. Android installs a WebChromeClient custom-view overlay
+and restores system UI flags on exit or view detachment. Qt accepts fullscreen requests
+and restores the previous top-level window state. These do not grant camera/microphone
+access or override autoplay gesture requirements.

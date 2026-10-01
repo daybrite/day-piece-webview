@@ -53,6 +53,8 @@ fn load(backend: &mut Dom, h: &DomHandle, url: &str) {
 
 fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
     let h = backend.element("iframe");
+    backend.set_attr(&h, "allow", "autoplay; fullscreen; gamepad");
+    backend.set_attr(&h, "allowfullscreen", "");
     if let Some(provider)=&p.resources {
         super::browser::resources(h.0 as i32,&provider.base_url(),&p.url);
         LAST_SRC.with(|m|m.borrow_mut().insert(h,p.url.clone()));

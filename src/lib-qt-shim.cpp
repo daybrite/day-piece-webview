@@ -39,6 +39,7 @@ static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 
 #include <QWebEnginePage>
 #include <QWebEngineSettings>
+#include <QWebEngineFullScreenRequest>
 #include <QWebEngineView>
 #include <QWebEngineProfile>
 #include <QWebEngineUrlScheme>
@@ -51,7 +52,11 @@ static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 static const bool resourceSchemeRegistered = [] {
     QWebEngineUrlScheme scheme("day-resource");
     scheme.setSyntax(QWebEngineUrlScheme::Syntax::Host);
-    scheme.setFlags(QWebEngineUrlScheme::SecureScheme | QWebEngineUrlScheme::CorsEnabled);
+    auto flags = QWebEngineUrlScheme::SecureScheme | QWebEngineUrlScheme::CorsEnabled;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    flags |= QWebEngineUrlScheme::FetchApiAllowed;
+#endif
+    scheme.setFlags(flags);
     QWebEngineUrlScheme::registerScheme(scheme);
     return true;
 }();
@@ -205,6 +210,18 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
         page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);
         v->setPage(page);
     }
+    v->settings()->setAttribute(QWebEngineSettings::FullScreenSupportEnabled, true);
+    QObject::connect(v->page(), &QWebEnginePage::fullScreenRequested, v,
+        [v, previous = Qt::WindowStates()](QWebEngineFullScreenRequest request) mutable {
+            auto window = v->window();
+            if (request.toggleOn()) {
+                previous = window->windowState();
+                window->showFullScreen();
+            } else {
+                window->setWindowState(previous);
+            }
+            request.accept();
+        });
     day_webview_connect_url(v, id, cb);
     lay->addWidget(v);
     w->view = v;

@@ -63,6 +63,13 @@ define_class!(
 pub(crate) fn configuration(id: Option<u64>, mtm: MainThreadMarker) -> Retained<AnyObject> {
     unsafe {
         let config: Retained<AnyObject> = msg_send![objc2::class!(WKWebViewConfiguration), new];
+        // Public WKPreferences API (macOS 12.3 / iOS 15.4). Guard older deployments.
+        let preferences: Retained<AnyObject> = msg_send![&config, preferences];
+        let fullscreen = objc2::sel!(setElementFullscreenEnabled:);
+        let supported: bool = msg_send![&preferences, respondsToSelector: fullscreen];
+        if supported {
+            let _: () = msg_send![&preferences, setElementFullscreenEnabled: true];
+        }
         if let Some(id) = id {
             let handler = Handler::alloc(mtm).set_ivars(Ivars {
                 id,
