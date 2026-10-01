@@ -27,6 +27,13 @@ places its visual in the XAML tree and forwards pointer events. It is distinct f
 HWND used by Wry on Windows GTK/Qt. The WebView2 SDK used to compile the shim does not replace
 the installed WebView2 Runtime.
 
+The XAML browser is closed by Day's piece-release hook. Temporary removal from the visual tree
+(XAML `Unloaded`, including reparenting during cover layout) does not destroy it. Asynchronous
+startup callbacks ignore a released view. On Windows Qt, Wry initialization is queued after
+`showEvent` returns because Wry pumps Win32 messages while creating WebView2; starting it during
+Day's tree construction can re-enter an unfinished layout. Closing the widget cancels queued
+startup, and a close delivered during initialization releases the newly created browser.
+
 Native child hosts, particularly macOS GTK and Windows GTK/Qt, have clipping/overlap constraints.
 Test nested scrolling, popovers, keyboard focus, resizing, and visibility in the actual host.
 On macOS GTK, a widget-only GTK screenshot omits the Cocoa child; capture the native window.
@@ -67,7 +74,7 @@ binary responses. No loopback listener is used.
 | Linux GTK | WebContext URI scheme handler, `day-resource://p…/` | Worker reads; response completion on the GTK main context; see the current [CI failure](testing.md#observed-results) |
 | Qt WebEngine | QWebEngineUrlSchemeHandler, `day-resource://p…/` | Scheme registered before Qt startup; resource views get their own profile |
 | Android | `shouldInterceptRequest`, reserved `https://day-resource.invalid/…` | WebResourceResponse on WebView's I/O thread |
-| Windows XAML | WebView2 WebResourceRequested at reserved HTTPS origin | Iframe-aware filter, deferrals for worker reads, UI-dispatcher completion |
+| Windows XAML | WebView2 WebResourceRequested at reserved HTTPS origin | Iframe-aware filter, deferrals for worker reads, desktop DispatcherQueue completion |
 | Windows Wry hosts | Asynchronous custom protocol, synthetic `http://day-resource.p…/` | WebView2 mapping; not a network HTTP endpoint |
 | Harmony | ArkWeb NDK scheme handler at reserved HTTPS origin | Registered per web tag after controller attachment, before navigation; binary data bypasses ArkTS |
 | web-dom | Scoped service worker and message channels | HTTPS/localhost, owning tab alive, synchronous Rust callback on app thread |
@@ -79,6 +86,15 @@ status codes, range/media behavior, or header-based policy enforcement on older 
 Other adapters carry the common response status/header contract, but host unit tests do not
 prove every engine treats ranges and error responses identically. The integration suite currently
 emphasizes successful document/subresource loading. See [test coverage](testing.md).
+
+On Windows, resource completions return through `Windows.System.DispatcherQueue` for
+XAML Islands and `Microsoft.UI.Dispatching.DispatcherQueue` for WinUI. `CoreDispatcher`
+is a UWP/CoreWindow mechanism; Microsoft recommends [DispatcherQueue for XAML Islands](https://learn.microsoft.com/en-us/dotnet/communitytoolkit/windows/extensions/dispatcherqueueextensions). WebView2
+response construction and deferral completion run on the creating UI thread.
+
+On Harmony, bundled provider assets are read by native workers. Day's rawfile manager
+must be process-wide, with reads protected against manager replacement; a thread-local
+manager makes these requests return 404 even though ordinary UI-thread resource reads work.
 
 The browser worker controls only `assets/data/day-piece-webview/`, including when the app is
 served under a subdirectory. It forwards requests to the owning tab and transfers response bytes.

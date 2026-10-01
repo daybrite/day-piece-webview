@@ -14,6 +14,7 @@ this repository's daily run without a new piece commit.
 | Backend Clippy checks | GTK, Qt, AppKit, XAML; cross-checks for UIKit, Android, WASM | Cross-checks do not run or link a mobile app |
 | Node tests | Shipped browser hook, service worker, Harmony controller lifecycle in host harnesses | Real browser SW registration, native ArkWeb requests, GPU rendering |
 | Windows C++ tests | UTF-16/UTF-8 evaluation payload conversion | Entire WebView2 lifecycle |
+| Qt C++ lifecycle test | Deferred Windows-host startup, latest URL, single initialization, closing before/during startup | Uses a fake WebView2 bridge; does not run COM or the Windows engine |
 | Demo dayscript | Actual engine navigation/evaluation and relative resource loading | Exhaustive lifecycle, performance, and protocol conformance |
 | Harmony screenshot verifier | Visible green marker painted by the bundled page | Provider-specific rendering or all other target screenshots |
 
@@ -28,6 +29,11 @@ objects and mocked client/fetch interfaces. It checks binary bytes, MIME/isolati
 bundled mount routing, HEAD/ranges, missing owners, and scope/path boundaries. It does not
 replace an actual service-worker test in a browser. The Harmony host harness tests command
 queueing and disposal, not the NDK scheme handler itself.
+
+The Linux Qt host job also builds and runs `tests/qt` with the offscreen Qt platform. It compiles
+the Windows QWidget host against a fake bridge so its scheduling and lifetime rules are tested
+without a Windows runner. XAML reparenting and the actual Windows Qt engine still require native
+execution; downstream Stanza reader tests cover those paths separately.
 
 ## End-to-end resource assertions
 

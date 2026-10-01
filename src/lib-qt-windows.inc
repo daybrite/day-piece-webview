@@ -5,9 +5,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QTemporaryDir>
+#include <QTimer>
 extern "C" {
 bool day_webview_win_create(intptr_t, uint64_t, const char *, const char *);
 void day_webview_win_bounds(uint64_t, double, double);
@@ -38,10 +40,26 @@ public:
         QWidget::showEvent(e);
         if (!started) {
             started=true;
-            if (!day_webview_win_create(static_cast<intptr_t>(winId()),id,url.toUtf8().constData(),prefix.toUtf8().constData())) {
-                auto *layout=new QVBoxLayout(this);
-                layout->addWidget(new QLabel("WebView2 could not start. Install Microsoft Edge WebView2 Runtime.",this));
-            }
+            // Wry waits for WebView2 initialization by pumping Win32 messages. Never enter that
+            // nested loop from showEvent: Day may still be realizing/reparenting this subtree.
+            // The context cancels startup if the page is removed before the next Qt turn.
+            QTimer::singleShot(0, this, [this] {
+                const auto node = id;
+                QPointer<DayWebView> alive(this);
+                const auto address = url.toUtf8(), root = prefix.toUtf8();
+                const bool ok = day_webview_win_create(static_cast<intptr_t>(winId()), node,
+                                                       address.constData(), root.constData());
+                // The nested initialization loop can also deliver a close/navigation event.
+                if (!alive) {
+                    day_webview_win_release(node);
+                    return;
+                }
+                if (!ok) {
+                    auto *layout=new QVBoxLayout(this);
+                    layout->addWidget(new QLabel("WebView2 could not start. Install Microsoft Edge WebView2 Runtime.",this));
+                }
+                day_webview_win_bounds(node, width(), height());
+            });
         }
         day_webview_win_bounds(id,width(),height());
     }

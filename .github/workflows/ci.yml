@@ -59,6 +59,12 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo clippy --features ${{ matrix.features }} -- -D warnings
       - run: cargo test
+      - name: Test Qt WebView startup lifecycle
+        if: matrix.features == 'qt'
+        run: |
+          cmake -S tests/qt -B target/qt-tests
+          cmake --build target/qt-tests
+          ctest --test-dir target/qt-tests --output-on-failure
       - name: Test Windows evaluation payload conversion
         if: runner.os == 'Windows'
         run: |

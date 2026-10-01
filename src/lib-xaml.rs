@@ -172,6 +172,7 @@ fn update(_backend: &mut Xaml, h: &WinHandle, patch: &WebPatch) {
 }
 
 fn release(_backend: &mut Xaml, h: &WinHandle) {
+    // Unloaded also occurs during reparenting. Release unmounts or closes the session here.
     unsafe { day_webview_xaml_release(h.0) };
 }
 

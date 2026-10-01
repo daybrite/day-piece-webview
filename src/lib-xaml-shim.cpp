@@ -20,7 +20,8 @@
 //     that around: the InputSite delivers pointer events to the Border (XAML), and we forward them
 //     to the controller's SendMouseInput. So clicks/scroll/drag work, routed through XAML's own
 //     input.
-//   * Unmount closes an anonymous browser; a named WebSession keeps its engine for the next mount.
+//   * Day's piece release closes an anonymous browser; a named WebSession retains its engine.
+//     XAML Unloaded also fires during reparenting; it is not a destruction notification.
 //   * If WebView2 creation fails, the Border shows the operation and HRESULT; eval replies and
 //     stderr report the same error (including a hint for a missing runtime).
 //
@@ -86,7 +87,7 @@
 
 #include "xaml-strings.h"
 #include "resources.h"
-#include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.System.h> // DispatcherQueue for desktop XAML Islands
 #include <memory>
 #include <algorithm>
 #include <cstdlib>
@@ -168,7 +169,7 @@ struct ResourcePending {
 #ifdef DAY_WINUI
     winrt::Microsoft::UI::Dispatching::DispatcherQueue dispatcher{nullptr};
 #else
-    winrt::Windows::UI::Core::CoreDispatcher dispatcher{nullptr};
+    winrt::Windows::System::DispatcherQueue dispatcher{nullptr};
 #endif
 };
 static void resource_done(void *context, DayResourceResponse *response) {
@@ -199,11 +200,9 @@ static void resource_done(void *context, DayResourceResponse *response) {
             }
             pending->deferral->Complete();
         };
-#ifdef DAY_WINUI
+        // CoreDispatcher is a CoreWindow/UWP dispatcher, not the desktop island's
+        // message queue. Both desktop stacks use their corresponding DispatcherQueue.
         pending->dispatcher.TryEnqueue(deliver);
-#else
-        pending->dispatcher.RunAsync(winrt::Windows::UI::Core::CoreDispatcherPriority::Normal,deliver);
-#endif
     } catch (winrt::hresult_error const &) {
         // The dispatcher can close while the worker is reading. Closing WebView2 cancels
         // its requests; the owned response/deferral are released without re-entering a view.
@@ -546,7 +545,7 @@ static void on_engine_ready(void *handle, WebViewCtx *c2) {
 #ifdef DAY_WINUI
                 pending->dispatcher=c->placeholder.DispatcherQueue();
 #else
-                pending->dispatcher=c->placeholder.Dispatcher();
+                pending->dispatcher=winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
 #endif
                 if(FAILED(args->GetDeferral(&pending->deferral)) || !pending->deferral){delete pending;CoTaskMemFree(url);CoTaskMemFree(method);CoTaskMemFree(range);return E_FAIL;}
                 day_web_resource_start(c->resource_provider,to_string(url?url:L"").c_str(),to_string(method?method:L"GET").c_str(),to_string(range?range:L"").c_str(),pending,resource_done);
