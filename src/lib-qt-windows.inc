@@ -11,7 +11,7 @@
 #include <QTemporaryDir>
 #include <QTimer>
 extern "C" {
-bool day_webview_win_create(intptr_t, uint64_t, const char *, const char *);
+bool day_webview_win_create(intptr_t, uint64_t, const char *, const char *, const char *, const char *, bool);
 void day_webview_win_bounds(uint64_t, double, double);
 void day_webview_win_release(uint64_t);
 void day_webview_win_command(uint64_t, uint32_t, uint64_t, const char *);
@@ -19,10 +19,11 @@ void day_webview_win_command(uint64_t, uint32_t, uint64_t, const char *);
 class DayWebView : public QWidget {
 public:
     uint64_t id;
-    QString url, prefix;
+    QString url, prefix, profile, directory;
+    bool privateMode;
     QTemporaryDir assets;
     bool started = false;
-    DayWebView(uint64_t node, QString address, QString root) : id(node), url(address), prefix(root) {
+    DayWebView(uint64_t node, QString address, QString root,QString profileKey,QString profileDirectory,bool privateMode) : id(node), url(address), prefix(root),profile(profileKey),directory(profileDirectory),privateMode(privateMode) {
         setAttribute(Qt::WA_NativeWindow);
         if (!root.isEmpty() && !root.startsWith("http://day-resource.")) {
             QDirIterator it(":/day/assets", QDir::Files, QDirIterator::Subdirectories);
@@ -48,7 +49,7 @@ public:
                 QPointer<DayWebView> alive(this);
                 const auto address = url.toUtf8(), root = prefix.toUtf8();
                 const bool ok = day_webview_win_create(static_cast<intptr_t>(winId()), node,
-                                                       address.constData(), root.constData());
+                                                       address.constData(), root.constData(),profile.toUtf8().constData(),directory.toUtf8().constData(),privateMode);
                 // The nested initialization loop can also deliver a close/navigation event.
                 if (!alive) {
                     day_webview_win_release(node);
@@ -66,8 +67,8 @@ public:
     void resizeEvent(QResizeEvent *e) override { QWidget::resizeEvent(e);day_webview_win_bounds(id,width(),height()); }
 };
 extern "C" {
-void *day_webview_new(const char *url,uint64_t id,void (*)(uint64_t,const char *),uint64_t,const char *prefix,void (*)(uint64_t,const char *)) {
-    return new DayWebView(id,QString::fromUtf8(url),QString::fromUtf8(prefix));
+void *day_webview_new(const char *url,uint64_t id,void (*)(uint64_t,const char *),uint64_t,const char *profile_key,const char *profile_directory,bool private_mode,const char *prefix,void (*)(uint64_t,const char *)) {
+    return new DayWebView(id,QString::fromUtf8(url),QString::fromUtf8(prefix),QString::fromUtf8(profile_key),QString::fromUtf8(profile_directory),private_mode);
 }
 void day_webview_set_transparent(void *) {}
 void day_webview_set_eval_cb(void (*cb)(uint64_t,uint64_t,const char *)) {g_eval_cb=cb;}

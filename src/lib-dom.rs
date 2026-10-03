@@ -52,6 +52,7 @@ fn load(backend: &mut Dom, h: &DomHandle, url: &str) {
 }
 
 fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
+    if p.profile.private { return backend.element("div"); }
     let h = backend.element("iframe");
     backend.set_attr(&h, "allow", "autoplay; fullscreen; gamepad");
     backend.set_attr(&h, "allowfullscreen", "");

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <memory>
 
 // A JavaScript-evaluation reply, in the 0x1F-separated form the Rust front-end decodes
 // (docs/webview-eval.md). Only used for engine failures; a script that merely throws is caught by
@@ -38,10 +39,21 @@ static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 #ifdef DAY_WEBVIEW_QT_ENGINE
 
 #include <QWebEnginePage>
+#include <QWebEngineHistory>
 #include <QWebEngineSettings>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEngineView>
 #include <QWebEngineProfile>
+#include <QWebEngineCookieStore>
+#include <QNetworkCookie>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QDir>
+#include <QStandardPaths>
+#include <QDateTime>
+#include <QTimer>
+#include <QSet>
 #include <QWebEngineUrlScheme>
 #include <QWebEngineUrlSchemeHandler>
 #include <QWebEngineUrlRequestJob>
@@ -66,7 +78,7 @@ public:
     ResourceHandler(uint64_t p, QObject *parent): QWebEngineUrlSchemeHandler(parent), provider(p) {}
     void requestStarted(QWebEngineUrlRequestJob *job) override {
         auto pending = new QPointer<QWebEngineUrlRequestJob>(job);
-        day_web_resource_start(provider, job->requestUrl().toEncoded().constData(), job->requestMethod().constData(),
+        day_web_resource_start(job->requestUrl().host().mid(1).toULongLong(), job->requestUrl().toEncoded().constData(), job->requestMethod().constData(),
             job->requestHeaders().value("Range").constData(), pending,
             [](void *context, DayResourceResponse *response) {
                 QMetaObject::invokeMethod(QCoreApplication::instance(), [context,response] {
@@ -96,6 +108,43 @@ public:
 };
 
 
+struct ProfileState {
+    QString key, directory; bool privateMode;
+    QWebEngineProfile *profile;
+    QList<QNetworkCookie> cookies;
+    QSet<QWebEngineView *> views;
+};
+static std::map<QString, ProfileState *> profiles;
+static QWebEngineProfile *makeProfile(ProfileState *state) {
+    auto profile = state->privateMode ? new QWebEngineProfile(QCoreApplication::instance())
+        : new QWebEngineProfile(state->key, QCoreApplication::instance());
+    if (!state->privateMode) {
+        const auto root = state->directory.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/day-web-profiles" : state->directory;
+        profile->setPersistentStoragePath(root + "/" + state->key + "/data");
+        profile->setCachePath(root + "/" + state->key + "/cache");
+        profile->setPersistentCookiesPolicy(QWebEngineProfile::ForcePersistentCookies);
+    }
+    profile->installUrlSchemeHandler("day-resource",new ResourceHandler(0,profile));
+    QObject::connect(profile->cookieStore(), &QWebEngineCookieStore::cookieAdded, profile, [state](const QNetworkCookie &cookie) {
+        for (auto it=state->cookies.begin();it!=state->cookies.end();) { if(it->hasSameIdentifier(cookie))it=state->cookies.erase(it);else ++it; }
+        state->cookies.append(cookie);
+    });
+    QObject::connect(profile->cookieStore(), &QWebEngineCookieStore::cookieRemoved, profile, [state](const QNetworkCookie &cookie) {
+        for (auto it=state->cookies.begin();it!=state->cookies.end();) { if(it->hasSameIdentifier(cookie))it=state->cookies.erase(it);else ++it; }
+    });
+    profile->cookieStore()->loadAllCookies();
+    return profile;
+}
+static ProfileState *profileState(const QString &key, const QString &directory, bool privateMode) {
+    auto known=profiles.find(key);if(known!=profiles.end())return known->second;
+    auto state=new ProfileState{key,directory,privateMode,nullptr,{}, {}};
+    state->profile=makeProfile(state);profiles[key]=state;
+    return state;
+}
+static ProfileState *profileState(QWebEngineProfile *profile) {
+    for (auto &entry:profiles) if(entry.second->profile==profile)return entry.second;
+    return nullptr;
+}
 // Session id -> the retained engine view. Qt is the one backend whose `release` DELETES the handle
 // (day_qt_delete -> deleteLater), so a second pointer to the container would dangle. What is
 // retained instead is the QWebEngineView inside it: ~DayWebView re-parents it out before ~QWidget
@@ -168,7 +217,7 @@ static void day_webview_connect_url(QWebEngineView *v, uint64_t id,
 extern "C" {
 
 void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const char *),
-                      uint64_t session, const char *inline_path_prefix,
+                      uint64_t session, const char *profile_key, const char *profile_directory, bool private_mode, const char *inline_path_prefix,
                       void (*link_cb)(uint64_t, const char *)) {
     DayWebView *w = new DayWebView();
     w->id = id;
@@ -194,26 +243,13 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
 
     QWebEngineView *v = new QWebEngineView();
     const QString prefix = QString::fromUtf8(inline_path_prefix ? inline_path_prefix : "");
-    if (prefix.startsWith("day-resource:")) {
-        auto profile=new QWebEngineProfile();
-        auto page=new DayWebPage(profile,v);
-        QObject::connect(page,&QObject::destroyed,profile,&QObject::deleteLater);
-        profile->installUrlSchemeHandler("day-resource",new ResourceHandler(QUrl(prefix).host().mid(1).toULongLong(),profile));
-        page->id=id;page->pathPrefix=prefix;page->linkCb=link_cb;
-        page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);
-        v->setPage(page);
-    }
-    if (!prefix.isEmpty() && !prefix.startsWith("day-resource:")) {
-        DayWebPage *page = new DayWebPage(v);
-        page->id = id;
-        page->pathPrefix = prefix;
-        page->linkCb = link_cb;
-        // Bundled JavaScript can send app-scheme links without a mouse gesture. Let them
-        // reach acceptNavigationRequest, which cancels external main-frame navigation and
-        // hands it to Day's LinkPolicy instead of launching a system handler here.
-        page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);
-        v->setPage(page);
-    }
+    auto state=profileState(QString::fromUtf8(profile_key),QString::fromUtf8(profile_directory),private_mode);
+    state->views.insert(v);
+    QObject::connect(v,&QObject::destroyed,[state,v]{state->views.remove(v);});
+    auto page=new DayWebPage(state->profile,v);
+    page->id=id;page->pathPrefix=prefix;page->linkCb=link_cb;
+    page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);
+    v->setPage(page);
     v->settings()->setAttribute(QWebEngineSettings::FullScreenSupportEnabled, true);
     QObject::connect(v->page(), &QWebEnginePage::fullScreenRequested, v,
         [v, previous = Qt::WindowStates()](QWebEngineFullScreenRequest request) mutable {
@@ -247,6 +283,94 @@ void day_webview_eval(void *w, uint64_t req, const char *script) {
         }
         return;
     }
+    const QByteArray request(script);
+    if (request.startsWith("day-web-data:")) {
+        auto data=QJsonDocument::fromJson(request.mid(13)).object();
+        auto state=profileState(self->view->page()->profile());
+        auto reply=[id,req](const QByteArray &json) {if(g_eval_cb){const auto payload=QByteArray("1\x1f")+json;g_eval_cb(id,req,payload.constData());}};
+        if (!state) {if(g_eval_cb)g_eval_cb(id,req,day_webview_eval_error("profile unavailable").c_str());return;}
+        const auto operation=data["operation"].toString();
+        if(operation=="navigation") {
+            QJsonObject info{{"url",self->view->url().toString()},{"title",self->view->title()},{"can_go_back",self->view->page()->history()->canGoBack()},{"can_go_forward",self->view->page()->history()->canGoForward()},{"loading",self->view->page()->isLoading()}};
+            reply(QJsonDocument(info).toJson(QJsonDocument::Compact));return;
+        }
+        if (operation=="cookies") {
+            const QUrl url(data["url"].toString());QStringList header;
+            for (const auto &cookie:state->cookies) {
+                const auto domain=cookie.domain().toLower();const auto bare=domain.startsWith('.')?domain.mid(1):domain;
+                const auto path=cookie.path().isEmpty()?QString("/"):cookie.path();
+                if ((url.host().toLower()==bare || (domain.startsWith('.') && url.host().toLower().endsWith("."+bare)))
+                    && (!cookie.isSecure() || url.scheme()=="https")
+                    && (url.path()==path || (url.path().startsWith(path) && (path.endsWith('/') || url.path().mid(path.size(),1)=="/")))
+                    && (cookie.isSessionCookie() || cookie.expirationDate()>QDateTime::currentDateTimeUtc()))
+                    header.append(QString::fromUtf8(cookie.name())+"="+QString::fromUtf8(cookie.value()));
+            }
+            auto json=QJsonDocument(QJsonArray{header.join("; ")}).toJson(QJsonDocument::Compact);reply(json.mid(1,json.size()-2));return;
+        }
+        if(operation=="set-cookie") {
+            const auto cookies=QNetworkCookie::parseCookies(data["cookie"].toString().toUtf8());
+            if(cookies.size()!=1){if(g_eval_cb)g_eval_cb(id,req,day_webview_eval_error("invalid Set-Cookie header").c_str());return;}
+            const auto cookie=cookies.first();const QUrl origin(data["url"].toString());
+            auto jar=state->profile->cookieStore();auto completed=std::make_shared<bool>(false);
+            auto connections=std::make_shared<QList<QMetaObject::Connection>>();
+            auto finish=[completed,connections,reply,id,req](bool accepted) {
+                if(*completed)return;*completed=true;
+                for(const auto &connection:*connections)QObject::disconnect(connection);
+                if(accepted)reply("true");else if(g_eval_cb)g_eval_cb(id,req,day_webview_eval_error("cookie was not accepted").c_str());
+            };
+            connections->append(QObject::connect(jar,&QWebEngineCookieStore::cookieAdded,jar,[cookie,finish](const QNetworkCookie &added) {if(added.name()==cookie.name() && added.value()==cookie.value())finish(true);}));
+            connections->append(QObject::connect(jar,&QWebEngineCookieStore::cookieRemoved,jar,[cookie,finish](const QNetworkCookie &removed) {if(removed.name()==cookie.name())finish(true);}));
+            jar->setCookie(cookie,origin);
+            QTimer::singleShot(3000,jar,[finish]{finish(false);});return;
+        }
+        if(operation=="clear") {
+            // Qt has no public clear-all-site-storage API. Release EVERY page in this profile,
+            // then its engine profile, before deleting its owned data/cache directories.
+            struct PageInfo {QPointer<QWebEngineView> view;uint64_t id;QString prefix;void (*link)(uint64_t,const char *);};
+            QList<PageInfo> pages;
+            QList<QPointer<QWebEnginePage>> oldPages;
+            for(auto v:state->views) {
+                auto old=v->page();auto day=dynamic_cast<DayWebPage *>(old);
+                pages.append({v,day?day->id:0,day?day->pathPrefix:QString(),day?day->linkCb:nullptr});
+                oldPages.append(old);
+            }
+            const auto directory=state->profile->persistentStoragePath();const auto cache=state->profile->cachePath();
+            auto finish=[state,pages,directory,cache,reply,id,req] {
+                auto profile=state->profile;
+                QObject::connect(profile,&QObject::destroyed,QCoreApplication::instance(),[state,pages,directory,cache,reply,id,req] {
+                    // Let Chromium's profile destruction unwind before touching its disk files.
+                    auto cleanup=new QTimer(QCoreApplication::instance());
+                    auto attempts=std::make_shared<int>(0);
+                    QObject::connect(cleanup,&QTimer::timeout,QCoreApplication::instance(),[state,pages,directory,cache,reply,id,req,cleanup,attempts] {
+                        state->cookies.clear();bool removed=true;
+                        if(!state->privateMode){removed=(!QDir(directory).exists() || QDir(directory).removeRecursively());removed=(!QDir(cache).exists() || QDir(cache).removeRecursively()) && removed; }
+                        if(!removed && ++*attempts < 50)return;
+                        cleanup->stop();cleanup->deleteLater();
+                        state->profile=makeProfile(state);
+                        for(const auto &info:pages)if(info.view){QPointer<QWebEnginePage> old=info.view->page();auto page=new DayWebPage(state->profile,info.view);page->id=info.id;page->pathPrefix=info.prefix;page->linkCb=info.link;page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);info.view->setPage(page);if(old)old->deleteLater();}
+                        if(removed)reply("true");else if(g_eval_cb)g_eval_cb(id,req,day_webview_eval_error("could not remove profile data").c_str());
+                    });
+                    cleanup->start(100);
+                });
+                profile->deleteLater();
+            };
+            // setPage schedules owned pages for deletion. Wait for the last one instead of
+            // deleting them twice or destroying their profile while a page still references it.
+            auto pending=std::make_shared<int>(oldPages.size());
+            for(auto old:oldPages)if(old)QObject::connect(old,&QObject::destroyed,QCoreApplication::instance(),[pending,finish] {if(--*pending==0)finish();});
+            auto temporary=new QWebEngineProfile(QCoreApplication::instance());
+            auto temporaryPages=std::make_shared<int>(pages.size());
+            for(const auto &info:pages)if(info.view) {
+                auto page=new QWebEnginePage(temporary,info.view);
+                QObject::connect(page,&QObject::destroyed,QCoreApplication::instance(),[temporary,temporaryPages] {if(--*temporaryPages==0)temporary->deleteLater();});
+                info.view->setPage(page);
+            }
+            for(auto old:oldPages)if(old)old->deleteLater();
+            if(oldPages.isEmpty())finish();
+            return;
+        }
+        if(g_eval_cb)g_eval_cb(id,req,day_webview_eval_error("unknown storage operation").c_str());return;
+    }
     // The main world (the default), matching WKWebView's `evaluateJavaScript`, so a script sees the
     // page's own globals on every backend alike.
     //
@@ -271,11 +395,12 @@ void day_webview_load(void *w, const char *url) {
 }
 void day_webview_back(void *w) {
     if (QWebEngineView *v = static_cast<DayWebView *>(w)->view)
-        v->back();
+        // Use history directly: the view action can remain disabled after local navigation.
+        v->history()->back();
 }
 void day_webview_forward(void *w) {
     if (QWebEngineView *v = static_cast<DayWebView *>(w)->view)
-        v->forward();
+        v->history()->forward();
 }
 void day_webview_stop(void *w) {
     if (QWebEngineView *v = static_cast<DayWebView *>(w)->view)
@@ -314,9 +439,10 @@ public:
 extern "C" {
 
 void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const char *),
-                      uint64_t session, const char *inline_path_prefix,
+                      uint64_t session, const char *profile_key, const char *profile_directory, bool private_mode, const char *inline_path_prefix,
                       void (*link_cb)(uint64_t, const char *)) {
     (void)cb;                 // no navigation to report without a real engine
+    (void)profile_key; (void)profile_directory; (void)private_mode;
     (void)session;            // nothing to retain either
     (void)inline_path_prefix; // and no engine to police; the label shows the qrc URL
     (void)link_cb;

@@ -20,6 +20,9 @@ unsafe extern "C" {
         id: u64,
         cb: extern "C" fn(u64, *const c_char),
         session: u64,
+        profile: *const c_char,
+        directory: *const c_char,
+        private: bool,
         inline_path_prefix: *const c_char,
         link_cb: extern "C" fn(u64, *const c_char),
     ) -> *mut c_void;
@@ -111,6 +114,9 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
             id.0,
             on_url,
             p.session,
+            cstr(&p.profile.storage_key()).as_ptr(),
+            cstr(p.profile.directory.as_deref().unwrap_or("")).as_ptr(),
+            p.profile.private,
             cstr(&path_prefix).as_ptr(),
             on_link,
         )

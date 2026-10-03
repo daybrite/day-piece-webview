@@ -55,6 +55,8 @@ backends = ["appkit", "gtk", "qt", "uikit", "mdc", "xaml", "winui", "arkui", "do
 assets = ["web"]
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+psl = "2.1"
 day-async = { git = "https://github.com/daybrite/day.git" }
 url = "2"
 percent-encoding = "2"
@@ -99,7 +101,7 @@ day-mock = { git = "https://github.com/daybrite/day.git" }
 java = ["src/DayWebView.java"]
 # Gradle dependency coordinates added to the app module. android.webkit.WebView is a framework
 # widget, so no extra dependency is required.
-gradle-dependencies = []
+gradle-dependencies = ["androidx.webkit:webkit:1.14.0"]
 # Extra Maven repositories (URLs) for dependencies not on google()/mavenCentral().
 gradle-repositories = []
 # Android manifest <uses-permission>s the piece needs, merged into the app manifest by `day build`

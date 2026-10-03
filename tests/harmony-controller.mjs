@@ -11,8 +11,13 @@ import { test } from 'node:test';
 // the actual Web component is compile-checked by hvigor and exercised in HarmonyOS CI.
 const source = readFileSync(new URL('../platform/harmony/ets/Controller.ets', import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+const cookieCalls = [];
+const webview = { WebCookieManager: {
+  fetchCookieSync: (url, privateMode) => { cookieCalls.push(['read', url, privateMode]); return 'session=fixture'; },
+  configCookieSync: (url, cookie, privateMode, httpOnly) => cookieCalls.push(['write', url, cookie, privateMode, httpOnly]),
+} };
 const { Controller, evalPayload } = runInNewContext(
-  `${stripTypeScriptTypes(source)}\n({ Controller, evalPayload })`, { console },
+  `${stripTypeScriptTypes(source)}\n({ Controller, evalPayload })`, { console, webview },
 );
 
 function setup(runJavaScript = () => Promise.resolve('1\x1fvalue')) {
@@ -20,6 +25,8 @@ function setup(runJavaScript = () => Promise.resolve('1\x1fvalue')) {
   const replies = [];
   const controller = new Controller({
     runJavaScript,
+    getUrl: () => "https://fixture.example/second",
+    getTitle: () => "Fixture page",
     loadUrl: url => commands.push(['load', url]),
     refresh: () => commands.push(['reload']),
     stop: () => commands.push(['stop']),
@@ -114,4 +121,37 @@ test('renderer exit settles every pending evaluation and rejects later evaluatio
   for (const resolve of resolvers) resolve('1\x1flate');
   await drain();
   assert.deepEqual(s.replies, [6, 7, 8].map(id => [id, '0\x1fArkWeb\x1frenderer exited']));
+});
+
+
+test('native cookie operations use the correct persistent or incognito jar', () => {
+  for (const privateMode of [false, true]) {
+    cookieCalls.length = 0;
+    const s = setup(); s.controller.setPrivate(privateMode); s.controller.attach();
+    s.controller.evaluate(21, 'day-web-data:' + JSON.stringify({operation:'cookies',url:'https://fixture.example/'}));
+    s.controller.evaluate(22, 'day-web-data:' + JSON.stringify({operation:'set-cookie',url:'https://fixture.example/',cookie:'session=fixture; HttpOnly'}));
+    assert.deepEqual(cookieCalls, [
+      ['read','https://fixture.example/',privateMode],
+      ['write','https://fixture.example/','session=fixture; HttpOnly',privateMode,true],
+    ]);
+    assert.deepEqual(s.replies, [[21,'1\x1f"session=fixture"'],[22,'1\x1ftrue']]);
+  }
+});
+
+test('unsupported complete profile clearing never clears unrelated sites', () => {
+  cookieCalls.length = 0;
+  const s = setup(); s.controller.attach();
+  s.controller.evaluate(23, 'day-web-data:' + JSON.stringify({operation:'clear'}));
+  assert.equal(cookieCalls.length, 0);
+  assert.match(s.replies[0][1], /Complete profile clearing is unsupported/);
+});
+
+
+test('navigation snapshots expose actual controller history and loading state', () => {
+  const s=setup();s.controller.attach();s.controller.setLoading(true);
+  s.controller.evaluate(24,'day-web-data:'+JSON.stringify({operation:'navigation'}));
+  const state=JSON.parse(s.replies[0][1].substring(2));
+  assert.deepEqual(state,{url:'https://fixture.example/second',title:'Fixture page',can_go_back:false,can_go_forward:true,loading:true});
+  s.controller.setLoading(false);s.controller.evaluate(25,'day-web-data:'+JSON.stringify({operation:'navigation'}));
+  assert.equal(JSON.parse(s.replies[1][1].substring(2)).loading,false);
 });

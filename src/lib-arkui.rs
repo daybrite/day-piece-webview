@@ -42,6 +42,7 @@ fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
     } else {
         props
     };
+    let props = if p.profile.private { format!("day-private{}{props}", super::SEP) } else { props };
     piece::make(KIND, id, &props)
 }
 

@@ -1,27 +1,12 @@
-/*
- * Copyright © The Daybrite Project
- * SPDX-License-Identifier: MPL-2.0
- */
-
-/* The demo's bundled site. dayscript/webview.yaml reads `--site-loaded` to confirm this file
-   loaded through its relative link. */
-:root {
-  --site-loaded: yes;
-  color-scheme: light dark;
-}
-
-body {
-  margin: 0;
-  padding: 16px 20px;
-  font: 16px/1.5 -apple-system, system-ui, sans-serif;
-}
-
-h1 {
-  margin: 0 0 8px;
-  font-size: 24px;
-  color: #2563eb;
-}
-
-code {
-  font-size: 14px;
-}
+/* Copyright © The Daybrite Project; SPDX-License-Identifier: MPL-2.0 */
+:root { --site-loaded: yes; color-scheme: light dark; font: 16px/1.6 system-ui,sans-serif; color: #172139; background:#eef3fb; }
+body { margin:0; min-height:100vh; background:radial-gradient(ellipse at 15% 0%,#d6e3ff,transparent 70%); }
+main { max-width:720px; margin:0 auto; padding:clamp(24px,6vw,72px); }
+.orb { display:grid;place-items:center;width:64px;height:64px;border-radius:20px;background:linear-gradient(145deg,#5685f8,#6654d9);color:white;font-size:38px;box-shadow:0 12px 36px #4663bb30; }
+h1 { font-size:clamp(28px,4vw,44px);line-height:1.15;letter-spacing:-.04em;max-width:600px;margin-top:28px; }
+p { max-width:620px;opacity:.8; }
+.cards { display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:32px 0; }
+a { display:block; padding:20px; border:1px solid #aab9d34d;border-radius:16px;background:#ffffffa0;color:#315dc9;text-decoration:none;font-weight:600;transition:background .15s,transform .15s; }
+a:hover { background:#fff;transform:translateY(-2px); } a:focus-visible { outline:3px solid #5486f4;outline-offset:3px; }
+.status { font-size:12px;opacity:.55; }
+@media (prefers-color-scheme:dark) { :root { color:#e5eaf9;background:#151a26; } body { background:radial-gradient(ellipse at 15% 0%,#26345a,transparent 70%); } a { color:#93b9ff;background:#243048b0;border-color:#6680b04d; } a:hover { background:#2c3b56; } }

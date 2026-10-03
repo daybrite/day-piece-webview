@@ -2,7 +2,7 @@
 # day-piece-webview
 
 Embed web content in a [Day](https://daybrite.dev) app. The piece uses the platform's browser
-engine and provides one Rust API for navigation, JavaScript evaluation, bundled websites, and
+engine and provides one Rust API for navigation, shared browser profiles, private browsing, JavaScript evaluation, bundled websites, and
 application-provided resources.
 
 ## Install
@@ -49,6 +49,7 @@ runs on the app's browser thread.
 
 ## Guides
 
+- [Profiles and privacy](docs/profiles.md): shared logins, custom storage roots, private browsing, and data deletion.
 - [Integration](docs/webview.md): layout, navigation controls, bundled sites, link handling,
   transparency, and retained sessions.
 - [Resource providers](docs/resource-provider.md): reports, on-demand archive loading, bundled
@@ -90,8 +91,12 @@ day launch -p macos-appkit --script dayscript/webview.yaml
 ```
 
 Choose another target with `-p`, for example `ios-uikit`, `android-mdc`, or `web-dom`.
-The [demo source](demo/src/lib.rs) includes a JavaScript console, bundled-site navigation, and
-a resource tree with CSS imports, an image, and a nested document.
+The [demo browser](demo/src/lib.rs) has an editable URL bar, Back/Forward, Reload/Stop,
+Home, an external-browser button, and private browsing settings. The Code button opens
+a testing drawer with a JavaScript console, support information and a resource-provider demo.
+Native history availability, titles and loading state come from `JsHandle::navigation_state()`;
+`url_binding` attaches an address signal to inline and provider views. Iframe hosts cannot
+inspect cross-origin navigation, so unavailable history and Stop controls remain disabled.
 
 [Demo website](https://daybrite.github.io/day-piece-webview/) ·
 [Browser app](https://daybrite.github.io/day-piece-webview/webapp/) ·

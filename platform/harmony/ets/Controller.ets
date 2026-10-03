@@ -24,6 +24,12 @@ export function evalPayload(result: string): string {
   return result;
 }
 
+class DataRequest {
+  operation: string = '';
+  url: string = '';
+  cookie: string = '';
+}
+
 class Command {
   name: string;
   arg: string;
@@ -37,6 +43,10 @@ class Command {
 export class Controller {
   private native: webview.WebviewController;
   private reply: (request: number, payload: string) => void;
+  private privateMode: boolean = false;
+  private loading: boolean = false;
+  setLoading(value: boolean): void { this.loading = value; }
+  setPrivate(value: boolean): void { this.privateMode = value; }
   private ready: boolean = false;
   private disposed: boolean = false;
   private failure: string = '';
@@ -98,6 +108,22 @@ export class Controller {
     }
     this.pending.add(request);
     try {
+      if (script.startsWith('day-web-data:')) {
+        const data: DataRequest = JSON.parse(script.substring(13)) as DataRequest;
+        if(data.operation === 'navigation') {
+          this.finish(request, '1\u001F' + JSON.stringify({url:this.native.getUrl(),title:this.native.getTitle(),can_go_back:this.native.accessBackward(),can_go_forward:this.native.accessForward(),loading:this.loading}));
+        } else if(data.operation === 'cookies') {
+          const cookies: string = webview.WebCookieManager.fetchCookieSync(data.url, this.privateMode);
+          this.finish(request, '1\u001F' + JSON.stringify(cookies));
+        } else if(data.operation === 'set-cookie') {
+          webview.WebCookieManager.configCookieSync(data.url, data.cookie, this.privateMode, true);
+          this.finish(request, '1\u001Ftrue');
+        } else {
+          // ArkWeb cannot delete one profile's complete site data. Never erase other sites.
+          this.finish(request, evalError('Complete profile clearing is unsupported by ArkWeb'));
+        }
+        return;
+      }
       this.native.runJavaScript(script).then((result: string) => {
         this.finish(request, evalPayload(result));
       }).catch((err: Error) => {

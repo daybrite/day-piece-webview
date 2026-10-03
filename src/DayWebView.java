@@ -23,6 +23,13 @@ import org.json.JSONTokener;
 import dev.daybrite.day.bridge.DayBridge;
 
 /** Wraps android.webkit.WebView, reporting the finished URL back via the open Custom-event kind (12). */
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+import androidx.webkit.WebStorageCompat;
+import android.webkit.CookieManager;
+import android.webkit.WebStorage;
+import org.json.JSONObject;
+
 public final class DayWebView {
     private DayWebView() {}
     private static android.webkit.WebResourceResponse response(String mime, int status, String headerLines, byte[] body) {
@@ -111,8 +118,21 @@ public final class DayWebView {
         }
     }
 
-    public static View makeWebView(long id, String url, String inlinePrefix, long provider) {
+    public static boolean supportsProfiles() {
+        return WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE);
+    }
+    public static boolean supportsDataClearing() {
+        return WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA);
+    }
+
+    public static View makeWebView(long id, String url, String inlinePrefix, long provider, String profile) {
         WebView web = new WebView(DayBridge.ctx);
+        if (profile != null && !profile.isEmpty()) {
+            if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                web.destroy(); throw new IllegalStateException("Named browser profiles require a newer Android System WebView");
+            }
+            WebViewCompat.setProfile(web, profile);
+        }
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         FullscreenClient chrome = new FullscreenClient(web);
@@ -177,6 +197,40 @@ public final class DayWebView {
             return;
         }
         final long nodeId = id;
+        if (script.startsWith("day-web-data:")) {
+            WebView web = (WebView)view;
+            try {
+                JSONObject request = new JSONObject(script.substring(13));
+                CookieManager cookies = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+                    ? WebViewCompat.getProfile(web).getCookieManager() : CookieManager.getInstance();
+                WebStorage storage = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+                    ? WebViewCompat.getProfile(web).getWebStorage() : WebStorage.getInstance();
+                String operation = request.optString("operation");
+                if (operation.equals("navigation")) {
+                    JSONObject state = new JSONObject();
+                    state.put("url", web.getUrl() == null ? "" : web.getUrl());
+                    state.put("title", web.getTitle() == null ? "" : web.getTitle());
+                    state.put("can_go_back", web.canGoBack()); state.put("can_go_forward", web.canGoForward());
+                    state.put("loading", web.getProgress() < 100);
+                    DayBridge.nativeOnEvent(nodeId,12,req,"1\u001F"+state.toString());
+                } else if (operation.equals("cookies")) {
+                    String header = cookies.getCookie(request.optString("url"));
+                    DayBridge.nativeOnEvent(nodeId,12,req,"1\u001F"+JSONObject.quote(header == null ? "" : header));
+                } else if (operation.equals("set-cookie")) {
+                    cookies.setCookie(request.optString("url"),request.optString("cookie"), ok -> {
+                        cookies.flush();
+                        DayBridge.nativeOnEvent(nodeId,12,req,ok ? "1\u001Ftrue" : evalError("cookie rejected"));
+                    });
+                } else if (operation.equals("clear")) {
+                    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
+                        DayBridge.nativeOnEvent(nodeId,12,req,evalError("Complete data clearing requires a newer Android System WebView"));
+                    } else {
+                        WebStorageCompat.deleteBrowsingData(storage, () -> DayBridge.nativeOnEvent(nodeId,12,req,"1\u001Ftrue"));
+                    }
+                } else { DayBridge.nativeOnEvent(nodeId,12,req,evalError("unknown storage operation")); }
+            } catch(Exception error) { DayBridge.nativeOnEvent(nodeId,12,req,evalError(error.getClass().getSimpleName())); }
+            return;
+        }
         ((WebView) view).evaluateJavascript(script, new ValueCallback<String>() {
             @Override
             public void onReceiveValue(String value) {

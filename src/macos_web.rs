@@ -189,6 +189,7 @@ pub(crate) fn make(
     // SAFETY: creates a WKWebView with a default configuration on the main thread.
     let config =
         super::resources_apple::configuration(p.resources.as_ref().map(ResourceProvider::id), mtm);
+    super::storage_apple::configure(&config, &p.profile);
     let web: Retained<WKWebView> = unsafe {
         msg_send![WKWebView::alloc(mtm), initWithFrame: objc2_foundation::NSRect::ZERO, configuration: &*config]
     };
@@ -266,6 +267,18 @@ pub(crate) fn make(
 /// returns a string), so anything else is WebKit itself failing, most often a dead content
 /// process, which reports as `JavaScriptResultTypeIsUnsupported` with no exception message.
 fn eval(web: &WKWebView, node: NodeId, req: u64, script: &str, emit: fn(NodeId, Event)) {
+    if super::storage_apple::request(web, script, move |text| {
+        emit(
+            node,
+            Event::Custom {
+                tag: "webview:eval",
+                num: req as f64,
+                text,
+            },
+        )
+    }) {
+        return;
+    }
     let js = NSString::from_str(script);
     let handler = RcBlock::new(move |result: *mut AnyObject, error: *mut NSError| {
         let payload = if !result.is_null() {

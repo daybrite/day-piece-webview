@@ -29,6 +29,12 @@
 // must be installed separately where the OS does not supply it (including CI runners).
 
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Data.Json.h>
+#include <sstream>
+#include <iomanip>
+#include <ctime>
+#include <cctype>
+#include <algorithm>
 #include <winrt/Windows.UI.h>             // Color (transparent, hit-testable Border background)
 #include <winrt/Windows.UI.Composition.h> // Compositor, ContainerVisual (the render target)
 #include <winrt/Windows.UI.Input.h>       // PointerPoint(Properties), PointerUpdateKind
@@ -130,6 +136,7 @@ static std::string to_utf8(winrt::hstring const &h) {
 // Per-web-view state. Keyed by the day handle (the boxed Border) so async callbacks and later
 // operations find it, and a callback that outlives teardown is a safe no-op (find returns null).
 struct WebViewCtx {
+    bool loading = false;
     HWND parent{}; // host window, the composition controller's parentWindow
     wrl::ComPtr<ICoreWebView2CompositionController> compositionController; // SendMouseInput, visual
     wrl::ComPtr<ICoreWebView2Controller> controller; // Bounds, IsVisible, focus, Close (same object)
@@ -158,6 +165,9 @@ struct WebViewCtx {
     // up, and the URL label under the render visual is blanked so it cannot show through.
     bool transparent{};
     uint64_t session{};
+    std::wstring profile_name;
+    std::wstring profile_directory;
+    bool private_mode{};
     void *engine_handle{}; // privately owned; callbacks never capture a released Day node handle
 };
 
@@ -642,6 +652,8 @@ static void on_engine_ready(void *handle, WebViewCtx *c2) {
             &winTok);
     }
     if (c2->webview) {
+        EventRegistrationToken startToken{};
+        c2->webview->add_NavigationStarting(wrl::Callback<ICoreWebView2NavigationStartingEventHandler>([handle](ICoreWebView2 *,ICoreWebView2NavigationStartingEventArgs *)->HRESULT {if(auto *ctx=find_ctx(handle))ctx->loading=true;return S_OK;}).Get(),&startToken);
         // Report the settled URL back so the app's URL bar follows navigation.
         EventRegistrationToken tok{};
         c2->webview->add_NavigationCompleted(
@@ -652,6 +664,7 @@ static void on_engine_ready(void *handle, WebViewCtx *c2) {
                     auto *c3n = find_ctx(handle);
                     if (!c3n)
                         return S_OK;
+                    c3n->loading=false;
                     LPWSTR src = nullptr;
                     if (SUCCEEDED(wv->get_Source(&src)) && src) {
                         std::string s = to_utf8(winrt::hstring{src});
@@ -756,7 +769,7 @@ static void create_webview2(void *handle) {
         WV2::CoreWebView2EnvironmentOptions options;
         options.AdditionalBrowserArguments(L"--disable-features=CalculateNativeWinOcclusion");
         auto env = WV2::CoreWebView2Environment::CreateWithOptionsAsync(
-            L"", winrt::hstring{user_data_folder()}, options);
+            L"", winrt::hstring{c->profile_directory.empty() ? user_data_folder() : c->profile_directory}, options);
         env.Completed([handle](auto const &op, WF::AsyncStatus status) {
             const HRESULT failed = status == WF::AsyncStatus::Completed ? S_OK : op.ErrorCode().value;
             WV2::CoreWebView2Environment environment{nullptr};
@@ -767,7 +780,10 @@ static void create_webview2(void *handle) {
                     startup_failed(handle, "environment creation", FAILED(failed) ? failed : E_POINTER);
                     return;
                 }
-                auto ensure = cc->control.EnsureCoreWebView2Async(environment);
+                auto controllerOptions = environment.CreateCoreWebView2ControllerOptions();
+                controllerOptions.ProfileName(winrt::hstring{cc->profile_name});
+                controllerOptions.IsInPrivateModeEnabled(cc->private_mode);
+                auto ensure = cc->control.EnsureCoreWebView2Async(environment, controllerOptions);
                 ensure.Completed([handle](auto const &op2, WF::AsyncStatus status2) {
                     const HRESULT failed2 =
                         status2 == WF::AsyncStatus::Completed ? S_OK : op2.ErrorCode().value;
@@ -805,7 +821,7 @@ static void create_webview2(void *handle) {
     auto *c = find_ctx(handle);
     if (!c)
         return;
-    std::wstring udf = user_data_folder();
+    std::wstring udf = c->profile_directory.empty() ? user_data_folder() : c->profile_directory;
     auto options = wrl::Make<CoreWebView2EnvironmentOptions>();
     if (options)
         options->put_AdditionalBrowserArguments(L"--disable-features=CalculateNativeWinOcclusion");
@@ -827,9 +843,7 @@ static void create_webview2(void *handle) {
                                    FAILED(queried) ? queried : E_NOINTERFACE);
                     return S_OK;
                 }
-                const HRESULT creating = env3->CreateCoreWebView2CompositionController(
-                    cc->parent,
-                    wrl::Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
+                auto completion = wrl::Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
                         [handle](HRESULT r2, ICoreWebView2CompositionController *comp) -> HRESULT {
                             auto *c2 = find_ctx(handle);
                             if (!c2)
@@ -877,7 +891,18 @@ static void create_webview2(void *handle) {
                             on_engine_ready(handle, c2);
                             return S_OK;
                         })
-                        .Get());
+                        ;
+                wrl::ComPtr<ICoreWebView2Environment10> env10;
+                HRESULT creating = env->QueryInterface(IID_PPV_ARGS(&env10));
+                if (SUCCEEDED(creating)) {
+                    wrl::ComPtr<ICoreWebView2ControllerOptions> controllerOptions;
+                    creating = env10->CreateCoreWebView2ControllerOptions(&controllerOptions);
+                    if (SUCCEEDED(creating)) {
+                        controllerOptions->put_ProfileName(cc->profile_name.c_str());
+                        controllerOptions->put_IsInPrivateModeEnabled(cc->private_mode);
+                        creating = env10->CreateCoreWebView2CompositionControllerWithOptions(cc->parent,controllerOptions.Get(),completion.Get());
+                    }
+                }
                 if (FAILED(creating))
                     startup_failed(handle, "controller request", creating);
                 return S_OK;
@@ -894,7 +919,7 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
                            const char *inline_root, const char *inline_start,
                            const char *inline_dir,
                            void (*link_cb)(uint64_t, const char *), bool transparent,
-                           uint64_t session) {
+                           uint64_t session, const char *profile_key, const char *profile_directory, bool private_mode) {
     if (session) {
         auto known = g_sessions.find(session);
         if (known != g_sessions.end()) {
@@ -962,6 +987,9 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
             sync_size(cc);
     });
 #endif
+    c->profile_name = hs(profile_key).c_str();
+    c->profile_directory = hs(profile_directory).c_str();
+    c->private_mode = private_mode;
     create_webview2(handle);
     void *mounted = day_xaml_box(winrt::get_abi(placeholder));
     g_webviews[mounted] = c;
@@ -1034,6 +1062,56 @@ void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
         return;
     }
     const uint64_t id = c->id;
+    if (std::string(script).rfind("day-web-data:",0)==0) {
+        namespace JSON = winrt::Windows::Data::Json;
+        try {
+            const auto request=JSON::JsonObject::Parse(hs(script+13));
+            const auto operation=to_utf8(request.GetNamedString(L"operation"));
+            wrl::ComPtr<ICoreWebView2_2> web2;
+            wrl::ComPtr<ICoreWebView2CookieManager> manager;
+            if(FAILED(c->webview.As(&web2)) || FAILED(web2->get_CookieManager(&manager))) {
+                eval_reply(id,req,eval_engine_error("StorageError","cookies unavailable"));return;
+            }
+            if(operation=="navigation") {
+                LPWSTR url=nullptr,title=nullptr;BOOL back=FALSE,forward=FALSE;
+                c->webview->get_Source(&url);c->webview->get_DocumentTitle(&title);c->webview->get_CanGoBack(&back);c->webview->get_CanGoForward(&forward);
+                JSON::JsonObject state;state.Insert(L"url",JSON::JsonValue::CreateStringValue(url?url:L""));state.Insert(L"title",JSON::JsonValue::CreateStringValue(title?title:L""));
+                state.Insert(L"can_go_back",JSON::JsonValue::CreateBooleanValue(back));state.Insert(L"can_go_forward",JSON::JsonValue::CreateBooleanValue(forward));state.Insert(L"loading",JSON::JsonValue::CreateBooleanValue(c->loading));
+                CoTaskMemFree(url);CoTaskMemFree(title);eval_reply(id,req,"1\x1f"+to_utf8(state.Stringify()));return;
+            }
+            if(operation=="cookies") {
+                const auto url=request.GetNamedString(L"url");
+                HRESULT hr=manager->GetCookies(url.c_str(),wrl::Callback<ICoreWebView2GetCookiesCompletedHandler>([id,req](HRESULT hr,ICoreWebView2CookieList *cookies)->HRESULT {
+                    if(FAILED(hr)||!cookies){eval_reply(id,req,eval_engine_error("StorageError","cookie read failed"));return S_OK;}
+                    UINT count=0;cookies->get_Count(&count);std::wstring header;
+                    for(UINT i=0;i<count;++i){wrl::ComPtr<ICoreWebView2Cookie> cookie;cookies->GetValueAtIndex(i,&cookie);LPWSTR name=nullptr,value=nullptr;cookie->get_Name(&name);cookie->get_Value(&value);if(i)header+=L"; ";if(name)header+=name;header+=L"=";if(value)header+=value;CoTaskMemFree(name);CoTaskMemFree(value);}
+                    const auto json=JSON::JsonValue::CreateStringValue(winrt::hstring{header}).Stringify();eval_reply(id,req,"1\x1f"+to_utf8(json));return S_OK;
+                }).Get());
+                if(FAILED(hr))eval_reply(id,req,eval_engine_error("StorageError","cookie read failed"));return;
+            }
+            if(operation=="clear") {
+                wrl::ComPtr<ICoreWebView2_13> web13;wrl::ComPtr<ICoreWebView2Profile> profile;wrl::ComPtr<ICoreWebView2Profile2> profile2;
+                if(FAILED(c->webview.As(&web13))||FAILED(web13->get_Profile(&profile))||FAILED(profile.As(&profile2))){eval_reply(id,req,eval_engine_error("StorageError","profile clearing unavailable"));return;}
+                const auto hr=profile2->ClearBrowsingDataAll(wrl::Callback<ICoreWebView2ClearBrowsingDataCompletedHandler>([id,req](HRESULT hr)->HRESULT {eval_reply(id,req,SUCCEEDED(hr)?"1\x1ftrue":eval_engine_error("StorageError","clear failed"));return S_OK;}).Get());
+                if(FAILED(hr))eval_reply(id,req,eval_engine_error("StorageError","clear failed"));return;
+            }
+            if(operation=="set-cookie") {
+                const auto url=winrt::Windows::Foundation::Uri(request.GetNamedString(L"url"));
+                auto raw=to_utf8(request.GetNamedString(L"cookie"));std::istringstream parts(raw);std::string part;std::getline(parts,part,';');auto equal=part.find('=');
+                if(equal==std::string::npos){eval_reply(id,req,eval_engine_error("StorageError","invalid cookie"));return;}
+                const auto sourcePath=to_utf8(url.Path());const auto slash=sourcePath.rfind('/');
+                std::string name=part.substr(0,equal),value=part.substr(equal+1),domain=to_utf8(url.Host()),path=slash!=std::string::npos && slash>0?sourcePath.substr(0,slash):"/";bool secure=false,httpOnly=false;double expiry=-1;
+                while(std::getline(parts,part,';')) {auto start=part.find_first_not_of(" ");if(start!=std::string::npos)part=part.substr(start);auto equal=part.find('=');auto key=part.substr(0,equal);for(auto &ch:key)ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));auto val=equal==std::string::npos?std::string():part.substr(equal+1);
+                    if(key=="domain")domain=val;else if(key=="path")path=val;else if(key=="secure")secure=true;else if(key=="httponly")httpOnly=true;else if(key=="max-age")expiry=std::max(0.0,static_cast<double>(std::time(nullptr))+std::stod(val));else if(key=="expires"&&expiry<0){std::tm time{};std::istringstream date(val);date>>std::get_time(&time,"%a, %d %b %Y %H:%M:%S GMT");if(!date.fail())expiry=static_cast<double>(_mkgmtime(&time));}
+                }
+                wrl::ComPtr<ICoreWebView2Cookie> cookie;HRESULT hr=manager->CreateCookie(hs(name.c_str()).c_str(),hs(value.c_str()).c_str(),hs(domain.c_str()).c_str(),hs(path.c_str()).c_str(),&cookie);
+                if(SUCCEEDED(hr)){cookie->put_IsSecure(secure);cookie->put_IsHttpOnly(httpOnly);if(expiry>=0)cookie->put_Expires(expiry);hr=manager->AddOrUpdateCookie(cookie.Get());}
+                eval_reply(id,req,SUCCEEDED(hr)?"1\x1ftrue":eval_engine_error("StorageError","cookie rejected"));return;
+            }
+            eval_reply(id,req,eval_engine_error("StorageError","unknown operation"));
+        } catch(...) {eval_reply(id,req,eval_engine_error("StorageError","invalid request"));}
+        return;
+    }
     const std::wstring js = hs(script).c_str();
 
     wrl::ComPtr<ICoreWebView2_21> wv21;

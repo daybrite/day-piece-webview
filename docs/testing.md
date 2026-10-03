@@ -37,7 +37,9 @@ execution; downstream Stanza reader tests cover those paths separately.
 
 ## End-to-end resource assertions
 
-[demo/dayscript/webview.yaml](../demo/dayscript/webview.yaml) runs 37 applicable steps per target.
+[demo/dayscript/webview.yaml](../demo/dayscript/webview.yaml) runs 55 applicable steps on native
+renderers and 47 on web-dom. The browser phase exercises native Back/Forward, address entry,
+invalid address handling, Home and the collapsible testing drawer.
 Its provider phase checks:
 
 1. A relative JavaScript resource sets a document marker.
@@ -174,3 +176,40 @@ work after each reload of a stable application resource URL. URI-change/start ev
 are too early and may not occur on a same-URL reload. Day-News's
 `dayscript/inline-reader.yaml` exercises automatic extraction across repeated resource
 reloads, and checks that manual inline extraction retains the same document.
+
+
+## Profile and privacy validation (2026-10-03)
+
+The shared storage API adds profile-identity, cookie-origin, cookie-path and secure-transport
+tests (22 Rust tests total). The ArkWeb controller harness checks that native cookie calls
+select the persistent or incognito jar and that unavailable complete clearing never calls
+global deletion (18 Node tests total). These are host tests, not ArkWeb execution.
+
+The demo `dayscript/privacy.yaml` passed 21/21 checks on macOS AppKit, demonstrating private
+localStorage isolation, restoration of persistent storage after switching back, and complete
+data clearing followed by a fresh browser view. The
+downstream Day-News synthetic login fixture passed 53/53 applicable checks on macOS AppKit,
+GTK and Qt: browser login saved an HttpOnly cookie, native reader extraction used it, article
+deselection and feed reselection opened dashboards, and forgetting cleared cookies,
+localStorage and IndexedDB. AppKit also verified private mode does not use the persistent
+login, and persistence across an application restart (15/15 restore checks).
+
+AppKit, macOS GTK and Qt Clippy checks passed; UIKit and configured DOM cross-checks passed.
+The Android demo APK built against the profile and deletion APIs. Windows adaptations were
+reviewed against WebView2/Wry APIs but were not built or executed on this Mac. Harmony's Rust
+component compiled, but hvigor's application build was blocked by the installed SDK's changed
+management mode. No Harmony emulator was run, and its Web component remains unverified here.
+Linux GTK's NetworkSession adapter was reviewed against the installed Rust bindings, including
+explicit SQLite cookie persistence, but needs a Linux native build/run.
+
+## Browser demo validation (2026-10-03)
+
+The conventional browser layout passed its walkthrough on macOS AppKit, macOS GTK and
+macOS Qt (55/55 each), and web-dom with the headless WebKit driver (47/47, native history
+checks skipped). The iOS simulator walkthrough (55/55) and AppKit privacy walkthrough also passed.
+Android built, but no connected device was available for runtime tests;
+Harmony's Rust, ArkTS and signed HAP build passed against the installed API 18 SDK without
+running an emulator. Windows and Linux adapters need their native CI runners.
+
+Back/Forward now use Qt's native history object directly rather than its view actions; the
+walkthrough reproduces the local-page navigation case where those actions remained disabled.

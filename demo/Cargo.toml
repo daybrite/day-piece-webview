@@ -28,6 +28,9 @@ name = "dayapp"
 crate-type = ["rlib"]
 
 [dependencies]
+futures-util = "0.3"
+url = "2"
+serde_json = "1"
 # The bare canonical URL, no ref: CI resolves a fresh lock against day's newest main (no lock is
 # committed). See ../Cargo.toml for why a ref would double the graph.
 day = { git = "https://github.com/daybrite/day.git" }

@@ -43,6 +43,7 @@ class DayWebViewParams {
   // background is transparent shows the app behind it.
   transparent: boolean = false;
   resources: boolean = false;
+  privateMode: boolean = false;
   controller: webview.WebviewController;
   state: Controller;
   constructor(controller: webview.WebviewController, state: Controller) {
@@ -61,7 +62,7 @@ function dayWebViewBuilder(params: DayWebViewParams) {
   // window and the Web would cover the page. Day owns layout and sets this node's position + size
   // through the ArkUI C API like every other leaf, which is what the piece's `fill_measure` asks
   // for on every other backend too.
-  Web({ src: params.resources ? 'about:blank' : params.url, controller: params.controller })
+  Web({ src: params.resources ? 'about:blank' : params.url, controller: params.controller, incognitoMode: params.privateMode })
     .backgroundColor(params.transparent ? Color.Transparent : Color.White)
     .javaScriptAccess(true)
     .domStorageAccess(true)
@@ -69,7 +70,9 @@ function dayWebViewBuilder(params: DayWebViewParams) {
       console.info(`day-piece-webview: controller attached for ${params.id}`);
       setTimeout(() => {params.state.attach();if(params.resources)nativeEntry.pieceEvent(params.id,'day-web-'+params.id,-3);}, 0);
     })
+    .onPageBegin(() => { params.state.setLoading(true); })
     .onPageEnd((event) => {
+      params.state.setLoading(false);
       if (event !== undefined && !params.state.isDisposed()) {
         console.info(`day-piece-webview: page loaded: ${event.url}`);
         nativeEntry.pieceEvent(params.id, event.url);
@@ -90,6 +93,7 @@ function dayWebViewBuilder(params: DayWebViewParams) {
       return true;
     })
     .onErrorReceive((event) => {
+      params.state.setLoading(false);
       if (event !== undefined) {
         console.error(`day-piece-webview: load failed: ${event.request.getRequestUrl()}: ` +
           `${event.error.getErrorCode()} ${event.error.getErrorInfo()}`);
@@ -132,6 +136,7 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
   const SEP: string = '\u001F';
   // A transparent view leads with its own marker (lib-arkui.rs), ahead of everything below.
   let rest: string = props;
+  if (rest.startsWith('day-private'+SEP)) {params.privateMode=true;state.setPrivate(true);rest=rest.substring(('day-private'+SEP).length);}
   if (rest.startsWith('day-resource'+SEP)) {params.resources=true;rest=rest.substring(('day-resource'+SEP).length);}
   if (rest.startsWith('day-transparent' + SEP)) {
     params.transparent = true;

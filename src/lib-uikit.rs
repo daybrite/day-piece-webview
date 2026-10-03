@@ -177,6 +177,7 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
     let mtm = MainThreadMarker::new().unwrap();
     let config =
         super::resources_apple::configuration(p.resources.as_ref().map(ResourceProvider::id), mtm);
+    super::storage_apple::configure(&config, &p.profile);
     let web: Retained<WKWebView> = unsafe {
         msg_send![WKWebView::alloc(mtm), initWithFrame: objc2_foundation::NSRect::ZERO, configuration: &*config]
     };
@@ -251,6 +252,7 @@ fn node_of(view: &Retained<UIView>) -> Option<NodeId> {
 /// Same contract as the AppKit arm (see its `eval`): the front-end's wrapper makes the result
 /// always a JS string, so the completion's `id` is an `NSString` and no JSON walk is needed.
 fn eval(web: &WKWebView, node: NodeId, req: u64, script: &str) {
+    if super::storage_apple::request(web, script, move |text| day_uikit::emit(node, Event::Custom { tag: "webview:eval", num: req as f64, text })) { return; }
     let js = NSString::from_str(script);
     let handler = RcBlock::new(move |result: *mut AnyObject, error: *mut NSError| {
         let payload = if !result.is_null() {

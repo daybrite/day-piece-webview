@@ -38,6 +38,7 @@ fn make(_: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             }
         }
     };
+    let profile = p.profile.clone();
     let state = live.clone();
     anchor.add_tick_callback(move |w, _| {
         let Some(root) = w.root().and_then(|r| r.dynamic_cast::<gtk4::Widget>().ok()) else {
@@ -56,6 +57,7 @@ fn make(_: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                     prefix.clone(),
                     id,
                     day_gtk::emit,
+                    profile.clone(),
                 ) {
                     Ok(host) => *state.borrow_mut() = Some(Rc::new(host)),
                     Err(e) => {

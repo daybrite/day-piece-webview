@@ -51,8 +51,17 @@ the reported URL. web-dom does not report iframe URL changes.
 | `.stop(trigger)` | Stop the current load |
 | `.reload(trigger)` | Reload; web-dom instead reloads the last URL supplied by the app |
 
-There is no public `can_go_back` or loading-progress signal. `support() == Native` indicates a
-compiled command implementation, not that history is nonempty or the engine started successfully.
+Bind a `JsHandle` with `.js(handle)` and await `handle.navigation_state()` to read a native
+`NavigationState` containing `url`, `title`, `can_go_back`, `can_go_forward` and `loading`.
+This reads engine state without running page JavaScript or making network requests. Use its
+history flags to enable Back/Forward and its loading flag for Stop and a loading indicator.
+The demo polls while mounted, with a bounded timeout and a mount-generation check to discard
+stale results; disposing the root aborts polling. Iframe hosts return `EvalError::Unsupported` because cross-origin history and
+page state are unavailable.
+
+For inline or resource-provider views, `.url_binding(address_signal)` exposes the reported URL
+to an address bar while preserving the constructor's initial page when the signal is empty.
+Editing that signal alone still does not navigate; notify `.go(trigger)` explicitly.
 
 The web view grows in both directions. A `column` containing controls followed by the web view
 lets it use the remaining height. Give an embedded preview a bounded frame; avoid putting an
@@ -211,3 +220,10 @@ Build a readiness convention for bundled pages and handle evaluation errors duri
 including a same-URL reload. Pair it with `JsHandle` to apply the latest UI state after loading;
 use a reactive watcher for subsequent changes to avoid reloading and losing reading position.
 Emulated iframe hosts do not report navigation and therefore do not invoke this callback.
+
+## Shared logins and private browsing
+
+Use `.profile(WebProfile::persistent(name))` on independent views to share browser storage, or
+`WebProfile::private(name)` for an isolated ephemeral store. A session retains a loaded page;
+a profile shares its data without retaining a page. See [profiles and privacy](profiles.md)
+for native cookie access, complete data deletion, capability checks and platform limits.

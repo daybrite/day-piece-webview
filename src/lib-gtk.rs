@@ -17,6 +17,7 @@ use webkit6::prelude::*;
 // Day assigns the automation ID to GtkWidget:name after make(), so that mutable
 // presentation property cannot carry the node ID used to route evaluation replies.
 day_core::tls_group! {
+    static NETWORKS: RefCell<HashMap<String, webkit6::NetworkSession>> = RefCell::new(HashMap::new());
     static NODE_IDS: RefCell<HashMap<usize, NodeId>> = RefCell::new(HashMap::new());
 }
 
@@ -123,7 +124,52 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             });
         });
     }
-    let wv = webkit6::WebView::builder().web_context(&context).build();
+    let network = NETWORKS.with(|networks| {
+        let key = p.profile.storage_key();
+        if let Some(network) = networks.borrow().get(&key) {
+            return network.clone();
+        }
+        let network = if p.profile.private {
+            webkit6::NetworkSession::new_ephemeral()
+        } else {
+            let root = p
+                .profile
+                .directory
+                .as_ref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    gtk4::glib::user_data_dir()
+                        .join(
+                            gtk4::glib::prgname()
+                                .unwrap_or_else(|| "day-app".into())
+                                .as_str(),
+                        )
+                        .join("day-web-profiles")
+                });
+            let root = root.join(&key);
+            let data = root.join("data");
+            if let Err(error) = std::fs::create_dir_all(&data) {
+                log::warn!("day-piece-webview: could not create profile storage: {error}");
+            }
+            let session = webkit6::NetworkSession::new(
+                Some(&data.to_string_lossy()),
+                Some(&root.join("cache").to_string_lossy()),
+            );
+            if let Some(cookies) = session.cookie_manager() {
+                cookies.set_persistent_storage(
+                    &data.join("cookies.sqlite").to_string_lossy(),
+                    webkit6::CookiePersistentStorage::Sqlite,
+                );
+            }
+            session
+        };
+        networks.borrow_mut().insert(key, network.clone());
+        network
+    });
+    let wv = webkit6::WebView::builder()
+        .web_context(&context)
+        .network_session(&network)
+        .build();
     if p.transparent {
         // WebKitGTK composites the page over this color; a zero alpha is its documented way to
         // draw no background of its own.
@@ -267,6 +313,88 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
             else {
                 return;
             };
+            if let Some(request) = script.strip_prefix(DATA_REQUEST) {
+                let request =
+                    serde_json::from_str::<serde_json::Value>(request).unwrap_or_default();
+                let id = NODE_IDS.with(|ids| ids.borrow().get(&(wv.as_ptr() as usize)).copied());
+                let req = *req;
+                let wv = wv.clone();
+                gtk4::glib::MainContext::default().spawn_local(async move {
+                    let result: Result<String, String> = async {
+                        if request["operation"].as_str() == Some("navigation") {
+                            return Ok(serde_json::json!({"url":wv.uri().map(|s|s.to_string()).unwrap_or_default(),"title":wv.title().map(|s|s.to_string()).unwrap_or_default(),"can_go_back":wv.can_go_back(),"can_go_forward":wv.can_go_forward(),"loading":wv.is_loading()}).to_string());
+                        }
+                        let network = wv.network_session().ok_or("profile unavailable")?;
+                        let jar = network.cookie_manager().ok_or("cookies unavailable")?;
+                        match request["operation"].as_str().unwrap_or_default() {
+                            "cookies" => {
+                                let url = request["url"].as_str().unwrap_or_default();
+                                let mut cookies =
+                                    jar.cookies_future(url).await.map_err(|e| e.to_string())?;
+                                let header = cookies
+                                    .iter_mut()
+                                    .map(|c| {
+                                        format!(
+                                            "{}={}",
+                                            c.name().unwrap_or_default(),
+                                            c.value().unwrap_or_default()
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("; ");
+                                Ok(serde_json::to_string(&header).unwrap())
+                            }
+                            "set-cookie" => {
+                                let uri = gtk4::glib::Uri::parse(
+                                    request["url"].as_str().unwrap_or_default(),
+                                    gtk4::glib::UriFlags::NONE,
+                                )
+                                .map_err(|e| e.to_string())?;
+                                let cookie = webkit6::soup::Cookie::parse(
+                                    request["cookie"].as_str().unwrap_or_default(),
+                                    Some(&uri),
+                                )
+                                .ok_or("invalid cookie")?;
+                                jar.add_cookie_future(&cookie)
+                                    .await
+                                    .map_err(|e| e.to_string())?;
+                                Ok("true".into())
+                            }
+                            "clear" => {
+                                let manager = network
+                                    .website_data_manager()
+                                    .ok_or("storage unavailable")?;
+                                let (tx, rx) = day_async::oneshot();
+                                manager.clear(
+                                    webkit6::WebsiteDataTypes::all(),
+                                    gtk4::glib::TimeSpan::from_microseconds(0),
+                                    None::<&gtk4::gio::Cancellable>,
+                                    move |r| tx.send(r.map_err(|e| e.to_string())),
+                                );
+                                rx.await.map_err(|_| "clear cancelled")??;
+                                Ok("true".into())
+                            }
+                            _ => Err("unknown storage operation".into()),
+                        }
+                    }
+                    .await;
+                    if let Some(id) = id {
+                        let text = match result {
+                            Ok(json) => format!("1{SEP}{json}"),
+                            Err(error) => engine_error("StorageError", &error),
+                        };
+                        day_gtk::emit(
+                            id,
+                            Event::Custom {
+                                tag: "webview:eval",
+                                num: req as f64,
+                                text,
+                            },
+                        );
+                    }
+                });
+                return;
+            }
             let req = *req;
             wv.evaluate_javascript(
                 script,

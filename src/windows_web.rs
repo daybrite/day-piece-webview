@@ -21,6 +21,8 @@ pub(crate) struct Host {
     pub view: wry::WebView,
     id: NodeId,
     emit: fn(NodeId, Event),
+    loading: Rc<Cell<bool>>,
+    title: Rc<RefCell<String>>,
 }
 impl Host {
     pub fn new(
@@ -29,13 +31,37 @@ impl Host {
         prefix: String,
         id: NodeId,
         emit: fn(NodeId, Event),
+        profile: WebProfile,
     ) -> Result<Self, String> {
+        let loading = Rc::new(Cell::new(false));
+        let title = Rc::new(RefCell::new(String::new()));
+        let load_state = loading.clone();
+        let title_state = title.clone();
         let parent = Parent(NonZeroIsize::new(hwnd).ok_or("No native window")?);
         let provider = prefix
             .strip_prefix("http://day-resource.p")
             .and_then(|s| s.trim_end_matches('/').parse::<u64>().ok())
             .unwrap_or(0);
-        let mut builder = wry::WebViewBuilder::new();
+        let directory = profile
+            .directory
+            .as_ref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("LOCALAPPDATA")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(std::env::temp_dir)
+                    .join(
+                        std::env::current_exe()
+                            .ok()
+                            .and_then(|p| p.file_stem().map(|s| s.to_os_string()))
+                            .unwrap_or_default(),
+                    )
+                    .join("day-web-profiles")
+            })
+            .join(profile.storage_key());
+        let mut context = wry::WebContext::new(Some(directory));
+        let mut builder =
+            wry::WebViewBuilder::new_with_web_context(&mut context).with_incognito(profile.private);
         if provider != 0 {
             builder = builder.with_asynchronous_custom_protocol(
                 "day-resource".into(),
@@ -88,14 +114,24 @@ impl Host {
                 }
                 allowed
             })
+            .with_document_title_changed_handler(move |title| {
+                *title_state.borrow_mut() = title;
+            })
             .with_on_page_load_handler(move |event, url| {
+                load_state.set(matches!(event, wry::PageLoadEvent::Started));
                 if matches!(event, wry::PageLoadEvent::Finished) {
                     emit(id, Event::custom("webview:url", url));
                 }
             })
             .build_as_child(&parent)
             .map_err(|e| e.to_string())?;
-        Ok(Self { view, id, emit })
+        Ok(Self {
+            view,
+            id,
+            emit,
+            loading,
+            title,
+        })
     }
     pub fn bounds(&self, x: f64, y: f64, w: f64, h: f64) {
         let _ = self.view.set_bounds(wry::Rect {
@@ -122,6 +158,78 @@ impl Host {
             }
             WebPatch::Eval { req, script } => {
                 let (id, emit, req) = (self.id, self.emit, *req);
+                if let Some(request) = script.strip_prefix(DATA_REQUEST) {
+                    let request =
+                        serde_json::from_str::<serde_json::Value>(request).unwrap_or_default();
+                    let result: Result<String, String> = match request["operation"]
+                        .as_str()
+                        .unwrap_or_default()
+                    {
+                        "cookies" => self
+                            .view
+                            .cookies_for_url(request["url"].as_str().unwrap_or_default())
+                            .map(|cookies| {
+                                serde_json::to_string(
+                                    &cookies
+                                        .iter()
+                                        .map(|c| format!("{}={}", c.name(), c.value()))
+                                        .collect::<Vec<_>>()
+                                        .join("; "),
+                                )
+                                .unwrap()
+                            })
+                            .map_err(|e| e.to_string()),
+                        "navigation" => Ok(serde_json::json!({"url":self.view.url().unwrap_or_default(),"title":self.title.borrow().clone(),"can_go_back":self.view.can_go_back().unwrap_or(false),"can_go_forward":self.view.can_go_forward().unwrap_or(false),"loading":self.loading.get()}).to_string()),
+                        "clear" => self
+                            .view
+                            .clear_all_browsing_data()
+                            .map(|_| "true".into())
+                            .map_err(|e| e.to_string()),
+                        "set-cookie" => {
+                            let url = url::Url::parse(request["url"].as_str().unwrap_or_default());
+                            let cookie = wry::cookie::Cookie::parse(
+                                request["cookie"].as_str().unwrap_or_default().to_owned(),
+                            );
+                            match (url, cookie) {
+                                (Ok(url), Ok(mut cookie)) => {
+                                    if cookie.domain().is_none() {
+                                        cookie.set_domain(
+                                            url.host_str().unwrap_or_default().to_owned(),
+                                        );
+                                    }
+                                    if cookie.path().is_none() {
+                                        let path = url.path();
+                                        cookie.set_path(
+                                            path.rsplit_once('/')
+                                                .map(|(p, _)| if p.is_empty() { "/" } else { p })
+                                                .unwrap_or("/")
+                                                .to_owned(),
+                                        );
+                                    }
+                                    self.view
+                                        .set_cookie(&cookie)
+                                        .map(|_| "true".into())
+                                        .map_err(|e| e.to_string())
+                                }
+                                _ => Err("invalid cookie".into()),
+                            }
+                        }
+                        _ => Err("unknown storage operation".into()),
+                    };
+                    let text = match result {
+                        Ok(json) => format!("1{SEP}{json}"),
+                        Err(error) => engine_error("StorageError", &error),
+                    };
+                    emit(
+                        id,
+                        Event::Custom {
+                            tag: "webview:eval",
+                            num: req as f64,
+                            text,
+                        },
+                    );
+                    return;
+                }
                 let result = self
                     .view
                     .evaluate_script_with_callback(script, move |json| {
@@ -170,6 +278,9 @@ mod qt_bridge {
         id: u64,
         url: *const c_char,
         prefix: *const c_char,
+        profile: *const c_char,
+        directory: *const c_char,
+        private: bool,
     ) -> bool {
         match Host::new(
             hwnd,
@@ -177,6 +288,11 @@ mod qt_bridge {
             unsafe { string(prefix) },
             NodeId(id),
             day_qt::emit,
+            WebProfile {
+                name: unsafe { string(profile) },
+                directory: Some(unsafe { string(directory) }).filter(|s| !s.is_empty()),
+                private,
+            },
         ) {
             Ok(h) => {
                 HOSTS.with(|m| m.borrow_mut().insert(id, Rc::new(h)));

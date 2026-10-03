@@ -19,7 +19,15 @@ use day_spec::NodeId;
 /// This piece's Java class (src/DayWebView.java, on the app classpath at build).
 const WEBVIEW_CLASS: &str = "dev/daybrite/day/piece/webview/DayWebView";
 
+pub(crate) fn capability(method: &str) -> day_spec::Support {
+    let supported = with_env(|env| env.dcall_static(WEBVIEW_CLASS, method, "()Z", &[]).ok().and_then(|value| value.z().ok()).unwrap_or(false));
+    if supported { day_spec::Support::Native } else { day_spec::Support::Unsupported }
+}
+
 fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
+    if p.profile.private {
+        return with_env(|env| AHandle(day_android::placeholder_view(env, "web_view")));
+    }
     // Inline mode (docs/webview.md): the assets tree is the APK `assets/` root, and WebView
     // browses it through `file:///android_asset/` (exempt from the API-30 file-access
     // default). The URL is composed here; the Java side polices navigations against the
@@ -44,11 +52,12 @@ fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
         let made =
             env.new_string(&url).ok().and_then(|url| {
                 let prefix = env.new_string(&prefix).ok()?;
+                let profile = env.new_string(if p.profile == WebProfile::default() { String::new() } else { p.profile.storage_key() }).ok()?;
                 day_android::try_make_view_on(
                     env,
                     WEBVIEW_CLASS,
                     "makeWebView",
-                    "(JLjava/lang/String;Ljava/lang/String;J)Landroid/view/View;",
+                    "(JLjava/lang/String;Ljava/lang/String;JLjava/lang/String;)Landroid/view/View;",
                     &[
                         JValue::Long(id.0 as i64),
                         JValue::Object(&url),
@@ -56,6 +65,7 @@ fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
                         JValue::Long(
                             p.resources.as_ref().map(ResourceProvider::id).unwrap_or(0) as i64
                         ),
+                        JValue::Object(&profile),
                     ],
                 )
                 .ok()

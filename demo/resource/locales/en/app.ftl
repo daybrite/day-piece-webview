@@ -21,3 +21,34 @@ site_unsupported = This build has no web engine to show the site in.
 
 resource_demo = Resource provider
 resource_caption = This page, its styles, script, image, and nested frame are served on demand by the application.
+
+browser_settings = Browser Settings
+incognito_mode = Incognito Mode
+support_private = Private browsing
+support_profiles = Shared profiles
+private_hint = Private views use memory-only storage. Platforms without private browsing block the view instead of saving data.
+forget_data = Forget Browser Data
+data_cleared = Browser data forgotten.
+data_clear_failed = Browser data could not be cleared.
+settings_done = Done
+
+back = Back
+forward = Forward
+stop = Stop loading
+home = Home
+go = Go
+open_external = Open in default browser
+test_tools = Show or hide testing tools
+private_badge = Private
+address_hint = Enter a website address
+address_invalid = Enter an HTTP or HTTPS website address.
+js_failed = JavaScript could not be evaluated in this page.
+home_title = Bundled site
+home_heading = Browse with your platform’s WebView
+home_intro = Enter a website address above, or explore these offline examples. Browser Settings lets you try private browsing and shared storage.
+home_loaded = The bundled script ran.
+home_app_link = Send a link to the application
+home_web_link = Browse daybrite.dev
+home_next = Open a second local page
+second_title = A second local page
+second_text = Use Back and Forward to explore native browser history. Reload starts a fresh document.

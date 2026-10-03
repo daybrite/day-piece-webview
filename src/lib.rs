@@ -63,9 +63,178 @@ fn external_document_link(
 
 pub const KIND: &str = "day.piece.webview";
 
+/// Storage shared by independent views. A private profile never shares persistent data.
+/// Configure before creating views. Directory is honored where the engine exposes a public
+/// storage-path API; Apple uses an identifier-backed, system-managed location instead.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WebProfile {
+    pub name: String,
+    pub directory: Option<String>,
+    pub private: bool,
+}
+impl WebProfile {
+    pub fn persistent(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            ..Self::default()
+        }
+    }
+    pub fn private(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            private: true,
+            directory: None,
+        }
+    }
+    pub fn directory(mut self, path: impl Into<String>) -> Self {
+        self.directory = Some(path.into());
+        self
+    }
+    /// Stable, filesystem-safe identity. Includes privacy mode and requested directory.
+    pub fn storage_key(&self) -> String {
+        let text = format!("{}:{:?}:{}", self.name, self.directory, self.private);
+        let hash = text.bytes().fold(14695981039346656037u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(1099511628211)
+        });
+        format!("day-{hash:016x}")
+    }
+}
+/// Whether an engine can guarantee an ephemeral, isolated data store. Unsupported private
+/// requests are blocked before loading anything; deleting data afterward is not private mode.
+pub fn private_browsing_support() -> day_spec::Support {
+    if cfg!(any(
+        all(feature = "mdc", target_os = "android"),
+        all(feature = "dom", target_arch = "wasm32")
+    )) {
+        day_spec::Support::Unsupported
+    } else {
+        support()
+    }
+}
+/// Native cookie URL filtering, shared by engines that expose a whole cookie jar.
+#[allow(dead_code)]
+pub(crate) fn cookie_matches(url: &str, domain: &str, path: &str, secure: bool) -> bool {
+    let Ok(url) = url::Url::parse(url) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") || (secure && url.scheme() != "https") {
+        return false;
+    }
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let domain = domain.to_ascii_lowercase();
+    let bare = domain.trim_start_matches('.');
+    let domain_match =
+        host == bare || (domain.starts_with('.') && host.ends_with(&format!(".{bare}")));
+    let path = if path.is_empty() { "/" } else { path };
+    domain_match
+        && (url.path() == path
+            || (url.path().starts_with(path)
+                && (path.ends_with('/') || url.path().as_bytes().get(path.len()) == Some(&b'/'))))
+}
+/// Validate the response origin before native APIs (some accept arbitrary cookie domains).
+fn cookie_source_valid(source: &str, header: &str) -> bool {
+    if header.contains(['\r', '\n']) {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(source) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let mut fields = header.split(';');
+    let Some((name, _)) = fields.next().and_then(|field| field.trim().split_once('=')) else {
+        return false;
+    };
+    let mut secure = false;
+    let mut domain_set = false;
+    let mut root_path = false;
+    for field in fields {
+        let (key, value) = field.trim().split_once('=').unwrap_or((field.trim(), ""));
+        if key.eq_ignore_ascii_case("domain") {
+            domain_set = true;
+            let domain = value.trim().trim_start_matches('.').to_ascii_lowercase();
+            if psl::suffix(domain.as_bytes())
+                .is_some_and(|suffix| suffix.is_known() && suffix.as_bytes() == domain.as_bytes())
+            {
+                return false;
+            }
+            if domain.is_empty()
+                || !(host == domain
+                    || (url::Host::parse(&host).is_ok_and(|h| matches!(h, url::Host::Domain(_)))
+                        && host.ends_with(&format!(".{domain}"))))
+            {
+                return false;
+            }
+        } else if key.eq_ignore_ascii_case("secure") {
+            secure = true;
+        } else if key.eq_ignore_ascii_case("path") {
+            root_path = value.trim() == "/";
+        }
+    }
+    if secure && url.scheme() != "https" {
+        return false;
+    }
+    if name.starts_with("__Secure-") && !secure {
+        return false;
+    }
+    if name.starts_with("__Host-") && (!secure || domain_set || !root_path) {
+        return false;
+    }
+    true
+}
+#[cfg(any(
+    all(any(feature = "appkit", feature = "gtk"), target_os = "macos"),
+    all(feature = "uikit", target_os = "ios")
+))]
+mod storage_apple;
+/// Named profile isolation. ArkWeb exposes app-wide stores only; its default and private
+/// contexts share data by origin, but do not implement independent named profiles.
+pub fn profile_support() -> day_spec::Support {
+    #[cfg(all(feature = "mdc", target_os = "android"))]
+    let result = android_impl::capability("supportsProfiles");
+    #[cfg(not(all(feature = "mdc", target_os = "android")))]
+    let result = {
+        #[cfg(any(
+            all(any(feature = "appkit", feature = "gtk"), target_os = "macos"),
+            all(feature = "uikit", target_os = "ios")
+        ))]
+        if !storage_apple::named_profiles_available() {
+            return day_spec::Support::Emulated;
+        }
+        if cfg!(all(feature = "arkui", target_env = "ohos")) {
+            day_spec::Support::Emulated
+        } else if cfg!(all(feature = "dom", target_arch = "wasm32")) {
+            day_spec::Support::Unsupported
+        } else {
+            support()
+        }
+    };
+    result
+}
+/// Complete deletion of a profile's cookie, cache and persistent site data.
+pub fn clear_data_support() -> day_spec::Support {
+    #[cfg(all(feature = "mdc", target_os = "android"))]
+    let result = android_impl::capability("supportsDataClearing");
+    #[cfg(not(all(feature = "mdc", target_os = "android")))]
+    let result = if cfg!(any(
+        all(feature = "arkui", target_env = "ohos"),
+        all(feature = "dom", target_arch = "wasm32")
+    )) {
+        day_spec::Support::Unsupported
+    } else {
+        support()
+    };
+    result
+}
+
+const DATA_REQUEST: &str = "day-web-data:";
+
 /// Full props (realize). The initial `url` is loaded when the native view is created.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WebProps {
+    pub profile: WebProfile,
     pub resources: Option<ResourceProvider>,
     /// On Apple backends, report user-activated links in ordinary documents as well.
     pub external_links: bool,
@@ -478,6 +647,7 @@ struct EvalShared {
 
 day_core::tls_group! {
     /// Request ids start at 1 so 0 stays free for the URL report, which shares this channel.
+    static PRIVATE_BLOCKED_NODES: RefCell<std::collections::HashSet<RNode>> = RefCell::new(std::collections::HashSet::new());
     static NEXT_REQ: Cell<u64> = const { Cell::new(1) };
     static PENDING: RefCell<HashMap<u64, Rc<EvalShared>>> = RefCell::new(HashMap::new());
     /// Callback-shaped requests (the dayscript `web_eval` step, via day-core's
@@ -515,7 +685,9 @@ fn register_script_eval() {
         KIND,
         "day.webview.eval",
         std::rc::Rc::new(|node, script, done| {
-            if eval_support() != day_spec::Support::Native {
+            if PRIVATE_BLOCKED_NODES.with(|nodes| nodes.borrow().contains(&node))
+                || eval_support() != day_spec::Support::Native
+            {
                 done(Err(EvalError::Unsupported.to_string()));
                 return;
             }
@@ -540,12 +712,24 @@ fn register_script_eval() {
     );
 }
 
+/// A native snapshot of the current browser page and session history.
+/// Query after navigation or periodically while visible; no script or network request runs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct NavigationState {
+    pub url: String,
+    pub title: String,
+    pub can_go_back: bool,
+    pub can_go_forward: bool,
+    pub loading: bool,
+}
+
 /// A handle for running JavaScript in a web view. `Copy`, like `Trigger`, so it can be captured by
 /// several closures. Bind it with [`WebView::js`]; evaluating before the view is realized fails
 /// with [`EvalError::ViewGone`].
 #[derive(Clone, Copy)]
 pub struct JsHandle {
     node: Signal<Option<RNode>>,
+    blocked: Signal<bool>,
 }
 
 impl Default for JsHandle {
@@ -559,7 +743,45 @@ impl JsHandle {
     pub fn new() -> Self {
         JsHandle {
             node: Signal::new(None),
+            blocked: Signal::new(false),
         }
+    }
+
+    fn data_request(&self, operation: &str, url: &str, cookie: &str) -> EvalFuture {
+        let mut future = self.eval("");
+        future.script = Some(format!(
+            "{DATA_REQUEST}{}",
+            serde_json::json!({"operation":operation,"url":url,"cookie":cookie})
+        ));
+        future
+    }
+    /// Read URL, title, loading status and actual native history availability.
+    /// Emulated iframe hosts return Unsupported rather than guessing browser history.
+    pub async fn navigation_state(&self) -> Result<NavigationState, EvalError> {
+        let reply = self.data_request("navigation", "", "").await?;
+        serde_json::from_str(&reply).map_err(|_| EvalError::Unsupported)
+    }
+    /// Read cookies (including HttpOnly) eligible for this URL from the bound view's profile.
+    /// Treat the returned header as a credential; never log it or send it to a different origin.
+    pub async fn cookie_header(&self, url: &str) -> Result<String, EvalError> {
+        if !url::Url::parse(url).is_ok_and(|url| matches!(url.scheme(), "http" | "https")) {
+            return Err(EvalError::Unsupported);
+        }
+        let reply = self.data_request("cookies", url, "").await?;
+        serde_json::from_str(&reply).map_err(|_| EvalError::Unsupported)
+    }
+    /// Store an HTTP Set-Cookie response in the browser's own jar.
+    pub fn set_cookie(&self, url: &str, cookie: &str) -> EvalFuture {
+        let future = self.data_request("set-cookie", url, cookie);
+        if !cookie_source_valid(url, cookie) {
+            *future.shared.result.borrow_mut() = Some(Err(EvalError::Unsupported));
+        }
+        future
+    }
+    /// Clear all browser data in this profile. Use a dedicated site profile to forget one site.
+    /// Await completion before reusing its cookies or allowing another request to that site.
+    pub fn clear_data(&self) -> EvalFuture {
+        self.data_request("clear", "", "")
     }
 
     /// Evaluate `script` and resolve with its result as JSON text.
@@ -574,6 +796,7 @@ impl JsHandle {
                 v
             }),
             node: self.node,
+            blocked: self.blocked,
             script: Some(wrap_script(script.as_ref())),
             shared: Rc::new(EvalShared {
                 result: RefCell::new(None),
@@ -586,6 +809,7 @@ impl JsHandle {
 
 /// The pending result of [`JsHandle::eval`].
 pub struct EvalFuture {
+    blocked: Signal<bool>,
     req: u64,
     node: Signal<Option<RNode>>,
     script: Option<String>,
@@ -599,6 +823,9 @@ impl Future for EvalFuture {
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         if let Some(result) = self.shared.result.borrow_mut().take() {
             return Poll::Ready(result);
+        }
+        if self.blocked.get_untracked() {
+            return Poll::Ready(Err(EvalError::Unsupported));
         }
         // Dispatch on first poll, not at construction, so an eval that is never awaited never runs.
         if !self.sent {
@@ -663,6 +890,7 @@ pub fn eval_support() -> day_spec::Support {
 type LinkDecider = Rc<dyn Fn(&str) -> LinkPolicy>;
 
 pub struct WebView {
+    profile: WebProfile,
     resources: Option<ResourceProvider>,
     url: Signal<String>,
     go: Option<Trigger>,
@@ -691,6 +919,7 @@ pub fn web_view(url: Signal<String>) -> WebView {
     // target a webview some constructor built, so registration here is always in time.
     register_script_eval();
     WebView {
+        profile: WebProfile::default(),
         url,
         go: None,
         back: None,
@@ -732,6 +961,20 @@ pub fn web_view_resources(provider: ResourceProvider, page: &str) -> WebView {
 }
 
 impl WebView {
+    /// Share cookies, local storage, cache and engine site data with other views using this profile.
+    pub fn profile(mut self, profile: WebProfile) -> Self {
+        self.profile = profile;
+        self
+    }
+    /// Bind the actual page URL, including native navigation reports, to application state.
+    /// Useful for an address bar on bundled/resource views. Notify `.go()` to load the value.
+    pub fn url_binding(mut self, url: Signal<String>) -> Self {
+        if url.get_untracked().is_empty() {
+            url.set(self.url.get_untracked());
+        }
+        self.url = url;
+        self
+    }
     /// Called on the UI thread after the backend reports a completed navigation. Useful for
     /// applying the latest presentation state through `JsHandle`, including same-URL reloads.
     /// Available on native backends that report navigation; not on emulated iframe hosts.
@@ -846,6 +1089,7 @@ pub fn support() -> day_spec::Support {
 impl Piece for WebView {
     fn build(self, cx: &mut BuildCx) -> RNode {
         let WebView {
+            profile,
             url,
             go,
             back,
@@ -862,8 +1106,16 @@ impl Piece for WebView {
             on_load,
             mut resources,
         } = self;
+        let session_id = session.map(WebSession::id).unwrap_or(0);
+        let session_id = if session_id == 0 || profile == WebProfile::default() {
+            session_id
+        } else {
+            profile.storage_key().bytes().fold(session_id, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(1099511628211)
+            })
+        };
         let mut initial_url = url.get_untracked();
-        if let (Some(session), Some(provider)) = (session, &resources) {
+        if let (Some(_session), Some(provider)) = (session, &resources) {
             // A retained engine still needs its original namespace while detached. Like the
             // retained page itself, the first provider wins until process shutdown.
             day_core::tls_group! {
@@ -871,7 +1123,7 @@ impl Piece for WebView {
             }
             let retained = SESSION_RESOURCES.with(|m| {
                 m.borrow_mut()
-                    .entry(session.id())
+                    .entry(session_id)
                     .or_insert_with(|| (provider.clone(), initial_url.clone()))
                     .clone()
             });
@@ -879,12 +1131,27 @@ impl Piece for WebView {
             initial_url = retained.1;
             url.set(initial_url.clone());
         }
+        let blocked_private =
+            profile.private && private_browsing_support() == day_spec::Support::Unsupported;
         let initial = WebProps {
-            resources: resources.clone(),
+            profile,
+            resources: if blocked_private {
+                None
+            } else {
+                resources.clone()
+            },
             external_links: on_link.is_some(),
-            url: initial_url,
-            session: session.map(WebSession::id).unwrap_or(0),
-            inline_root: inline.as_ref().map(|s| s.root.clone()).unwrap_or_default(),
+            url: if blocked_private {
+                "about:blank".into()
+            } else {
+                initial_url
+            },
+            session: session_id,
+            inline_root: if blocked_private {
+                String::new()
+            } else {
+                inline.as_ref().map(|s| s.root.clone()).unwrap_or_default()
+            },
             inline_start: if inline.is_some() {
                 inline_start
             } else {
@@ -904,7 +1171,22 @@ impl Piece for WebView {
             },
         );
 
+        if blocked_private {
+            PRIVATE_BLOCKED_NODES.with(|nodes| nodes.borrow_mut().insert(node));
+            day_reactive::Scope::current().on_cleanup(move || {
+                PRIVATE_BLOCKED_NODES.with(|nodes| nodes.borrow_mut().remove(&node));
+            });
+        }
         let send = move |patch: WebPatch| {
+            if blocked_private {
+                if let WebPatch::Eval { req, .. } = patch {
+                    resolve(
+                        req,
+                        &engine_error("Unsupported", "private browsing unavailable"),
+                    );
+                }
+                return;
+            }
             with_tree(|t| t.patch(node, Box::new(patch), false));
         };
 
@@ -931,6 +1213,7 @@ impl Piece for WebView {
 
         // Bind the eval handle to the realized node so `handle.eval(…)` knows where to send.
         if let Some(js) = js {
+            js.blocked.set(blocked_private);
             js.node.set(Some(node));
         }
 
@@ -1022,6 +1305,8 @@ mod gtk_impl;
 /// [`WebView`]'s own builders, reachable through a decoration (§5.2): `day_pieces::Decorated` forwards them
 /// to the piece it wraps, so generic modifiers and typed ones chain in any order.
 pub trait WebViewBuilder: Sized {
+    fn url_binding(self, url: Signal<String>) -> Self;
+    fn profile(self, profile: WebProfile) -> Self;
     fn go(self, trigger: Trigger) -> Self;
     fn back(self, trigger: Trigger) -> Self;
     fn forward(self, trigger: Trigger) -> Self;
@@ -1034,6 +1319,12 @@ pub trait WebViewBuilder: Sized {
 }
 
 impl WebViewBuilder for WebView {
+    fn url_binding(self, url: Signal<String>) -> Self {
+        WebView::url_binding(self, url)
+    }
+    fn profile(self, profile: WebProfile) -> Self {
+        WebView::profile(self, profile)
+    }
     fn go(self, trigger: Trigger) -> Self {
         WebView::go(self, trigger)
     }
@@ -1066,6 +1357,12 @@ impl WebViewBuilder for WebView {
 impl<Inner: WebViewBuilder + day_pieces::prelude::Piece> WebViewBuilder
     for day_pieces::Decorated<Inner>
 {
+    fn url_binding(self, url: Signal<String>) -> Self {
+        self.map_inner(|inner| inner.url_binding(url))
+    }
+    fn profile(self, profile: WebProfile) -> Self {
+        self.map_inner(|inner| inner.profile(profile))
+    }
     fn go(self, trigger: Trigger) -> Self {
         self.map_inner(|inner_piece| inner_piece.go(trigger))
     }
@@ -1098,6 +1395,107 @@ impl<Inner: WebViewBuilder + day_pieces::prelude::Piece> WebViewBuilder
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profiles_keep_identity_and_privacy_separate() {
+        let profile = WebProfile::persistent("publication");
+        assert_eq!(
+            profile.storage_key(),
+            WebProfile::persistent("publication").storage_key()
+        );
+        assert_ne!(
+            profile.storage_key(),
+            WebProfile::private("publication").storage_key()
+        );
+        assert_ne!(
+            profile.storage_key(),
+            WebProfile::persistent("other").storage_key()
+        );
+        assert_ne!(
+            profile.clone().directory("/fixture/a").storage_key(),
+            profile.directory("/fixture/b").storage_key()
+        );
+    }
+    #[test]
+    fn response_cookies_cannot_impersonate_another_origin() {
+        assert!(cookie_source_valid(
+            "https://news.example.com/story",
+            "session=fixture; Domain=.example.com; Secure; HttpOnly"
+        ));
+        assert!(!cookie_source_valid(
+            "https://news.example.co.uk/",
+            "session=fixture; Domain=co.uk"
+        ));
+        assert!(!cookie_source_valid(
+            "https://project.github.io/",
+            "session=fixture; Domain=github.io"
+        ));
+        assert!(!cookie_source_valid(
+            "https://unrelated.test/",
+            "session=fixture; Domain=example.com"
+        ));
+        assert!(!cookie_source_valid(
+            "https://example.com/",
+            "session=fixture\r\nInjected: header"
+        ));
+        assert!(!cookie_source_valid(
+            "http://example.com/",
+            "session=fixture; Secure"
+        ));
+        assert!(!cookie_source_valid(
+            "https://example.com/",
+            "__Host-session=fixture; Secure; Domain=example.com; Path=/"
+        ));
+        assert!(cookie_source_valid(
+            "https://example.com/",
+            "__Host-session=fixture; Secure; Path=/"
+        ));
+    }
+    #[test]
+    fn cookie_credentials_respect_host_path_and_transport_boundaries() {
+        assert!(cookie_matches(
+            "https://news.example.com/account/page",
+            ".example.com",
+            "/account",
+            true
+        ));
+        assert!(!cookie_matches(
+            "http://news.example.com/account",
+            ".example.com",
+            "/account",
+            true
+        ));
+        assert!(!cookie_matches(
+            "https://evil-example.com/account",
+            ".example.com",
+            "/account",
+            false
+        ));
+        assert!(!cookie_matches(
+            "https://news.example.com/accounting",
+            ".example.com",
+            "/account",
+            false
+        ));
+        assert!(!cookie_matches(
+            "https://news.example.com/",
+            "example.com",
+            "/",
+            false
+        ));
+        assert!(!cookie_matches(
+            "file:///account",
+            ".example.com",
+            "/",
+            false
+        ));
+        assert!(cookie_matches(
+            "https://EXAMPLE.com/",
+            "example.com",
+            "",
+            false
+        ));
+    }
 
     /// Build a reply the way an arm would, without a literal control char in the test source.
     fn reply(parts: &[&str]) -> String {

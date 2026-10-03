@@ -2,6 +2,7 @@
 name: webview
 description: Check the support the piece reports, load the bundled site, run JavaScript in it, and follow the site's link back to the app.
 flow:
+  - tap: { id: webview-tools }
   - wait_for: { id: webview-support }
   - assert_visible: { id: webview-title }
   # The support rows are the piece's own answers for this target. Remote browsing on web-dom is
@@ -36,6 +37,16 @@ flow:
   - assert_no_placeholders: {}
   - screenshot: { name: webview, title: "Bundled site" }
 
+  # Native history reports come from the engine, not a guessed application stack.
+  - web_eval: { id: webview, script: "document.getElementById('next-link').click(); 'next'", text: next, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - web_eval: { id: webview, script: "document.title", text: "A second local page", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - tap: { id: webview-back, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - web_eval: { id: webview, script: "document.title", text: "Bundled site", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - tap: { id: webview-forward, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - web_eval: { id: webview, script: "document.title", text: "A second local page", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - tap: { id: webview-back, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - web_eval: { id: webview, script: "document.title", text: "Bundled site", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+
   # The console: the page's answer comes back as JSON, so a string arrives quoted.
   - input: { id: webview-js, text: "document.title", only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
   - tap: { id: webview-js-run, only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
@@ -69,7 +80,7 @@ flow:
   # A browser can evaluate JS while its GPU surface stays blank. CI checks these pixels too.
   - web_eval:
       id: webview
-      script: "document.body.style.backgroundColor = '#12d9a4'; 'painted'"
+      script: "document.body.style.background = '#12d9a4'; 'painted'"
       text: "painted"
   - screenshot: { name: webview-render-proof, title: "Browser paint verification" }
 
@@ -107,3 +118,15 @@ flow:
       id: webview
       script: "document.getElementById('script-status').textContent"
       text: "The bundled script ran."
+
+  # Address submission and the Home affordance work without an external network.
+  - input: { id: webview-address, text: 'about:blank' }
+  - tap: { id: webview-go }
+  - web_eval: { id: webview, script: 'location.href', text: 'about:blank' }
+  - input: { id: webview-address, text: 'javascript:alert(1)' }
+  - tap: { id: webview-go }
+  - assert_text: { id: browser-status, key: address_invalid }
+  - tap: { id: webview-home }
+  - web_eval: { id: webview, script: "document.getElementById('script-status').textContent", text: 'The bundled script ran.' }
+  - tap: { id: webview-tools }
+  - screenshot: browser-home

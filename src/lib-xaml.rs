@@ -26,6 +26,9 @@ unsafe extern "C" {
         link_cb: extern "C" fn(u64, *const c_char),
         transparent: bool,
         session: u64,
+        profile: *const c_char,
+        directory: *const c_char,
+        private: bool,
     ) -> *mut c_void;
     fn day_webview_xaml_release(handle: *mut c_void);
     fn day_webview_xaml_load(handle: *mut c_void, url: *const c_char);
@@ -152,6 +155,9 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
             on_link,
             p.transparent,
             p.session,
+            cstr(&p.profile.storage_key()).as_ptr(),
+            cstr(p.profile.directory.as_deref().unwrap_or("")).as_ptr(),
+            p.profile.private,
         )
     })
 }

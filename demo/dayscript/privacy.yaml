@@ -1,0 +1,24 @@
+name: browser-privacy
+description: Experiment with native profiles, private storage isolation, and returning to the persistent browser.
+flow:
+  - wait_for: { id: webview }
+  - web_eval: { id: webview, script: 'localStorage.setItem("privacy-fixture","persistent"); "saved"', text: 'saved' }
+  - tap: { id: webview-settings }
+  - wait_for: { id: webview-incognito }
+  - screenshot: browser-settings
+  - toggle: { id: webview-incognito, value: true }
+  - tap: { id: webview-settings-done }
+  - web_eval: { id: webview, script: 'localStorage.getItem("privacy-fixture")', text: 'null' }
+  - web_eval: { id: webview, script: 'localStorage.setItem("privacy-fixture","private"); "saved"', text: 'saved' }
+  - tap: { id: webview-settings }
+  - toggle: { id: webview-incognito, value: false }
+  - tap: { id: webview-settings-done }
+  - web_eval: { id: webview, script: 'localStorage.getItem("privacy-fixture")', text: 'persistent' }
+  - screenshot: browser-persistent-restored
+  - tap: { id: webview-settings }
+  - tap: { id: webview-clear-data }
+  - assert_text: { id: webview-data-result, key: data_cleared, timeout_secs: 20 }
+  - tap: { id: webview-settings-done }
+  - web_eval: { id: webview, script: 'localStorage.getItem("privacy-fixture")', text: 'null' }
+  - tap: { id: webview-settings }
+  - screenshot: browser-settings-cleared
