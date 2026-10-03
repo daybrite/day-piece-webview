@@ -88,7 +88,11 @@ impl Host {
                 }
                 allowed
             })
-            .with_on_page_load_handler(move |_, url| emit(id, Event::custom("webview:url", url)))
+            .with_on_page_load_handler(move |event, url| {
+                if matches!(event, wry::PageLoadEvent::Finished) {
+                    emit(id, Event::custom("webview:url", url));
+                }
+            })
             .build_as_child(&parent)
             .map_err(|e| e.to_string())?;
         Ok(Self { view, id, emit })

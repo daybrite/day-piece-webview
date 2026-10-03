@@ -133,9 +133,12 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
         );
     }
     NODE_IDS.with(|ids| ids.borrow_mut().insert(wv.as_ptr() as usize, id));
-    // Report the current URL back on every navigation so a bound text field follows.
-    wv.connect_uri_notify(move |wv| {
-        if let Some(uri) = wv.uri() {
+    // The navigation report also drives on_load: report completion, including
+    // same-URL reloads, rather than URI changes before the document is ready.
+    wv.connect_load_changed(move |wv, event| {
+        if event == webkit6::LoadEvent::Finished
+            && let Some(uri) = wv.uri()
+        {
             day_gtk::emit(id, Event::custom("webview:url", uri.to_string()));
         }
     });

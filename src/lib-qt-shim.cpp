@@ -3,7 +3,7 @@
 
 // The web-view piece's own Qt shim behind a flat C ABI. When Qt6WebEngineWidgets is available
 // (build.rs probes pkg-config and defines DAY_WEBVIEW_QT_ENGINE) this wraps a real QWebEngineView
-// and forwards `urlChanged` to a C callback so a bound text field follows navigation. When it is
+// and forwards `loadFinished` to a C callback so a bound text field follows navigation. When it is
 // not (e.g. MSYS2/MINGW64, which does not package Qt6 WebEngine because Chromium won't build with
 // MinGW GCC), it degrades to a QLabel showing the URL, so windows-qt still builds, launches and
 // screenshots (mirrors day-piece-webview's xaml EdgeHTML degrade). The C ABI is identical either
@@ -154,9 +154,13 @@ public:
 // the node that first realized it, so the old connection would report to a torn-down node.
 static void day_webview_connect_url(QWebEngineView *v, uint64_t id,
                                     void (*cb)(uint64_t, const char *)) {
-    QObject::disconnect(v, &QWebEngineView::urlChanged, nullptr, nullptr);
-    QObject::connect(v, &QWebEngineView::urlChanged, [id, cb](const QUrl &u) {
-        QByteArray bytes = u.toString().toUtf8();
+    QObject::disconnect(v, &QWebEngineView::loadFinished, nullptr, nullptr);
+    QObject::connect(v, &QWebEngineView::loadFinished, [v, id, cb](bool ok) {
+        if (!ok)
+            return;
+        // Same-URL reloads must also report ready; urlChanged fires too early
+        // and does not run again when the document's URL is unchanged.
+        QByteArray bytes = v->url().toString().toUtf8();
         cb(id, bytes.constData());
     });
 }

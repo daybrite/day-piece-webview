@@ -26,7 +26,7 @@ build = "build.rs"
 [features]
 appkit = ["dep:day-appkit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
 # GTK uses WebKitGTK on Linux, WKWebView on macOS, and WebView2 through Wry on Windows.
-gtk = ["dep:wry", "dep:day-gtk", "dep:gtk4", "dep:webkit6", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
+gtk = ["dep:objc2-core-graphics", "objc2-app-kit/objc2-core-graphics", "dep:wry", "dep:day-gtk", "dep:gtk4", "dep:webkit6", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
 qt = ["dep:day-qt", "dep:wry", ]                 # + build.rs compiles src/lib-qt-shim.cpp, linking Qt6WebEngineWidgets when present (else a URL-label fallback)
 # objc2-web-kit 0.3 binds WKWebView for macOS only, so UIKit hand-rolls it via extern_class!/msg_send!.
 uikit = ["dep:day-uikit", "dep:objc2", "dep:objc2-ui-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:block2"]
@@ -158,6 +158,7 @@ objc2 = { version = "0.6", optional = true }
 objc2-app-kit = { version = "0.3", optional = true, features = ["NSView", "NSResponder"] }
 objc2-ui-kit = { version = "0.3", optional = true, features = ["UIView", "UIResponder"] }
 objc2-foundation = { version = "0.3", optional = true, features = ["NSString", "NSURL", "NSURLRequest", "NSError"] }
+objc2-core-graphics = { version = "0.3", optional = true, features = ["CGEvent", "CGEventTypes"] }
 objc2-core-foundation = { version = "0.3", optional = true, features = ["CFCGTypes"] }
 objc2-web-kit = { version = "0.3", optional = true, features = ["WKWebView", "WKWebViewConfiguration", "WKNavigationDelegate", "WKNavigation", "WKNavigationAction", "WKFrameInfo", "WKError", "block2"] }
 

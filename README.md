@@ -72,6 +72,11 @@ runs on the app's browser thread.
 | harmony-arkui | ArkWeb through an ArkTS Web component |
 | web-dom | An iframe in the host browser |
 
+On macOS GTK, the host forwards GTK wheel and trackpad events to the embedded
+WKWebView, including pixel deltas, modifiers, and gesture phases. Native hit testing
+keeps scrolling inside the browser (including nested scroll regions); detached or
+hidden browser views do not consume gestures.
+
 `support()`, `inline_support()`, and `eval_support()` describe the compiled backend. They do
 not probe engine installation, page readiness, service-worker permissions, or whether a remote
 site permits embedding. Browser evaluation requires same-origin content. Browser Back, Forward,

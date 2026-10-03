@@ -137,3 +137,40 @@ See [Harmony setup](harmony-emulator.md) for its emulator requirements. For a ne
 prefer a deterministic fixture and a `web_eval` assertion that checks the loaded resource's
 observable effect. Add protocol edge cases to Rust/worker tests and retain native execution
 for anything involving engine delivery, lifecycle, focus, or painting.
+
+## macOS GTK native scrolling
+
+`tests/macos-gtk/scroll.swift` posts real system wheel events to an active test window.
+It accepts a process ID, screen x/y coordinates, delta (negative scrolls down), and
+`pixel` or `line`. Use isolated demo data; the probe moves the system pointer and
+activates that window. macOS must permit event posting by the terminal/test runner.
+
+For example, after opening a long article in Day-News:
+
+```sh
+swift tests/macos-gtk/scroll.swift PID SCREEN_X SCREEN_Y -40 pixel
+```
+
+Use `JsHandle::eval` or dayscript `web_eval` to assert `window.scrollY > 0` after a
+short pause. Repeat from the top with `-1 line`, and with positive deltas to check
+upward scrolling. For a nested `overflow:auto` element, assert its `scrollTop`
+changes while `window.scrollY` stays unchanged. Check a sibling GTK list stays
+stationary, then hide/reopen the web view and repeat. GTK widget snapshots omit
+Cocoa sibling views; inspect an actual macOS window capture for this host.
+
+Local validation on 2026-10-03: Day-News/macOS GTK passed 201 applicable seed and
+walkthrough steps (11 platform skips), with the keyboard-selected row inspected in
+both GTK and native macOS captures. System pixel and line wheel probes changed the
+article scroll position. An inner overflow fixture moved by 240 pixels while the
+outer document remained at zero. The piece's 19 Rust tests and GTK Clippy passed.
+These observations cover macOS GTK; they do not add Linux or Windows runtime coverage.
+
+## Document readiness and same-URL reloads
+
+`on_load` is a completed-document notification. Linux GTK now reports WebKitGTK's
+`LoadEvent::Finished`; Qt reports successful `loadFinished`; Windows Wry filters its
+page-load callback to `PageLoadEvent::Finished`. This permits apps to start JavaScript
+work after each reload of a stable application resource URL. URI-change/start events
+are too early and may not occur on a same-URL reload. Day-News's
+`dayscript/inline-reader.yaml` exercises automatic extraction across repeated resource
+reloads, and checks that manual inline extraction retains the same document.
