@@ -244,7 +244,25 @@ JavaScript, DOM, stylesheet, image and relative-resource assertions verify actua
 
 A local API 36 ARM emulator reproduced Day-News displaying HTML source before this fix
 (171/172 applicable walkthrough steps), then rendered the article correctly with all
-172/172 steps passing. The general browser demo also exposed a separate history issue:
-`canGoBack()` returned false with a native history index of 1, and `goBack()` did not move
-the page. That pre-existing issue is outside the content-type fix; no history API changes
-are included here.
+172/172 steps passing.
+
+## Browser CI regressions (2026-10-03)
+
+Run `37169189612` exposed an outdated Qt startup fixture, a zero-width support label on
+iPhone, and eight cascading history assertions on Android and both Harmony sizes.
+The Qt fixture now supplies the current profile, directory and private-mode arguments.
+The demo stacks its support rows so the value labels remain visible on narrow screens.
+
+The history test used `element.click()` through JavaScript, which does not provide user
+activation. [Chromium's history manipulation intervention](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/history_manipulation_intervention.md)
+can mark the starting entry skippable, leaving `canGoBack()` false despite a native history
+index of 1. The testing drawer now has a localized second-page navigation button. It reads
+the bundled link's resolved URL and loads it through the same native command as the address
+bar. The walkthrough still verifies native Back/Forward, both page titles, app-link routing,
+reloads, resource rendering and browser paint. The adapters retain their native history
+semantics rather than bypassing the browser's intervention.
+
+The corrected walkthrough passed 55/55 applicable steps on an API 36 ARM Android emulator
+and an iPhone simulator. The native Qt startup test and 20 Node tests passed locally.
+Harmony's Rust/ArkTS/signed HAP build passed with the installed API 18 SDK; its emulator
+was not run locally, so the phone/tablet runtime assertions await CI.

@@ -38,7 +38,9 @@ flow:
   - screenshot: { name: webview, title: "Bundled site" }
 
   # Native history reports come from the engine, not a guessed application stack.
-  - web_eval: { id: webview, script: "document.getElementById('next-link').click(); 'next'", text: next, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  # Navigate with an application command. Chromium intentionally skips pages that navigate
+  # through a synthetic JS click without user activation, so that is not a browser-history test.
+  - tap: { id: webview-next-page, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
   - web_eval: { id: webview, script: "document.title", text: "A second local page", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
   - tap: { id: webview-back, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
   - web_eval: { id: webview, script: "document.title", text: "Bundled site", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }

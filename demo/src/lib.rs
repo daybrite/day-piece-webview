@@ -477,7 +477,7 @@ pub fn root() -> impl Piece {
             move || tools.get(),
             move || {
                 column((
-                    row((
+                    column((
                         labeled(
                             res::str::support_remote(),
                             support_label(support(), "webview-support"),
@@ -491,7 +491,7 @@ pub fn root() -> impl Piece {
                             support_label(eval_support(), "webview-eval-support"),
                         ),
                     ))
-                    .spacing(12.0),
+                    .spacing(4.0),
                     row((
                         text_field(script)
                             .placeholder(res::str::js_hint())
@@ -526,18 +526,42 @@ pub fn root() -> impl Piece {
                     .font(Font::Footnote)
                     .single_line()
                     .id("webview-link"),
-                    button(res::str::resource_demo())
-                        .action(move || {
-                            browser.location.set(String::new());
-                            browser.source.set(
-                                if browser.source.get_untracked() == Source::Resources {
-                                    Source::Home
-                                } else {
-                                    Source::Resources
-                                },
-                            );
-                        })
-                        .id("resource-demo"),
+                    row((
+                        button(res::str::home_next())
+                            .icon(Symbol::Forward)
+                            .icon_only()
+                            .enabled(move || browser.source.get() == Source::Home)
+                            .action(move || {
+                                // Use an application navigation, like entering a URL. A script's
+                                // synthetic link click has no user activation and Chromium can
+                                // deliberately exclude its starting page from Back/Forward.
+                                day::task(async move {
+                                    if let Ok(json) = browser
+                                        .js
+                                        .eval("document.getElementById('next-link').href")
+                                        .await
+                                        && let Ok(url) = serde_json::from_str::<String>(&json)
+                                    {
+                                        browser.location.set(url);
+                                        browser.go.notify();
+                                    }
+                                });
+                            })
+                            .id("webview-next-page"),
+                        button(res::str::resource_demo())
+                            .action(move || {
+                                browser.location.set(String::new());
+                                browser.source.set(
+                                    if browser.source.get_untracked() == Source::Resources {
+                                        Source::Home
+                                    } else {
+                                        Source::Resources
+                                    },
+                                );
+                            })
+                            .id("resource-demo"),
+                    ))
+                    .spacing(8.0),
                 ))
                 .spacing(6.0)
                 .align(HAlign::Leading)

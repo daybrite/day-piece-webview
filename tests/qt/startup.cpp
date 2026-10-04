@@ -43,7 +43,8 @@ static std::function<void()> during_create;
 static bool create_result = true;
 
 extern "C" {
-bool day_webview_win_create(intptr_t hwnd, uint64_t node, const char *url, const char *) {
+bool day_webview_win_create(intptr_t hwnd, uint64_t node, const char *url, const char *,
+                            const char *, const char *, bool) {
     calls.push_back({"create", node, url ? url : "", hwnd != 0 ? 1.0 : 0.0, 0});
     if (during_create) {
         auto hook = std::move(during_create);
@@ -89,7 +90,7 @@ static void spin(int ms = 50) {
 
 static DayWebView *make(uint64_t id, const char *url) {
     // An empty prefix skips the bundled-asset extraction; the host only has an engine to start.
-    return static_cast<DayWebView *>(day_webview_new(url, id, nullptr, 0, "", nullptr));
+    return static_cast<DayWebView *>(day_webview_new(url, id, nullptr, 0, "", "", false, "", nullptr));
 }
 
 static int failures = 0;
