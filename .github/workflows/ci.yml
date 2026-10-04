@@ -99,6 +99,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: actions/setup-java@v5
+        if: matrix.features == 'mdc'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Test Android resource content-type handling
+        if: matrix.features == 'mdc'
+        run: |
+          javac -d target/android-resource-tests src/DayWebContentType.java tests/android/ContentTypeTest.java
+          java -cp target/android-resource-tests dev.daybrite.day.piece.webview.ContentTypeTest
       - run: cargo clippy --target ${{ matrix.target }} --features ${{ matrix.features }} -- -D warnings
 
   # The proof: the demo app, driven end to end by the shared Day workflow. It builds against day's

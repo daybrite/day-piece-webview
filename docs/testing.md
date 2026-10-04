@@ -231,3 +231,20 @@ Windows CI compilation fixes: the XAML/WinUI shim explicitly includes the WinRT 
 projection used by `JsonObject::Insert`, and shields its cookie-expiry `std::max` call from
 the Windows SDK macro, as it already does for `std::min`. Native Windows builds remain
 required to validate the C++ shim; host Rust checks do not compile this platform arm.
+
+## Android resource content types
+
+The Android adapter splits an HTTP-style `ResourceResponse::mime` into Android's separate
+MIME-type and character-encoding arguments. An explicit charset wins, textual resources
+default to UTF-8, and binary responses carry no character encoding. Body bytes are preserved.
+The plain-JVM fixtures in `tests/android/ContentTypeTest.java` cover parameters, quoting,
+case, UTF-8 defaults, and binary responses; the Android cross-check job runs them.
+The demo's resource HTML uses `text/html; charset=utf-8` on Android, and its existing
+JavaScript, DOM, stylesheet, image and relative-resource assertions verify actual rendering.
+
+A local API 36 ARM emulator reproduced Day-News displaying HTML source before this fix
+(171/172 applicable walkthrough steps), then rendered the article correctly with all
+172/172 steps passing. The general browser demo also exposed a separate history issue:
+`canGoBack()` returned false with a native history index of 1, and `goBack()` did not move
+the page. That pre-existing issue is outside the content-type fix; no history API changes
+are included here.

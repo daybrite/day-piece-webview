@@ -618,7 +618,9 @@ fn resource_site(browser: Browser, private: bool) -> AnyPiece {
     );
     let provider = ResourceProvider::with_site(res::assets::site, move |request| {
         match request.path.as_str() {
-        "pages/index.html" => ResourceResponse::new("text/html",html.clone().into_bytes()),
+        // Android must split an HTTP-style content type before calling WebResourceResponse.
+        // This exercises the same spelling as Day-News' generated reader document.
+        "pages/index.html" => ResourceResponse::new(if cfg!(feature = "mdc") { "text/html; charset=utf-8" } else { "text/html" },html.clone().into_bytes()),
         "pages/child.html" => ResourceResponse::new("text/html",b"<!doctype html><html><head><link rel=stylesheet href=../styles/main.css></head><body data-relative=child></body></html>".to_vec()),
         "styles/main.css" => ResourceResponse::new("text/css",b"@import '../__day_assets/css/style.css';@import './colors.css';body{font:18px system-ui;padding:24px;background:#182236;color:white}img{width:120px;height:120px}iframe{border:0;width:120px;height:120px}".to_vec()),
         "styles/colors.css" => ResourceResponse::new("text/css",b":root{--resource-loaded:yes}body{background-image:url('../images/orb.svg');background-repeat:no-repeat;background-position:right bottom}".to_vec()),

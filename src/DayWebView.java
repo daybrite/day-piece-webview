@@ -35,7 +35,8 @@ public final class DayWebView {
     private static android.webkit.WebResourceResponse response(String mime, int status, String headerLines, byte[] body) {
         Map<String,String> headers=new java.util.HashMap<>();
         for(String line:headerLines.split("\n")){int colon=line.indexOf(':');if(colon>0)headers.put(line.substring(0,colon),line.substring(colon+1).trim());}
-        return new android.webkit.WebResourceResponse(mime,"UTF-8",status,"Resource",headers,new java.io.ByteArrayInputStream(body));
+        DayWebContentType type = DayWebContentType.parse(mime);
+        return new android.webkit.WebResourceResponse(type.mime,type.encoding,status,"Resource",headers,new java.io.ByteArrayInputStream(body));
     }
     private static native android.webkit.WebResourceResponse resource(long provider, String url, String method, String range);
 

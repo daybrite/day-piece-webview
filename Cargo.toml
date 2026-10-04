@@ -98,7 +98,7 @@ day-mock = { git = "https://github.com/daybrite/day.git" }
 # scaffold.
 [package.metadata.day.android]
 # Java/Kotlin sources, relative to this crate root: dirs, or single files linked in by package.
-java = ["src/DayWebView.java"]
+java = ["src/DayWebView.java", "src/DayWebContentType.java"]
 # Gradle dependency coordinates added to the app module. android.webkit.WebView is a framework
 # widget, so no extra dependency is required.
 gradle-dependencies = ["androidx.webkit:webkit:1.14.0"]
