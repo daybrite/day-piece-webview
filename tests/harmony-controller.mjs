@@ -29,6 +29,7 @@ function setup(runJavaScript = () => Promise.resolve('1\x1fvalue')) {
     getTitle: () => "Fixture page",
     loadUrl: url => commands.push(['load', url]),
     refresh: () => commands.push(['reload']),
+    removeCache: disk => commands.push(['cache',disk]),
     stop: () => commands.push(['stop']),
     accessBackward: () => false,
     accessForward: () => true,
@@ -154,4 +155,12 @@ test('navigation snapshots expose actual controller history and loading state', 
   assert.deepEqual(state,{url:'https://fixture.example/second',title:'Fixture page',can_go_back:false,can_go_forward:true,loading:true});
   s.controller.setLoading(false);s.controller.evaluate(25,'day-web-data:'+JSON.stringify({operation:'navigation'}));
   assert.equal(JSON.parse(s.replies[1][1].substring(2)).loading,false);
+});
+
+
+test('force reload evicts the ArkWeb resource cache before navigation, without touching cookies', () => {
+  cookieCalls.length=0;
+  const s=setup();s.controller.attach();s.controller.command('forceReload','');
+  assert.deepEqual(s.commands,[['cache',true],['reload']]);
+  assert.equal(cookieCalls.length,0);
 });

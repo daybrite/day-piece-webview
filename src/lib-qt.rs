@@ -31,6 +31,7 @@ unsafe extern "C" {
     fn day_webview_forward(w: *mut c_void);
     fn day_webview_stop(w: *mut c_void);
     fn day_webview_reload(w: *mut c_void);
+    fn day_webview_force_reload(w: *mut c_void);
     fn day_webview_set_transparent(w: *mut c_void);
     fn day_webview_set_eval_cb(cb: extern "C" fn(u64, u64, *const c_char));
     fn day_webview_eval(w: *mut c_void, req: u64, script: *const c_char);
@@ -135,6 +136,7 @@ fn update(_backend: &mut Qt, h: &QtHandle, patch: &WebPatch) {
             WebPatch::Forward => day_webview_forward(h.0),
             WebPatch::Stop => day_webview_stop(h.0),
             WebPatch::Reload => day_webview_reload(h.0),
+            WebPatch::ForceReload => day_webview_force_reload(h.0),
             WebPatch::Eval { req, script } => day_webview_eval(h.0, *req, cstr(script).as_ptr()),
         }
     }

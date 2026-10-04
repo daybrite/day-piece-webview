@@ -48,3 +48,11 @@ The installed API 18 SDK components must be under `<sdk-root>/18/{ets,js,native,
 for hvigor's SDK manager. Set `OHOS_BASE_SDK_HOME` to that root and `NODE_PATH` to the
 installed hvigor modules, then run `day build -p harmony-arkui`. A temporary root with
 symlinks to existing SDK components is sufficient; no emulator is needed for the build.
+
+## Browser commands
+
+Go and Browser menus expose Back (primary+[), Forward (primary+]), Reload (primary+R),
+Reload from Server (shift+primary+R), Stop (Escape) and Open Location (primary+L).
+Primary is Command on Apple platforms and Control elsewhere. Alt+Home opens the bundled
+home page; primary+comma opens Browser Settings. Unavailable commands are disabled.
+Share opens the OS chooser. Platforms without a native chooser explicitly offer Copy Link.

@@ -91,6 +91,10 @@ export class Controller {
         this.native.forward();
       } else if (name === 'stop') {
         this.native.stop();
+      } else if (name === 'forceReload') {
+        // ArkWeb exposes cache eviction, not a per-navigation cache bypass.
+        this.native.removeCache(true);
+        this.native.refresh();
       } else if (name === 'reload') {
         this.native.refresh();
       }

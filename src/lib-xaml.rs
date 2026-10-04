@@ -36,6 +36,7 @@ unsafe extern "C" {
     fn day_webview_xaml_forward(handle: *mut c_void);
     fn day_webview_xaml_stop(handle: *mut c_void);
     fn day_webview_xaml_reload(handle: *mut c_void);
+    fn day_webview_xaml_force_reload(w: *mut c_void);
     fn day_webview_xaml_set_eval_cb(cb: extern "C" fn(u64, u64, *const c_char));
     fn day_webview_xaml_eval(handle: *mut c_void, req: u64, script: *const c_char);
 }
@@ -170,6 +171,7 @@ fn update(_backend: &mut Xaml, h: &WinHandle, patch: &WebPatch) {
             WebPatch::Forward => day_webview_xaml_forward(h.0),
             WebPatch::Stop => day_webview_xaml_stop(h.0),
             WebPatch::Reload => day_webview_xaml_reload(h.0),
+            WebPatch::ForceReload => day_webview_xaml_force_reload(h.0),
             WebPatch::Eval { req, script } => {
                 day_webview_xaml_eval(h.0, *req, cstr(script).as_ptr())
             }

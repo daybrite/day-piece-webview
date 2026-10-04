@@ -130,3 +130,12 @@ flow:
   - web_eval: { id: webview, script: "document.getElementById('script-status').textContent", text: 'The bundled script ran.' }
   - tap: { id: webview-tools }
   - screenshot: browser-home
+
+  # Desktop commands exercise the same browser operations through the installed menu.
+  - menu: { id: browser-open-location, only_on: [appkit, gtk, qt, xaml, dom] }
+  - web_eval: { id: webview, script: 'window.dayDemoMenuMarker = 1', text: '1', only_on: [appkit, gtk, qt, xaml, dom] }
+  - menu: { id: browser-reload, only_on: [appkit, gtk, qt, xaml, dom] }
+  - web_eval: { id: webview, script: 'typeof window.dayDemoMenuMarker', text: 'undefined', only_on: [appkit, gtk, qt, xaml, dom] }
+  - web_eval: { id: webview, script: 'window.dayDemoForceMarker = 1', text: '1', only_on: [appkit, gtk, qt, xaml] }
+  - menu: { id: browser-force-reload, only_on: [appkit, gtk, qt, xaml] }
+  - web_eval: { id: webview, script: 'typeof window.dayDemoForceMarker', text: 'undefined', only_on: [appkit, gtk, qt, xaml] }

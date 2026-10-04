@@ -37,8 +37,8 @@ execution; downstream Stanza reader tests cover those paths separately.
 
 ## End-to-end resource assertions
 
-[demo/dayscript/webview.yaml](../demo/dayscript/webview.yaml) runs 55 applicable steps on native
-renderers and 47 on web-dom. The browser phase exercises native Back/Forward, address entry,
+[demo/dayscript/webview.yaml](../demo/dayscript/webview.yaml) runs 62 applicable steps on desktop native
+renderers, 55 on mobile native renderers and 51 on web-dom. The browser phase exercises native Back/Forward, address entry,
 invalid address handling, Home and the collapsible testing drawer.
 Its provider phase checks:
 
@@ -213,3 +213,16 @@ running an emulator. Windows and Linux adapters need their native CI runners.
 
 Back/Forward now use Qt's native history object directly rather than its view actions; the
 walkthrough reproduces the local-page navigation case where those actions remained disabled.
+
+Browser menu/shortcut and sharing validation: the desktop walkthrough passed 62/62 on
+AppKit, macOS GTK and macOS Qt; web-dom passed 51/51 and UIKit passed 55/55.
+Real macOS key events exercised Command+[ / Command+] / Command+R / Shift+Command+R.
+A loopback fixture confirmed force reload refetched a cached script. The native macOS share
+picker was opened and cancelled, without choosing a target. The Harmony command harness
+checks cache eviction precedes force reload and does not touch cookies. Day's shipped web
+sharing ABI has separate availability, user-activation, payload and cancellation tests.
+
+The physical Escape test waited for a slow page's loading indicator, pressed Escape while
+the address editor retained focus, then verified loading ended and the previous document
+remained visible. This exposed and validated Day AppKit's Escape accelerator routing fix.
+The iOS activity sheet was also inspected in the simulator without choosing a target.

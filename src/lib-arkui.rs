@@ -61,6 +61,7 @@ fn update(_backend: &mut ArkUi, h: &AHandle, patch: &WebPatch) {
         WebPatch::Forward => ("forward", ""),
         WebPatch::Stop => ("stop", ""),
         WebPatch::Reload => ("reload", ""),
+        WebPatch::ForceReload => ("forceReload", ""),
         WebPatch::Eval { .. } => return, // handled above; keeps the match exhaustive
     };
     piece::update(h, cmd, arg);

@@ -52,3 +52,15 @@ home_web_link = Browse daybrite.dev
 home_next = Open a second local page
 second_title = A second local page
 second_text = Use Back and Forward to explore native browser history. Reload starts a fresh document.
+
+menu_file = File
+menu_go = Go
+menu_browser = Browser
+open_location = Open Location…
+force_reload = Reload from Server
+share = Share
+copy_link = Copy Link
+link_copied = Link copied.
+share_failed = The sharing action could not be opened.
+
+copy_failed = Link could not be copied.

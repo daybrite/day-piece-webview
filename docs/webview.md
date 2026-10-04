@@ -50,6 +50,7 @@ the reported URL. web-dom does not report iframe URL changes.
 | `.back(trigger)` / `.forward(trigger)` | Move through browser history |
 | `.stop(trigger)` | Stop the current load |
 | `.reload(trigger)` | Reload; web-dom instead reloads the last URL supplied by the app |
+| `.force_reload(trigger)` | Bypass the resource cache; check `force_reload_support()` first |
 
 Bind a `JsHandle` with `.js(handle)` and await `handle.navigation_state()` to read a native
 `NavigationState` containing `url`, `title`, `can_go_back`, `can_go_forward` and `loading`.
@@ -227,3 +228,12 @@ Use `.profile(WebProfile::persistent(name))` on independent views to share brows
 `WebProfile::private(name)` for an isolated ephemeral store. A session retains a loaded page;
 a profile shares its data without retaining a page. See [profiles and privacy](profiles.md)
 for native cookie access, complete data deletion, capability checks and platform limits.
+
+## Force reload
+
+Force reload keeps cookies, logins and site storage intact. Apple uses WKWebView's
+`reloadFromOrigin`, GTK uses `reload_bypass_cache`, Qt uses `ReloadAndBypassCache`, and
+WebView2 uses `Page.reload` with `ignoreCache`. Android temporarily applies `LOAD_NO_CACHE`
+and restores its previous mode after completion or Stop. ArkWeb must evict the application's
+shared resource cache before refreshing; other WebViews may consequently refetch resources.
+The iframe backend reports Unsupported because it cannot guarantee cache bypass.

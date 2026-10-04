@@ -498,6 +498,15 @@ pub fn inline_support() -> day_spec::Support {
     }
 }
 
+/// Native cache-bypassing reload. Cross-origin iframe hosts cannot force cache policy.
+pub fn force_reload_support() -> day_spec::Support {
+    if cfg!(all(feature = "dom", target_arch = "wasm32")) {
+        day_spec::Support::Unsupported
+    } else {
+        support()
+    }
+}
+
 /// Sparse imperative commands sent to the native view after creation.
 #[derive(Clone, Debug, PartialEq)]
 pub enum WebPatch {
@@ -510,6 +519,8 @@ pub enum WebPatch {
     Stop,
     /// Reload the current page.
     Reload,
+    /// Reload while bypassing the engine resource cache (never clears cookies or site data).
+    ForceReload,
     /// Evaluate `script` (already wrapped by [`wrap_script`]) and report the result back as an
     /// `Event::Custom` whose `num` is `req`. See docs/webview-eval.md.
     Eval {
@@ -898,6 +909,7 @@ pub struct WebView {
     forward: Option<Trigger>,
     stop: Option<Trigger>,
     reload: Option<Trigger>,
+    force_reload: Option<Trigger>,
     js: Option<JsHandle>,
     session: Option<WebSession>,
     inline: Option<InlineSite>,
@@ -926,6 +938,7 @@ pub fn web_view(url: Signal<String>) -> WebView {
         forward: None,
         stop: None,
         reload: None,
+        force_reload: None,
         js: None,
         session: None,
         inline: None,
@@ -1005,6 +1018,11 @@ impl WebView {
     /// Reload the current page whenever `trigger` fires.
     pub fn reload(mut self, trigger: Trigger) -> Self {
         self.reload = Some(trigger);
+        self
+    }
+    /// Reload from the server, bypassing cached resources. Check [`force_reload_support`].
+    pub fn force_reload(mut self, trigger: Trigger) -> Self {
+        self.force_reload = Some(trigger);
         self
     }
     /// Bind a [`JsHandle`] so `handle.eval(…)` runs in this view (docs/webview-eval.md).
@@ -1096,6 +1114,7 @@ impl Piece for WebView {
             forward,
             stop,
             reload,
+            force_reload,
             js,
             session,
             inline,
@@ -1211,6 +1230,13 @@ impl Piece for WebView {
             watch(move || reload.track(), move |_, _| send(WebPatch::Reload));
         }
 
+        if let Some(force_reload) = force_reload {
+            watch(
+                move || force_reload.track(),
+                move |_, _| send(WebPatch::ForceReload),
+            );
+        }
+
         // Bind the eval handle to the realized node so `handle.eval(…)` knows where to send.
         if let Some(js) = js {
             js.blocked.set(blocked_private);
@@ -1312,6 +1338,7 @@ pub trait WebViewBuilder: Sized {
     fn forward(self, trigger: Trigger) -> Self;
     fn stop(self, trigger: Trigger) -> Self;
     fn reload(self, trigger: Trigger) -> Self;
+    fn force_reload(self, trigger: Trigger) -> Self;
     fn js(self, handle: JsHandle) -> Self;
     fn session(self, session: WebSession) -> Self;
     fn start_page(self, page: impl Into<String>) -> Self;
@@ -1339,6 +1366,9 @@ impl WebViewBuilder for WebView {
     }
     fn reload(self, trigger: Trigger) -> Self {
         WebView::reload(self, trigger)
+    }
+    fn force_reload(self, trigger: Trigger) -> Self {
+        WebView::force_reload(self, trigger)
     }
     fn js(self, handle: JsHandle) -> Self {
         WebView::js(self, handle)
@@ -1377,6 +1407,9 @@ impl<Inner: WebViewBuilder + day_pieces::prelude::Piece> WebViewBuilder
     }
     fn reload(self, trigger: Trigger) -> Self {
         self.map_inner(|inner_piece| inner_piece.reload(trigger))
+    }
+    fn force_reload(self, trigger: Trigger) -> Self {
+        self.map_inner(|inner| inner.force_reload(trigger))
     }
     fn js(self, handle: JsHandle) -> Self {
         self.map_inner(|inner_piece| inner_piece.js(handle))

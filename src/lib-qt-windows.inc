@@ -76,6 +76,7 @@ void day_webview_load(void *w,const char *url) {auto *v=static_cast<DayWebView *
 void day_webview_back(void *w) {day_webview_win_command(static_cast<DayWebView *>(w)->id,1,0,"");}
 void day_webview_forward(void *w) {day_webview_win_command(static_cast<DayWebView *>(w)->id,2,0,"");}
 void day_webview_stop(void *w) {day_webview_win_command(static_cast<DayWebView *>(w)->id,3,0,"");}
+void day_webview_force_reload(void *w) {day_webview_win_command(static_cast<DayWebView *>(w)->id,5,0,"");}
 void day_webview_reload(void *w) {day_webview_win_command(static_cast<DayWebView *>(w)->id,4,0,"");}
 void day_webview_eval(void *w,uint64_t req,const char *script) {day_webview_win_command(static_cast<DayWebView *>(w)->id,5,req,script);}
 }

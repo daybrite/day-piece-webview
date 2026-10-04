@@ -165,4 +165,5 @@ objc2-core-foundation = { version = "0.3", optional = true, features = ["CFCGTyp
 objc2-web-kit = { version = "0.3", optional = true, features = ["WKWebView", "WKWebViewConfiguration", "WKNavigationDelegate", "WKNavigation", "WKNavigationAction", "WKFrameInfo", "WKError", "block2"] }
 
 [target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [] }
 wry = { version = "0.57", default-features = false, optional = true }

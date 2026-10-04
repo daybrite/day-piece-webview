@@ -117,6 +117,7 @@ fn update(_backend: &mut Android, h: &AHandle, patch: &WebPatch) {
         WebPatch::Forward => (2, ""),
         WebPatch::Stop => (3, ""),
         WebPatch::Reload => (4, ""),
+        WebPatch::ForceReload => (5, ""),
         WebPatch::Eval { .. } => return, // handled above; keeps the match exhaustive
     };
     with_env(|env| {

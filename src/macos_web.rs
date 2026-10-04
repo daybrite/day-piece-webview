@@ -329,6 +329,9 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
             let _ = unsafe { web.goForward() };
         }
         WebPatch::Stop => unsafe { web.stopLoading() },
+        WebPatch::ForceReload => {
+            let _ = unsafe { web.reloadFromOrigin() };
+        }
         WebPatch::Reload => {
             let _ = unsafe { web.reload() };
         }

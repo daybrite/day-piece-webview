@@ -406,6 +406,10 @@ void day_webview_stop(void *w) {
     if (QWebEngineView *v = static_cast<DayWebView *>(w)->view)
         v->stop();
 }
+void day_webview_force_reload(void *w) {
+    if (auto *v = static_cast<DayWebView *>(w)->view)
+        v->page()->triggerAction(QWebEnginePage::ReloadAndBypassCache);
+}
 void day_webview_reload(void *w) {
     if (QWebEngineView *v = static_cast<DayWebView *>(w)->view)
         v->reload();
@@ -469,6 +473,7 @@ void day_webview_back(void *) {}
 void day_webview_forward(void *) {}
 void day_webview_stop(void *) {}
 void day_webview_reload(void *) {}
+void day_webview_force_reload(void *) {}
 
 void day_webview_set_eval_cb(void (*cb)(uint64_t, uint64_t, const char *)) { g_eval_cb = cb; }
 

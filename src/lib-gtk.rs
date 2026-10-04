@@ -307,6 +307,7 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
         }
         WebPatch::Stop => wv.stop_loading(),
         WebPatch::Reload => wv.reload(),
+        WebPatch::ForceReload => wv.reload_bypass_cache(),
         // WebKitGTK replies asynchronously; forward the wrapped string on the request channel.
         WebPatch::Eval { req, script } => {
             let Some(id) = NODE_IDS.with(|ids| ids.borrow().get(&(wv.as_ptr() as usize)).copied())

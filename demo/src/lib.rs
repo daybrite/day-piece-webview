@@ -52,6 +52,7 @@ struct Browser {
     forward: Trigger,
     stop: Trigger,
     reload: Trigger,
+    force_reload: Trigger,
 }
 impl Browser {
     fn home(self) {
@@ -79,6 +80,35 @@ impl Browser {
                 self.status.set(String::new());
             }
             Err(()) => self.status.set(res::str::address_invalid().format()),
+        }
+    }
+    fn can_share(self) -> bool {
+        let url = self.location.get();
+        url.starts_with("https://") || url.starts_with("http://")
+    }
+    fn share(self) {
+        let url = self.location.get_untracked();
+        if !self.can_share() {
+            return;
+        }
+        if day::share_support() == Support::Native {
+            if !day::share_url(&url, &self.navigation.get_untracked().title) {
+                self.status.set(res::str::share_failed().format());
+            }
+        } else {
+            day::task(async move {
+                let message = if day::clipboard::write(day::clipboard::Content(vec![
+                    day::clipboard::Representation::new("text/plain", url.into_bytes()),
+                ]))
+                .await
+                .is_ok()
+                {
+                    res::str::link_copied().format()
+                } else {
+                    res::str::copy_failed().format()
+                };
+                self.status.set(message);
+            });
         }
     }
     fn link(self, url: &str) -> LinkPolicy {
@@ -141,12 +171,14 @@ pub fn root() -> impl Piece {
         forward: Trigger::new(),
         stop: Trigger::new(),
         reload: Trigger::new(),
+        force_reload: Trigger::new(),
     };
     let private = Signal::new(day::prefs::get("demo.web.incognito").as_deref() == Some("true"));
     let generation = Signal::new(0u64);
     let clearing = Signal::new(false);
     let settings = Signal::new(None::<String>);
     let tools = Signal::new(false);
+    let address_focus = Signal::new(false);
     let script = Signal::new(String::new());
     let answer = Signal::new(String::new());
     watch(
@@ -155,6 +187,84 @@ pub fn root() -> impl Piece {
             day::prefs::set("demo.web.incognito", &value.to_string());
         },
     );
+    app_menu_reactive(move || {
+        vec![
+            sub_menu(
+                res::str::menu_file().format(),
+                vec![
+                    menu_item(if day::share_support() == Support::Native {
+                        res::str::share().format()
+                    } else {
+                        res::str::copy_link().format()
+                    })
+                    .id("browser-share")
+                    .enabled(browser.can_share())
+                    .action(move || browser.share()),
+                    menu_role(MenuRole::CloseWindow),
+                ],
+            )
+            .bar_role(MenuBarRole::File),
+            sub_menu(
+                res::str::menu_go().format(),
+                vec![
+                    menu_item(res::str::back().format())
+                        .id("browser-back")
+                        .key("[")
+                        .enabled(
+                            support() == Support::Native && browser.navigation.get().can_go_back,
+                        )
+                        .action(move || browser.back.notify()),
+                    menu_item(res::str::forward().format())
+                        .id("browser-forward")
+                        .key("]")
+                        .enabled(
+                            support() == Support::Native && browser.navigation.get().can_go_forward,
+                        )
+                        .action(move || browser.forward.notify()),
+                    menu_separator(),
+                    menu_item(res::str::home().format())
+                        .id("browser-home")
+                        .shortcut(Shortcut::plain("Home").alt())
+                        .action(move || {
+                            browser.home();
+                            generation.update(|n| *n = n.wrapping_add(1));
+                        }),
+                ],
+            ),
+            sub_menu(
+                res::str::menu_browser().format(),
+                vec![
+                    menu_item(res::str::open_location().format())
+                        .id("browser-open-location")
+                        .key("l")
+                        .action(move || address_focus.set(true)),
+                    menu_item(res::str::reload().format())
+                        .id("browser-reload")
+                        .key("r")
+                        .action(move || browser.reload.notify()),
+                    menu_item(res::str::force_reload().format())
+                        .id("browser-force-reload")
+                        .shortcut(Shortcut::new("r").shift())
+                        .enabled(day_piece_webview::force_reload_support() == Support::Native)
+                        .action(move || browser.force_reload.notify()),
+                    menu_item(res::str::stop().format())
+                        .id("browser-stop")
+                        .shortcut(Shortcut::plain("Escape"))
+                        .enabled(support() == Support::Native && browser.navigation.get().loading)
+                        .action(move || browser.stop.notify()),
+                    menu_separator(),
+                    menu_item(res::str::test_tools().format())
+                        .id("browser-tools")
+                        .checked(tools.get())
+                        .action(move || tools.set(!tools.get_untracked())),
+                    menu_item(res::str::browser_settings().format())
+                        .id("browser-settings")
+                        .key(",")
+                        .action(move || settings.set(Some("settings".into()))),
+                ],
+            ),
+        ]
+    });
     let key = move || (browser.source.get(), private.get(), generation.get());
     let polling = day::task(async move {
         loop {
@@ -259,6 +369,7 @@ pub fn root() -> impl Piece {
             .align(VAlign::Center),
             row((
                 text_field(browser.address)
+                    .focused(address_focus)
                     .placeholder(res::str::address_hint())
                     .on_submit(move || browser.navigate())
                     .id("webview-address")
@@ -269,7 +380,7 @@ pub fn root() -> impl Piece {
                     .action(move || browser.navigate())
                     .id("webview-go"),
                 button(res::str::open_external())
-                    .icon(Symbol::Share)
+                    .image(res::vectors::open_external)
                     .icon_only()
                     .enabled(move || {
                         browser.location.get().starts_with("https://")
@@ -277,6 +388,18 @@ pub fn root() -> impl Piece {
                     })
                     .action(move || open_url(&browser.location.get_untracked()))
                     .id("webview-open-external"),
+                button(move || {
+                    if day::share_support() == Support::Native {
+                        res::str::share().format()
+                    } else {
+                        res::str::copy_link().format()
+                    }
+                })
+                .icon(Symbol::Share)
+                .icon_only()
+                .enabled(move || browser.can_share())
+                .action(move || browser.share())
+                .id("webview-share"),
             ))
             .spacing(8.0)
             .align(VAlign::Center),
@@ -302,6 +425,7 @@ pub fn root() -> impl Piece {
                 .forward(browser.forward)
                 .stop(browser.stop)
                 .reload(browser.reload)
+                .force_reload(browser.force_reload)
                 .on_external_link(move |url| {
                     if browser.source.get_untracked() == Source::Remote {
                         if let Some(route) = url.strip_prefix(APP_SCHEME) {
@@ -340,7 +464,7 @@ pub fn root() -> impl Piece {
             .id("webview-title"),
             when(
                 move || browser.navigation.get().loading,
-                || spinner().frame(16.0, 16.0),
+                || spinner().frame(16.0, 16.0).id("browser-loading"),
             ),
             label(move || browser.status.get())
                 .font(Font::Caption)
@@ -512,6 +636,7 @@ fn resource_site(browser: Browser, private: bool) -> AnyPiece {
         .forward(browser.forward)
         .stop(browser.stop)
         .reload(browser.reload)
+        .force_reload(browser.force_reload)
         .id("webview")
         .any()
 }

@@ -150,6 +150,18 @@ impl Host {
             WebPatch::Forward => {
                 let _ = self.view.go_forward();
             }
+            WebPatch::ForceReload => {
+                use wry::WebViewExtWindows;
+                let method: Vec<u16> = "Page.reload\0".encode_utf16().collect();
+                let args: Vec<u16> = "{\"ignoreCache\":true}\0".encode_utf16().collect();
+                unsafe {
+                    let _ = self.view.webview().CallDevToolsProtocolMethod(
+                        windows::core::PCWSTR(method.as_ptr()),
+                        windows::core::PCWSTR(args.as_ptr()),
+                        None,
+                    );
+                }
+            }
             WebPatch::Reload => {
                 let _ = self.view.reload();
             }
@@ -323,6 +335,7 @@ mod qt_bridge {
             2 => WebPatch::Forward,
             3 => WebPatch::Stop,
             4 => WebPatch::Reload,
+            5 => WebPatch::ForceReload,
             _ => WebPatch::Eval {
                 req,
                 script: unsafe { string(text) },

@@ -153,6 +153,7 @@ public final class DayWebView {
             }
             @Override
             public void onPageFinished(WebView view, String finishedUrl) {
+                restoreReloadCacheMode(view);
                 // kind 12 = a piece-defined Custom event (§8.2's open channel): the front-end's
                 // cx.on reads the text payload as the URL. (No longer hijacking kind 1 = TextChanged.)
                 DayBridge.nativeOnEvent(id, 12, 0.0, finishedUrl);
@@ -254,6 +255,11 @@ public final class DayWebView {
     }
 
     /** Imperative commands: 0=load, 1=back, 2=forward, 3=stop, 4=reload. */
+    private static final java.util.WeakHashMap<WebView, Integer> reloadCacheModes = new java.util.WeakHashMap<>();
+    private static void restoreReloadCacheMode(WebView web) {
+        Integer mode = reloadCacheModes.remove(web);
+        if (mode != null) web.getSettings().setCacheMode(mode);
+    }
     public static void webCommand(View view, int code, String url) {
         if (!(view instanceof WebView)) {
             return;
@@ -277,9 +283,15 @@ public final class DayWebView {
                 }
                 break;
             case 3:
+                restoreReloadCacheMode(web);
                 web.stopLoading();
                 break;
             case 4:
+                web.reload();
+                break;
+            case 5:
+                if (!reloadCacheModes.containsKey(web)) reloadCacheModes.put(web, web.getSettings().getCacheMode());
+                web.getSettings().setCacheMode(android.webkit.WebSettings.LOAD_NO_CACHE);
                 web.reload();
                 break;
             default:

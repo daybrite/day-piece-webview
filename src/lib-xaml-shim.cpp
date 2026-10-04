@@ -1207,6 +1207,13 @@ void day_webview_xaml_stop(void *handle) {
     if (c && c->webview)
         c->webview->Stop();
 }
+void day_webview_xaml_force_reload(void *handle) {
+    if (auto *c = find_ctx(handle); c && c->webview) {
+        c->webview->CallDevToolsProtocolMethod(L"Page.reload", L"{\"ignoreCache\":true}",
+            wrl::Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
+                [](HRESULT, LPCWSTR)->HRESULT { return S_OK; }).Get());
+    }
+}
 void day_webview_xaml_reload(void *handle) {
     auto *c = find_ctx(handle);
     if (c && c->webview)

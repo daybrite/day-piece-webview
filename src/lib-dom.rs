@@ -95,6 +95,7 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
 fn update(backend: &mut Dom, h: &DomHandle, patch: &WebPatch) {
     match patch {
         WebPatch::Load(url) => load(backend, h, url),
+        WebPatch::ForceReload => {} // No iframe API can guarantee a server reload.
         WebPatch::Reload => {
             // Re-assign whatever we last set. Nothing to do before the first load.
             if let Some(url) = LAST_SRC.with(|m| m.borrow().get(h).cloned()) {

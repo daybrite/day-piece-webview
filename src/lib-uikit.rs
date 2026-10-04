@@ -304,6 +304,9 @@ fn update(_backend: &mut Uikit, h: &Retained<UIView>, patch: &WebPatch) {
             WebPatch::Stop => {
                 let _: () = msg_send![web, stopLoading];
             }
+            WebPatch::ForceReload => {
+                let _: *mut AnyObject = msg_send![web, reloadFromOrigin];
+            }
             WebPatch::Reload => {
                 let _: *mut AnyObject = msg_send![web, reload];
             }
