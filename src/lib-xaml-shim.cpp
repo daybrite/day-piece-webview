@@ -29,6 +29,7 @@
 // must be installed separately where the OS does not supply it (including CI runners).
 
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h> // JsonObject::Insert needs the IMap definitions
 #include <winrt/Windows.Data.Json.h>
 #include <sstream>
 #include <iomanip>
@@ -1102,7 +1103,7 @@ void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
                 const auto sourcePath=to_utf8(url.Path());const auto slash=sourcePath.rfind('/');
                 std::string name=part.substr(0,equal),value=part.substr(equal+1),domain=to_utf8(url.Host()),path=slash!=std::string::npos && slash>0?sourcePath.substr(0,slash):"/";bool secure=false,httpOnly=false;double expiry=-1;
                 while(std::getline(parts,part,';')) {auto start=part.find_first_not_of(" ");if(start!=std::string::npos)part=part.substr(start);auto equal=part.find('=');auto key=part.substr(0,equal);for(auto &ch:key)ch=static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));auto val=equal==std::string::npos?std::string():part.substr(equal+1);
-                    if(key=="domain")domain=val;else if(key=="path")path=val;else if(key=="secure")secure=true;else if(key=="httponly")httpOnly=true;else if(key=="max-age")expiry=std::max(0.0,static_cast<double>(std::time(nullptr))+std::stod(val));else if(key=="expires"&&expiry<0){std::tm time{};std::istringstream date(val);date>>std::get_time(&time,"%a, %d %b %Y %H:%M:%S GMT");if(!date.fail())expiry=static_cast<double>(_mkgmtime(&time));}
+                    if(key=="domain")domain=val;else if(key=="path")path=val;else if(key=="secure")secure=true;else if(key=="httponly")httpOnly=true;else if(key=="max-age")expiry=(std::max)(0.0,static_cast<double>(std::time(nullptr))+std::stod(val));else if(key=="expires"&&expiry<0){std::tm time{};std::istringstream date(val);date>>std::get_time(&time,"%a, %d %b %Y %H:%M:%S GMT");if(!date.fail())expiry=static_cast<double>(_mkgmtime(&time));}
                 }
                 wrl::ComPtr<ICoreWebView2Cookie> cookie;HRESULT hr=manager->CreateCookie(hs(name.c_str()).c_str(),hs(value.c_str()).c_str(),hs(domain.c_str()).c_str(),hs(path.c_str()).c_str(),&cookie);
                 if(SUCCEEDED(hr)){cookie->put_IsSecure(secure);cookie->put_IsHttpOnly(httpOnly);if(expiry>=0)cookie->put_Expires(expiry);hr=manager->AddOrUpdateCookie(cookie.Get());}

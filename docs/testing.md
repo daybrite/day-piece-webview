@@ -226,3 +226,8 @@ The physical Escape test waited for a slow page's loading indicator, pressed Esc
 the address editor retained focus, then verified loading ended and the previous document
 remained visible. This exposed and validated Day AppKit's Escape accelerator routing fix.
 The iOS activity sheet was also inspected in the simulator without choosing a target.
+
+Windows CI compilation fixes: the XAML/WinUI shim explicitly includes the WinRT collections
+projection used by `JsonObject::Insert`, and shields its cookie-expiry `std::max` call from
+the Windows SDK macro, as it already does for `std::min`. Native Windows builds remain
+required to validate the C++ shim; host Rust checks do not compile this platform arm.
