@@ -266,3 +266,9 @@ The corrected walkthrough passed 55/55 applicable steps on an API 36 ARM Android
 and an iPhone simulator. The native Qt startup test and 20 Node tests passed locally.
 Harmony's Rust/ArkTS/signed HAP build passed with the installed API 18 SDK; its emulator
 was not run locally, so the phone/tablet runtime assertions await CI.
+
+DOM load notifications are checked by `tests/browser.mjs`: the resource worker's startup
+blank document is ignored, requested loads and reloads notify `on_load`, cross-origin pages
+use the assigned URL, and disposing a view removes its listener. Day-News's
+`native-reader-interactions.yaml` checks that the notification arms visibility-triggered
+reader extraction in Chromium, as well as the native toolkits.

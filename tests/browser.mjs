@@ -107,3 +107,33 @@ test('cross-origin or destroyed frames answer with an error instead of stranding
     assert.equal(events[0][1], 124);
     assert.match(events[0][2], /^0\u001fError\u001f.*cross-origin/);
 });
+
+// Load reporting is independent of the optional bundled-site click policy.
+test('load reports skip startup blank, repeat for reload, support cross-origin, and dispose', () => {
+    const frame = new EventTarget(), events = [];
+    let dispose;
+    const observe = runInNewContext(`${arm}\nobserve_browser_load`, {
+        URL, Uint32Array, crypto: {getRandomValues: a=>a.fill(123)}, navigator: {},
+        dayHost: {dom: {
+            element: () => frame,
+            emit: (...args) => events.push(args),
+            onRelease: (_id, fn) => { dispose = fn; },
+        }},
+    });
+    observe(7);
+    frame.src = 'https://example.test/reader.html';
+    frame.contentWindow = {location: {href: 'about:blank'}};
+    frame.dispatchEvent(new Event('load'));
+    assert.deepEqual(events, []);
+    frame.contentWindow.location.href = frame.src;
+    frame.dispatchEvent(new Event('load'));
+    frame.dispatchEvent(new Event('load'));
+    assert.deepEqual(events, [[7, 0, frame.src], [7, 0, frame.src]]);
+    frame.src = 'https://publication.test/article';
+    Object.defineProperty(frame.contentWindow, 'location', {get() { throw new Error('cross-origin'); }});
+    frame.dispatchEvent(new Event('load'));
+    assert.deepEqual(events.at(-1), [7, 0, frame.src]);
+    dispose();
+    frame.dispatchEvent(new Event('load'));
+    assert.equal(events.length, 3);
+});

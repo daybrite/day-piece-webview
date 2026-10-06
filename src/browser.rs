@@ -7,6 +7,7 @@ day_bridge::bridge! {
     #[day_bridge::declare]
     extern "day" {
         fn attach_browser(id: i32, base: &str);
+        fn observe_browser_load(id: i32);
         fn resource_namespace() -> Result<f64, day_bridge::Error>;
         fn attach_resources(id: i32, base: &str, start: &str);
         fn resource_reply(token: i32, status: i32, headers: &str, body: &[u8]);
@@ -66,6 +67,19 @@ day_bridge::bridge! {
             }
             dayHost.dom.emit(id, req, reply);
         }
+        function observe_browser_load(id) {
+            const frame = dayHost.dom.element(id);
+            function loaded() {
+                let url = frame.src || 'about:blank';
+                try { url = frame.contentWindow.location.href; } catch {}
+                // Resource-backed frames initially load an internal blank document
+                // while their worker starts. It is not the requested page's load.
+                if (url === 'about:blank' && frame.src !== 'about:blank') return;
+                dayHost.dom.emit(id, 0, url);
+            }
+            frame.addEventListener('load', loaded);
+            dayHost.dom.onRelease(id, () => frame.removeEventListener('load', loaded));
+        }
         function attach_browser(id, base) {
             const frame = dayHost.dom.element(id);
             const site = new URL(base, document.baseURI);
@@ -104,9 +118,15 @@ day_bridge::bridge! {
     #[day_bridge::impl(rust, platforms = [other])]
     fn resource_reply(token:i32,status:i32,headers:&str,body:&[u8]) {let _=(token,status,headers,body);}
     #[day_bridge::impl(rust, platforms = [other])]
+    fn observe_browser_load(id: i32) { let _ = id; }
+    #[day_bridge::impl(rust, platforms = [other])]
     fn attach_browser(id: i32, base: &str) { let _ = (id, base); }
     #[day_bridge::impl(rust, platforms = [other])]
     fn eval_browser(id: i32, req: f64, script: &str) { let _ = (id, req, script); }
+}
+
+pub(crate) fn observe_load(id: i32) {
+    observe_browser_load(id);
 }
 
 pub(crate) fn attach(id: i32, base: &str) {
