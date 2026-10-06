@@ -44,7 +44,15 @@ the bundled page, not the later provider screenshot. In CI the `harmony-renderin
 depends on the whole demo matrix; an unrelated target failure can skip this check. Do not count
 a skipped verifier as evidence of successful painting.
 
+A screenshot waits for the page's renderer before Day's own ArkUI checkpoint: the module's
+`settle` (the `DayPieceModule` hook, docs/extending.md in Day) arms four animation frames in
+every live page, lets any CSS transition run out, and polls for the result, capped at two
+seconds, because under the emulator's
+software GL the painted page trails the DOM a script just changed by seconds, and a capture
+taken on the ArkUI checkpoint alone showed the previous state. The cap keeps a hidden or
+mid-load page (no frames) from stalling the capture.
+
 For failures, inspect the dayscript report, screenshot artifacts, device logs, runtime ABI
 report, and ArkWeb renderer-exit messages. The host-side `tests/harmony-controller.mjs` harness
-covers queueing, attachment, errors, and disposal. Native resource interception is exercised
+covers queueing, attachment, errors, disposal, and the settle wait. Native resource interception is exercised
 by the emulator walkthrough, not by that Node harness.

@@ -138,6 +138,43 @@ export class Controller {
     }
   }
 
+  // Before a dayscript screenshot (`settle` in Index.ets): resolve once the page has committed
+  // a renderer frame holding its current DOM. ArkWeb paints on its own thread, trailing the
+  // DOM a script just changed by frames (seconds under the emulator's software GL), and
+  // ArkUI's render checkpoint never sees that work. Four animation frames in the page put the
+  // commit through the compositor's pipeline (a frame is on screen two or three begin-frames
+  // after the one that drew it, and under software GL each of those is long), and a CSS
+  // transition the change started (a toolbar sliding away) runs out first: finite, unlike an
+  // animation, which a capture never waits for. A page that paints none (hidden, mid-load) runs
+  // out the cap instead, so a capture is late at worst, never stuck. A view with no page yet
+  // has nothing to wait for.
+  settle(cap: number = 2000): Promise<void> {
+    if (this.disposed || this.failure !== '' || !this.ready) {
+      return Promise.resolve();
+    }
+    const arm: string = '(()=>{const w=window;w.__daySettled=w.__daySettled||0;' +
+      'const t=(w.__daySettle=(w.__daySettle||0)+1);' +
+      'let n=4;const done=()=>{const busy=(document.getAnimations?document.getAnimations():[])' +
+      '.some(a=>a instanceof CSSTransition&&a.playState==="running");' +
+      'if(busy||--n>0)requestAnimationFrame(done);else w.__daySettled=t};' +
+      'requestAnimationFrame(done);return String(t)})()';
+    const deadline: number = Date.now() + cap;
+    return this.native.runJavaScript(arm).then((raw: string): Promise<void> => {
+      const token: string = evalPayload(raw);
+      return this.settled(token, deadline);
+    }).catch((): void => {});
+  }
+
+  private settled(token: string, deadline: number): Promise<void> {
+    return this.native.runJavaScript('String(window.__daySettled)').then((raw: string): Promise<void> => {
+      if (evalPayload(raw) === token || Date.now() >= deadline || this.disposed) {
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve: () => void) => setTimeout(resolve, 16))
+        .then((): Promise<void> => this.settled(token, deadline));
+    });
+  }
+
   private finish(request: number, payload: string): void {
     // Disposing a node or losing its renderer may already have answered this request.
     if (this.pending.delete(request)) {

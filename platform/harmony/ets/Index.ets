@@ -211,9 +211,18 @@ function dispose(id: number): void {
   }
 }
 
+// A dayscript screenshot waits for every live view's renderer frame (Controller.settle),
+// all views at once.
+function settle(): Promise<void> {
+  const waits: Promise<void>[] = [];
+  instances.forEach((live: DayWebViewInstance) => { waits.push(live.controller.settle()); });
+  return Promise.all(waits).then((): void => {});
+}
+
 export const dayPiece: DayPieceModule = {
   kind: 'day.piece.webview',
   make: make,
   update: update,
-  dispose: dispose
+  dispose: dispose,
+  settle: settle
 };

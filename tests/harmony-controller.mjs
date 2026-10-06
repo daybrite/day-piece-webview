@@ -17,7 +17,7 @@ const webview = { WebCookieManager: {
   configCookieSync: (url, cookie, privateMode, httpOnly) => cookieCalls.push(['write', url, cookie, privateMode, httpOnly]),
 } };
 const { Controller, evalPayload } = runInNewContext(
-  `${stripTypeScriptTypes(source)}\n({ Controller, evalPayload })`, { console, webview },
+  `${stripTypeScriptTypes(source)}\n({ Controller, evalPayload })`, { console, webview, setTimeout },
 );
 
 function setup(runJavaScript = () => Promise.resolve('1\x1fvalue')) {
@@ -163,4 +163,35 @@ test('force reload evicts the ArkWeb resource cache before navigation, without t
   const s=setup();s.controller.attach();s.controller.command('forceReload','');
   assert.deepEqual(s.commands,[['cache',true],['reload']]);
   assert.equal(cookieCalls.length,0);
+});
+
+
+test('a capture settles on the frame the page commits after its latest change', async () => {
+  // The page answers the arm with a token and reports it settled on the third poll.
+  let polls = 0;
+  const scripts = [];
+  const s = setup(script => {
+    scripts.push(script);
+    if (script.includes('requestAnimationFrame')) return Promise.resolve('"7"');
+    polls += 1;
+    return Promise.resolve(polls < 3 ? '6' : '7');
+  });
+  s.controller.attach();
+  await s.controller.settle();
+  assert.equal(polls, 3);
+  assert.match(scripts[0], /let n=4;.*requestAnimationFrame\(done\)/);
+});
+
+test('a page that never commits a frame runs out the cap, and a bare view settles at once', async () => {
+  let calls = 0;
+  const s = setup(() => { calls += 1; return Promise.resolve(calls === 1 ? '3' : '2'); });
+  await s.controller.settle(40); // not attached: nothing to wait for
+  assert.equal(calls, 0);
+  s.controller.attach();
+  const start = Date.now();
+  await s.controller.settle(40);
+  assert.ok(Date.now() - start >= 30 && calls >= 2, `polled ${calls} times`);
+  const failing = setup(() => Promise.reject(new Error('renderer lost')));
+  failing.controller.attach();
+  await failing.controller.settle(40); // a lost renderer never blocks the capture
 });
