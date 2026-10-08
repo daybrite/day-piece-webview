@@ -17,7 +17,7 @@ const webview = { WebCookieManager: {
   configCookieSync: (url, cookie, privateMode, httpOnly) => cookieCalls.push(['write', url, cookie, privateMode, httpOnly]),
 } };
 const { Controller, evalPayload } = runInNewContext(
-  `${stripTypeScriptTypes(source)}\n({ Controller, evalPayload })`, { console, webview, setTimeout },
+  `${stripTypeScriptTypes(source)}\n({ Controller, evalPayload })`, { console, webview, setTimeout, clearTimeout },
 );
 
 function setup(runJavaScript = () => Promise.resolve('1\x1fvalue')) {
@@ -194,4 +194,26 @@ test('a page that never commits a frame runs out the cap, and a bare view settle
   const failing = setup(() => Promise.reject(new Error('renderer lost')));
   failing.controller.attach();
   await failing.controller.settle(40); // a lost renderer never blocks the capture
+});
+
+test('an engine that never answers runs out the cap rather than holding the capture', async () => {
+  // A renderer stuck in page script leaves every runJavaScript pending forever: measured on the
+  // OpenHarmony emulator, where lottie-web swapping in an animation wedges ArkWeb's renderer.
+  const stuck = setup(() => new Promise(() => {}));
+  stuck.controller.attach();
+  const start = Date.now();
+  await stuck.controller.settle(40);
+  assert.ok(Date.now() - start >= 30, 'resolved before the cap');
+  // Arming answers, then the polls never do.
+  let calls = 0;
+  const stalled = setup(() => (calls++ === 0 ? Promise.resolve('"1"') : new Promise(() => {})));
+  stalled.controller.attach();
+  await stalled.controller.settle(40);
+  assert.equal(calls, 2);
+});
+
+test('an engine that throws instead of answering never blocks the capture', async () => {
+  const s = setup(() => { throw new Error('17100001 Init error'); });
+  s.controller.attach();
+  await s.controller.settle(40);
 });

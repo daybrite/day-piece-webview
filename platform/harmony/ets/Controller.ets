@@ -148,6 +148,11 @@ export class Controller {
   // animation, which a capture never waits for. A page that paints none (hidden, mid-load) runs
   // out the cap instead, so a capture is late at worst, never stuck. A view with no page yet
   // has nothing to wait for.
+  //
+  // The cap is a timer of its own, not a check between replies: a renderer stuck in page script
+  // never answers `runJavaScript` at all (measured on the OpenHarmony emulator, where lottie-web
+  // swapping in an animation wedges ArkWeb's shared renderer), and a deadline that is only read
+  // when a reply arrives would then hold every later capture forever.
   settle(cap: number = 2000): Promise<void> {
     if (this.disposed || this.failure !== '' || !this.ready) {
       return Promise.resolve();
@@ -159,10 +164,23 @@ export class Controller {
       'if(busy||--n>0)requestAnimationFrame(done);else w.__daySettled=t};' +
       'requestAnimationFrame(done);return String(t)})()';
     const deadline: number = Date.now() + cap;
-    return this.native.runJavaScript(arm).then((raw: string): Promise<void> => {
-      const token: string = evalPayload(raw);
-      return this.settled(token, deadline);
-    }).catch((): void => {});
+    let timer: number = -1;
+    const expired: Promise<void> = new Promise<void>((resolve: () => void) => {
+      timer = setTimeout(resolve, cap);
+    });
+    let committed: Promise<void>;
+    try {
+      committed = this.native.runJavaScript(arm).then((raw: string): Promise<void> => {
+        const token: string = evalPayload(raw);
+        return this.settled(token, deadline);
+      }).catch((): void => {});
+    } catch (err) {
+      // ArkWeb throws synchronously, rather than rejecting, for a controller that lost its page.
+      committed = Promise.resolve();
+    }
+    return Promise.race([committed, expired]).then((): void => {
+      clearTimeout(timer);
+    });
   }
 
   private settled(token: string, deadline: number): Promise<void> {

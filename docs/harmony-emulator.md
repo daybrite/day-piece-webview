@@ -50,7 +50,8 @@ every live page, lets any CSS transition run out, and polls for the result, capp
 seconds, because under the emulator's
 software GL the painted page trails the DOM a script just changed by seconds, and a capture
 taken on the ArkUI checkpoint alone showed the previous state. The cap keeps a hidden or
-mid-load page (no frames) from stalling the capture.
+mid-load page (no frames) from stalling the capture, and it is a timer rather than a deadline
+read between replies: a renderer stuck in page script answers no `runJavaScript` at all.
 
 For failures, inspect the dayscript report, screenshot artifacts, device logs, runtime ABI
 report, and ArkWeb renderer-exit messages. The host-side `tests/harmony-controller.mjs` harness
