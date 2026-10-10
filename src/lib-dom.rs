@@ -52,14 +52,19 @@ fn load(backend: &mut Dom, h: &DomHandle, url: &str) {
 }
 
 fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
-    if p.profile.private { return backend.element("div"); }
+    if p.profile.private {
+        return backend.element("div");
+    }
     let h = backend.element("iframe");
     super::browser::observe_load(h.0 as i32);
+    if let Some(labels) = &p.tabs {
+        super::browser::tabs(h.0 as i32, labels);
+    }
     backend.set_attr(&h, "allow", "autoplay; fullscreen; gamepad");
     backend.set_attr(&h, "allowfullscreen", "");
-    if let Some(provider)=&p.resources {
-        super::browser::resources(h.0 as i32,&provider.base_url(),&p.url);
-        LAST_SRC.with(|m|m.borrow_mut().insert(h,p.url.clone()));
+    if let Some(provider) = &p.resources {
+        super::browser::resources(h.0 as i32, &provider.base_url(), &p.url);
+        LAST_SRC.with(|m| m.borrow_mut().insert(h, p.url.clone()));
     } else if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the bundled site deploys under `assets/data/` beside
         // the host page (web.rs), so a relative src is same-origin and the browser resolves

@@ -39,6 +39,10 @@ static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 #ifdef DAY_WEBVIEW_QT_ENGINE
 
 #include <QWebEnginePage>
+#include <QWebEngineNewWindowRequest>
+#include <QWebEngineContextMenuRequest>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QWebEngineHistory>
 #include <QWebEngineSettings>
 #include <QWebEngineFullScreenRequest>
@@ -182,6 +186,38 @@ protected:
     }
 };
 
+class TabWebEngineView : public QWebEngineView {
+public:
+    void (*tabCb)(uint64_t, const char *, bool) = nullptr;
+    uint64_t tabId = 0;
+    QString foregroundLabel, backgroundLabel;
+    void connectTabs() {
+        QObject::disconnect(page(), &QWebEnginePage::newWindowRequested, this, nullptr);
+        QObject::connect(page(), &QWebEnginePage::newWindowRequested, this,
+            [this](QWebEngineNewWindowRequest &request) {
+                if (!tabCb || !request.isUserInitiated() || request.requestedUrl().isEmpty()) return;
+                auto url=request.requestedUrl().toEncoded();
+                tabCb(tabId,url.constData(),request.destination()==QWebEngineNewWindowRequest::InNewBackgroundTab);
+            });
+    }
+protected:
+    void contextMenuEvent(QContextMenuEvent *event) override {
+        if (!tabCb) { QWebEngineView::contextMenuEvent(event); return; }
+        auto request = lastContextMenuRequest();
+        auto menu = createStandardContextMenu();
+        if (request && !request->linkUrl().isEmpty()) {
+            const auto url = request->linkUrl().toEncoded();
+            auto first = menu->actions().isEmpty() ? nullptr : menu->actions().first();
+            auto foreground = new QAction(foregroundLabel, menu);
+            auto background = new QAction(backgroundLabel, menu);
+            QObject::connect(foreground, &QAction::triggered, this, [this,url] { tabCb(tabId,url.constData(),false); });
+            QObject::connect(background, &QAction::triggered, this, [this,url] { tabCb(tabId,url.constData(),true); });
+            menu->insertAction(first,foreground); menu->insertAction(first,background);
+        }
+        menu->exec(event->globalPos()); delete menu;
+    }
+};
+
 class DayWebView : public QWidget {
 public:
     QWebEngineView *view = nullptr;
@@ -241,7 +277,7 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
         return w;
     }
 
-    QWebEngineView *v = new QWebEngineView();
+    QWebEngineView *v = new TabWebEngineView();
     const QString prefix = QString::fromUtf8(inline_path_prefix ? inline_path_prefix : "");
     auto state=profileState(QString::fromUtf8(profile_key),QString::fromUtf8(profile_directory),private_mode);
     state->views.insert(v);
@@ -269,6 +305,17 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
         g_sessions[session] = v;
     w->load(QString::fromUtf8(url));
     return w;
+}
+
+void day_webview_tabs(void *w, const char *foreground, const char *background,
+                      void (*callback)(uint64_t,const char *,bool)) {
+    auto self=static_cast<DayWebView *>(w);
+    auto view=dynamic_cast<TabWebEngineView *>(self->view);
+    if (!view) return;
+    view->tabCb=callback; view->tabId=self->id;
+    view->foregroundLabel=QString::fromUtf8(foreground);
+    view->backgroundLabel=QString::fromUtf8(background);
+    view->connectTabs();
 }
 
 void day_webview_set_eval_cb(void (*cb)(uint64_t, uint64_t, const char *)) { g_eval_cb = cb; }
@@ -347,7 +394,7 @@ void day_webview_eval(void *w, uint64_t req, const char *script) {
                         if(!removed && ++*attempts < 50)return;
                         cleanup->stop();cleanup->deleteLater();
                         state->profile=makeProfile(state);
-                        for(const auto &info:pages)if(info.view){QPointer<QWebEnginePage> old=info.view->page();auto page=new DayWebPage(state->profile,info.view);page->id=info.id;page->pathPrefix=info.prefix;page->linkCb=info.link;page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);info.view->setPage(page);if(old)old->deleteLater();}
+                        for(const auto &info:pages)if(info.view){QPointer<QWebEnginePage> old=info.view->page();auto page=new DayWebPage(state->profile,info.view);page->id=info.id;page->pathPrefix=info.prefix;page->linkCb=info.link;page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);info.view->setPage(page);if(auto tabs=dynamic_cast<TabWebEngineView *>(info.view.data()))tabs->connectTabs();if(old)old->deleteLater();}
                         if(removed)reply("true");else if(g_eval_cb)g_eval_cb(id,req,day_webview_eval_error("could not remove profile data").c_str());
                     });
                     cleanup->start(100);
@@ -475,6 +522,7 @@ void day_webview_stop(void *) {}
 void day_webview_reload(void *) {}
 void day_webview_force_reload(void *) {}
 
+void day_webview_tabs(void *, const char *, const char *, void (*)(uint64_t,const char *,bool)) {}
 void day_webview_set_eval_cb(void (*cb)(uint64_t, uint64_t, const char *)) { g_eval_cb = cb; }
 
 // No engine to evaluate in, but the reply is still mandatory: the Rust future is only resolved by a

@@ -64,3 +64,18 @@ link_copied = Link copied.
 share_failed = The sharing action could not be opened.
 
 copy_failed = Link could not be copied.
+
+new_tab = New Tab
+close_tab = Close Tab
+reopen_tab = Reopen Closed Tab
+next_tab = Next Tab
+previous_tab = Previous Tab
+move_tab_before = Move Tab Earlier
+move_tab_after = Move Tab Later
+duplicate_tab = Duplicate Tab
+menu_tabs = Tabs
+open_link_new_tab = Open Link in New Tab
+open_link_background_tab = Open Link in Background Tab
+
+native_tabs = Use native tabs
+native_tabs_hint = Use system window tabs or toolkit tab controls where available. Turn off to use app-drawn tabs. Existing pages stay open when switching.

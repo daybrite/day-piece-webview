@@ -238,6 +238,7 @@ pub struct WebProps {
     pub resources: Option<ResourceProvider>,
     /// On Apple backends, report user-activated links in ordinary documents as well.
     pub external_links: bool,
+    pub tabs: Option<TabLinkLabels>,
     pub url: String,
     /// The [`WebSession`] this view belongs to, or `0` for none. A non-zero id asks the backend to
     /// hand back the session's existing native view instead of creating one, so the loaded page
@@ -659,6 +660,7 @@ struct EvalShared {
 day_core::tls_group! {
     /// Request ids start at 1 so 0 stays free for the URL report, which shares this channel.
     static PRIVATE_BLOCKED_NODES: RefCell<std::collections::HashSet<RNode>> = RefCell::new(std::collections::HashSet::new());
+    static REQUEST_NODES: RefCell<HashMap<u64, RNode>> = RefCell::new(HashMap::new());
     static NEXT_REQ: Cell<u64> = const { Cell::new(1) };
     static PENDING: RefCell<HashMap<u64, Rc<EvalShared>>> = RefCell::new(HashMap::new());
     /// Callback-shaped requests (the dayscript `web_eval` step, via day-core's
@@ -672,6 +674,7 @@ day_core::tls_group! {
 /// `web_eval` step callback. A reply for a dropped future finds nothing pending and is
 /// discarded.
 fn resolve(req: u64, payload: &str) {
+    REQUEST_NODES.with(|p| p.borrow_mut().remove(&req));
     if let Some(done) = PENDING_CB.with(|p| p.borrow_mut().remove(&req)) {
         done(decode(payload).map_err(|e| e.to_string()));
         return;
@@ -708,6 +711,7 @@ fn register_script_eval() {
                 v
             });
             let wrapped = wrap_script(script);
+            REQUEST_NODES.with(|p| p.borrow_mut().insert(req, node));
             PENDING_CB.with(|p| p.borrow_mut().insert(req, done));
             with_tree(|t| {
                 t.patch(
@@ -835,7 +839,10 @@ impl Future for EvalFuture {
         if let Some(result) = self.shared.result.borrow_mut().take() {
             return Poll::Ready(result);
         }
-        if self.blocked.get_untracked() {
+        let Some(blocked) = day_reactive::untrack(|| self.blocked.try_get()) else {
+            return Poll::Ready(Err(EvalError::ViewGone));
+        };
+        if blocked {
             return Poll::Ready(Err(EvalError::Unsupported));
         }
         // Dispatch on first poll, not at construction, so an eval that is never awaited never runs.
@@ -844,10 +851,11 @@ impl Future for EvalFuture {
             if eval_support() != day_spec::Support::Native {
                 return Poll::Ready(Err(EvalError::Unsupported));
             }
-            let Some(node) = self.node.get_untracked() else {
+            let Some(node) = day_reactive::untrack(|| self.node.try_get()).flatten() else {
                 return Poll::Ready(Err(EvalError::ViewGone));
             };
             let (req, script) = (self.req, self.script.take().unwrap_or_default());
+            REQUEST_NODES.with(|p| p.borrow_mut().insert(req, node));
             PENDING.with(|p| p.borrow_mut().insert(req, self.shared.clone()));
             with_tree(|t| t.patch(node, Box::new(WebPatch::Eval { req, script }), false));
             // An arm that fails a request without reaching the engine replies from inside that
@@ -865,6 +873,7 @@ impl Future for EvalFuture {
 
 impl Drop for EvalFuture {
     fn drop(&mut self) {
+        REQUEST_NODES.with(|p| p.borrow_mut().remove(&self.req));
         PENDING.with(|p| p.borrow_mut().remove(&self.req));
     }
 }
@@ -897,8 +906,63 @@ pub fn eval_support() -> day_spec::Support {
 
 /// A native web view bound to `url`. Attach command triggers with `.go()/.back()/.forward()/
 /// .stop()/.reload()`; fire them (`Trigger::notify`) from buttons.
+/// A request from a link, modifier click, or a new-window navigation. The source
+/// remains alive; the application creates a separately owned browsing context.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NewTabRequest {
+    pub url: String,
+    pub background: bool,
+}
+/// App-localized labels for native link menus.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TabLinkLabels {
+    pub foreground: String,
+    pub background: String,
+}
+const NEW_TAB_REPORT: f64 = -4.0;
+#[cfg(any(
+    all(target_os = "macos", any(feature = "appkit", feature = "gtk")),
+    all(target_os = "ios", feature = "uikit"),
+    feature = "qt",
+    all(feature = "gtk", not(target_os = "macos"), not(windows)),
+    windows
+))]
+fn new_tab_event(url: String, background: bool) -> Event {
+    Event::Custom {
+        tag: "webview:new-tab",
+        num: NEW_TAB_REPORT,
+        text: serde_json::to_string(&NewTabRequest { url, background }).unwrap_or_default(),
+    }
+}
+
+// A document-start fallback for engines that don't expose pointer modifiers in
+// navigation requests. It carries only link intent; normal navigation remains native.
+#[cfg(all(target_os = "ios", feature = "uikit"))]
+const TAB_MODIFIER_SCRIPT: &str = r#"(() => {
+  const click = e => {
+    const a = e.composedPath().find(n => n?.tagName === 'A' && n.href);
+    if (!a || !(e.metaKey || e.ctrlKey || e.button === 1)) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    location.href = 'day-tab://open?url=' + encodeURIComponent(a.href) + '&background=' + (e.shiftKey ? '0' : '1');
+  };
+  addEventListener('click', click, true); addEventListener('auxclick', click, true);
+})();"#;
+#[cfg(all(target_os = "ios", feature = "uikit"))]
+fn tab_scheme_request(input: &str) -> Option<NewTabRequest> {
+    let url = url::Url::parse(input).ok()?;
+    if url.scheme() != "day-tab" {
+        return None;
+    }
+    let pairs: HashMap<_, _> = url.query_pairs().into_owned().collect();
+    Some(NewTabRequest {
+        url: pairs.get("url")?.clone(),
+        background: pairs.get("background").is_some_and(|v| v == "1"),
+    })
+}
+
 /// What `.on_link(…)` stores: decides what a navigation to a URL should do.
 type LinkDecider = Rc<dyn Fn(&str) -> LinkPolicy>;
+type NewTabHandler = (TabLinkLabels, Rc<dyn Fn(&NewTabRequest)>);
 
 pub struct WebView {
     profile: WebProfile,
@@ -917,6 +981,7 @@ pub struct WebView {
     inline_assets: bool,
     transparent: bool,
     on_link: Option<LinkDecider>,
+    tabs: Option<NewTabHandler>,
     on_load: Option<Rc<dyn Fn()>>,
 }
 
@@ -946,6 +1011,7 @@ pub fn web_view(url: Signal<String>) -> WebView {
         inline_assets: false,
         transparent: false,
         on_link: None,
+        tabs: None,
         on_load: None,
         resources: None,
     }
@@ -1070,6 +1136,23 @@ impl WebView {
     /// main thread with the target URL; without it every external link is
     /// [`LinkPolicy::OpenSystem`]. The closure may do arbitrary in-app work (navigate the day
     /// app, log) and return [`LinkPolicy::Ignore`].
+    /// Handle a request for a separate tab without replacing the source document.
+    /// Labels must be localized by the application. Background requests preserve focus.
+    pub fn on_new_tab(
+        mut self,
+        foreground_label: impl Into<String>,
+        background_label: impl Into<String>,
+        f: impl Fn(&NewTabRequest) + 'static,
+    ) -> Self {
+        self.tabs = Some((
+            TabLinkLabels {
+                foreground: foreground_label.into(),
+                background: background_label.into(),
+            },
+            Rc::new(f),
+        ));
+        self
+    }
     pub fn on_external_link(mut self, f: impl Fn(&str) -> LinkPolicy + 'static) -> Self {
         self.on_link = Some(Rc::new(f));
         self
@@ -1122,6 +1205,7 @@ impl Piece for WebView {
             inline_assets,
             transparent,
             on_link,
+            tabs,
             on_load,
             mut resources,
         } = self;
@@ -1160,6 +1244,7 @@ impl Piece for WebView {
                 resources.clone()
             },
             external_links: on_link.is_some(),
+            tabs: tabs.as_ref().map(|(labels, _)| labels.clone()),
             url: if blocked_private {
                 "about:blank".into()
             } else {
@@ -1190,6 +1275,26 @@ impl Piece for WebView {
             },
         );
 
+        day_reactive::Scope::current().on_cleanup(move || {
+            let requests = REQUEST_NODES.with(|p| {
+                p.borrow()
+                    .iter()
+                    .filter_map(|(req, owner)| (*owner == node).then_some(*req))
+                    .collect::<Vec<_>>()
+            });
+            for req in requests {
+                REQUEST_NODES.with(|p| p.borrow_mut().remove(&req));
+                if let Some(done) = PENDING_CB.with(|p| p.borrow_mut().remove(&req)) {
+                    done(Err(EvalError::ViewGone.to_string()));
+                }
+                if let Some(shared) = PENDING.with(|p| p.borrow_mut().remove(&req)) {
+                    *shared.result.borrow_mut() = Some(Err(EvalError::ViewGone));
+                    if let Some(waker) = shared.waker.borrow_mut().take() {
+                        waker.wake();
+                    }
+                }
+            }
+        });
         if blocked_private {
             PRIVATE_BLOCKED_NODES.with(|nodes| nodes.borrow_mut().insert(node));
             day_reactive::Scope::current().on_cleanup(move || {
@@ -1267,6 +1372,12 @@ impl Piece for WebView {
                 }
                 if *num >= 1.0 {
                     resolve(*num as u64, text);
+                } else if *num == NEW_TAB_REPORT {
+                    if let Some((_, callback)) = &tabs
+                        && let Ok(request) = serde_json::from_str::<NewTabRequest>(text)
+                    {
+                        callback(&request);
+                    }
                 } else if *num == LINK_REPORT {
                     // An inline site's navigation left the site: the arm already canceled it
                     // (§8.3 events are enqueue-only, so the native side can't ask), and the
@@ -1284,7 +1395,7 @@ impl Piece for WebView {
                         }
                         LinkPolicy::Ignore => {}
                     }
-                } else {
+                } else if *num == 0.0 {
                     url.set(text.clone());
                     if let Some(callback) = &on_load {
                         callback();
@@ -1343,9 +1454,23 @@ pub trait WebViewBuilder: Sized {
     fn session(self, session: WebSession) -> Self;
     fn start_page(self, page: impl Into<String>) -> Self;
     fn on_external_link(self, f: impl Fn(&str) -> LinkPolicy + 'static) -> Self;
+    fn on_new_tab(
+        self,
+        foreground: impl Into<String>,
+        background: impl Into<String>,
+        f: impl Fn(&NewTabRequest) + 'static,
+    ) -> Self;
 }
 
 impl WebViewBuilder for WebView {
+    fn on_new_tab(
+        self,
+        foreground: impl Into<String>,
+        background: impl Into<String>,
+        f: impl Fn(&NewTabRequest) + 'static,
+    ) -> Self {
+        WebView::on_new_tab(self, foreground, background, f)
+    }
     fn url_binding(self, url: Signal<String>) -> Self {
         WebView::url_binding(self, url)
     }
@@ -1387,6 +1512,14 @@ impl WebViewBuilder for WebView {
 impl<Inner: WebViewBuilder + day_pieces::prelude::Piece> WebViewBuilder
     for day_pieces::Decorated<Inner>
 {
+    fn on_new_tab(
+        self,
+        foreground: impl Into<String>,
+        background: impl Into<String>,
+        f: impl Fn(&NewTabRequest) + 'static,
+    ) -> Self {
+        self.map_inner(|inner| inner.on_new_tab(foreground, background, f))
+    }
     fn url_binding(self, url: Signal<String>) -> Self {
         self.map_inner(|inner| inner.url_binding(url))
     }
@@ -1428,6 +1561,18 @@ impl<Inner: WebViewBuilder + day_pieces::prelude::Piece> WebViewBuilder
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unpolled_evaluation_survives_its_tab_being_closed() {
+        let scope = day_reactive::Scope::child();
+        let mut future = scope.enter(|| JsHandle::new().eval("1 + 1"));
+        scope.dispose();
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            Pin::new(&mut future).poll(&mut context),
+            Poll::Ready(Err(EvalError::ViewGone))
+        ));
+    }
 
     #[test]
     fn profiles_keep_identity_and_privacy_separate() {

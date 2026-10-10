@@ -237,3 +237,43 @@ WebView2 uses `Page.reload` with `ignoreCache`. Android temporarily applies `LOA
 and restores its previous mode after completion or Stop. ArkWeb must evict the application's
 shared resource cache before refreshing; other WebViews may consequently refetch resources.
 The iframe backend reports Unsupported because it cannot guarantee cache bypass.
+
+## Document tabs
+
+The demo uses Day's `TabSet` and `document_tabs`. Each document owns its browser,
+address editor, navigation history, profile choice and console state. Switching
+or moving a tab retains its native webview; closing it disposes the page scope
+and resolves outstanding evaluations with `ViewGone`. Private tabs pass their
+profile choice to newly opened tabs and are excluded from Reopen Closed Tab.
+
+`WebView::on_new_tab(foreground_label, background_label, callback)` installs an
+application callback receiving `NewTabRequest { url, background }`. Both menu
+labels come from the application's generated localization accessors. This event
+is separate from `on_external_link`: a new-tab request must not replace the
+originating document. The app owns creating and selecting the new tab.
+
+The adapters use engine new-window/navigation events and native link menus where
+available. DOM handles modifier clicks and link menus only in same-origin frames;
+browser origin restrictions prevent intercepting remote iframe content. A URL
+request does not transfer a JavaScript opener, POST body, or live popup browsing
+context. Native macOS groups support the system tab tear-off and merge affordances. Other
+backends currently reorder within a collection; pinned tabs and persisted session
+restoration remain application policy. `dayscript/tabs.yaml` tests the
+demo's native-page retention and independent state.
+
+The persisted **Native tabs** preference changes presentation live. On macOS, AppKit,
+Qt and GTK use real `NSWindowTabGroup` document windows; the existing webview moves
+between its document window and the emulated host without reloading. Elsewhere,
+Qt, libadwaita and WinUI use their document-tab controls, and Android uses Material
+TabLayout. UIKit deliberately uses the emulated document strip: `UITabBarController`
+represents application sections, and UIKit exposes no public Safari browser-tab
+container. The ArkUI NDK and DOM backends also use the emulated strip.
+
+Apps can supply `DocumentTabs::chrome` and `layout` to control the entire emulated
+strip and its placement. `TabActions` supplies shared add/close commands and scoped
+drag/drop reordering. The preference changes chrome and window placement; it does
+not recreate document scopes, browser history, page JavaScript, or undo state.
+
+Settings uses Day's singleton preferences-window API with a compact independent
+window on desktop. Mobile platforms use their separate-window mechanism when
+available; iPhone falls back to a page sheet.

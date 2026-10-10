@@ -81,6 +81,20 @@ public final class DayWebView {
         private CustomViewCallback callback;
         private int previousFlags;
         FullscreenClient(WebView web) { this.web = web; }
+        @Override public boolean onCreateWindow(WebView source, boolean dialog, boolean userGesture, android.os.Message result) {
+            if (!userGesture || !TAB_LABELS.containsKey(source)) return false;
+            WebView pending=new WebView(source.getContext());
+            final boolean[] delivered={false};
+            pending.setWebViewClient(new WebViewClient() {
+                @Override @SuppressWarnings("deprecation") public boolean shouldOverrideUrlLoading(WebView view,String url) {
+                    if(!delivered[0]) { delivered[0]=true; newTab(source,url,false); pending.post(pending::destroy); }
+                    return true;
+                }
+            });
+            ((WebView.WebViewTransport)result.obj).setWebView(pending); result.sendToTarget();
+            source.postDelayed(() -> {if(!delivered[0]) {delivered[0]=true;pending.destroy();}},10000);
+            return true;
+        }
         @Override @SuppressWarnings("deprecation")
         public void onShowCustomView(View view, CustomViewCallback done) {
             if (custom != null) { done.onCustomViewHidden(); return; }
@@ -119,6 +133,43 @@ public final class DayWebView {
         }
     }
 
+    private static final java.util.WeakHashMap<WebView,String[]> TAB_LABELS=new java.util.WeakHashMap<>();
+    private static void newTab(WebView view,String url,boolean background) {
+        Long id=IDS.get(view); if(id==null || url==null || url.isEmpty()) return;
+        try { org.json.JSONObject request=new org.json.JSONObject(); request.put("url",url); request.put("background",background); DayBridge.nativeOnEvent(id,12,-4.0,request.toString()); }
+        catch(org.json.JSONException ignored) {}
+    }
+    private static final String TAB_MODIFIERS="(() => {if(window.__dayTabModifiers)return;window.__dayTabModifiers=true;const click=e=>{const a=e.composedPath().find(n=>n?.tagName==='A'&&n.href);if(!a||!(e.metaKey||e.ctrlKey||e.button===1))return;e.preventDefault();e.stopImmediatePropagation();location.href='day-tab://open?url='+encodeURIComponent(a.href)+'&background='+(e.shiftKey?'0':'1');};addEventListener('click',click,true);addEventListener('auxclick',click,true);})();";
+    public static void configureTabs(View view,String foreground,String background) {
+        if(!(view instanceof WebView)) return;
+        WebView web=(WebView)view;
+        TAB_LABELS.put(web,new String[]{foreground,background});
+        web.getSettings().setSupportMultipleWindows(true);
+        if(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(web,TAB_MODIFIERS,java.util.Collections.singleton("*"));
+        }
+        web.evaluateJavascript(TAB_MODIFIERS,null);
+
+        web.setOnLongClickListener(v -> {
+            WebView.HitTestResult hit=web.getHitTestResult();
+            if(hit==null || (hit.getType()!=WebView.HitTestResult.SRC_ANCHOR_TYPE && hit.getType()!=WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE)) return false;
+            String url=hit.getExtra(); if(url==null) return false;
+            android.widget.PopupMenu menu=new android.widget.PopupMenu(web.getContext(),web);
+            menu.getMenu().add(foreground).setOnMenuItemClickListener(item -> {newTab(web,url,false);return true;});
+            menu.getMenu().add(background).setOnMenuItemClickListener(item -> {newTab(web,url,true);return true;});
+            menu.show();return true;
+        });
+    }
+
+    public static void release(View view) {
+        if(!(view instanceof WebView))return;
+        WebView web=(WebView)view;
+        IDS.remove(web);TAB_LABELS.remove(web);
+        web.stopLoading();web.setWebChromeClient(null);web.setWebViewClient(null);
+        if(web.getParent() instanceof android.view.ViewGroup)((android.view.ViewGroup)web.getParent()).removeView(web);
+        web.destroy();
+    }
+
     public static boolean supportsProfiles() {
         return WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE);
     }
@@ -155,6 +206,7 @@ public final class DayWebView {
             @Override
             public void onPageFinished(WebView view, String finishedUrl) {
                 restoreReloadCacheMode(view);
+                if(TAB_LABELS.containsKey(view)) view.evaluateJavascript(TAB_MODIFIERS,null);
                 // kind 12 = a piece-defined Custom event (§8.2's open channel): the front-end's
                 // cx.on reads the text payload as the URL. (No longer hijacking kind 1 = TextChanged.)
                 DayBridge.nativeOnEvent(id, 12, 0.0, finishedUrl);
@@ -163,6 +215,10 @@ public final class DayWebView {
             @Override
             @SuppressWarnings("deprecation") // the String overload runs on every API level
             public boolean shouldOverrideUrlLoading(WebView view, String target) {
+                if(TAB_LABELS.containsKey(view) && target.startsWith("day-tab://")) {
+                    android.net.Uri request=android.net.Uri.parse(target);
+                    newTab(view,request.getQueryParameter("url"),"1".equals(request.getQueryParameter("background")));return true;
+                }
                 if (!inline || target.startsWith(inlinePrefix)) {
                     return false; // in-site (or remote mode): let the WebView navigate
                 }

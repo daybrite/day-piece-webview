@@ -45,6 +45,7 @@ struct NavIvars {
     /// permits ordinary document navigation; `external_links` separately intercepts clicks.
     inline_base: RefCell<Option<String>>,
     external_links: Cell<bool>,
+    tabs: RefCell<Option<TabLinkLabels>>,
 }
 
 /// WKNavigationActionPolicy, hand-rolled like the class itself: Cancel = 0, Allow = 1.
@@ -61,6 +62,41 @@ define_class!(
     unsafe impl NSObjectProtocol for WebNav {}
 
     impl WebNav {
+        #[unsafe(method(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
+        fn new_window(&self, _web: &WKWebView, _configuration: &AnyObject, action: &AnyObject, _features: &AnyObject) -> *mut AnyObject {
+            if self.ivars().tabs.borrow().is_some() {
+                let req: Retained<NSURLRequest> = unsafe { msg_send![action, request] };
+                if let Some(url)=req.URL().and_then(|url|url.absoluteString()) {
+                    day_uikit::emit(self.ivars().node.get(),new_tab_event(url.to_string(),false));
+                }
+            }
+            std::ptr::null_mut()
+        }
+        #[unsafe(method(webView:contextMenuConfigurationForElement:completionHandler:))]
+        fn link_menu(&self, _web: &WKWebView, element: &AnyObject, done: &block2::DynBlock<dyn Fn(*mut AnyObject)>) {
+            let url: Option<Retained<NSURL>> = unsafe { msg_send![element, linkURL] };
+            let labels=self.ivars().tabs.borrow().clone();
+            let (Some(url),Some(labels))=(url.and_then(|u|u.absoluteString()),labels) else { done.call((std::ptr::null_mut(),)); return; };
+            let url=url.to_string(); let id=self.ivars().node.get();
+            let provider=RcBlock::new(move |suggested: *mut AnyObject| -> *mut AnyObject {
+                let mut actions:Vec<Retained<AnyObject>>=Vec::new();
+                for (label,background) in [(&labels.foreground,false),(&labels.background,true)] {
+                    let target=url.clone();
+                    let handler=RcBlock::new(move |_action:*mut AnyObject| { day_uikit::emit(id,new_tab_event(target.clone(),background)); });
+                    let action: Retained<AnyObject> = unsafe { msg_send![objc2::class!(UIAction), actionWithTitle: &*NSString::from_str(label), image: std::ptr::null::<AnyObject>(), identifier: std::ptr::null::<AnyObject>(), handler: &*handler] };
+                    actions.push(action);
+                }
+                if !suggested.is_null() {
+                    let count:usize=unsafe { msg_send![suggested,count] };
+                    for i in 0..count { let action:Retained<AnyObject>=unsafe { msg_send![suggested,objectAtIndex:i] }; actions.push(action); }
+                }
+                let children=objc2_foundation::NSArray::from_retained_slice(&actions);
+                let menu:Retained<AnyObject>=unsafe { msg_send![objc2::class!(UIMenu), menuWithTitle: &*NSString::new(), children: &*children] };
+                Retained::autorelease_ptr(menu)
+            });
+            let config:Retained<AnyObject>=unsafe { msg_send![objc2::class!(UIContextMenuConfiguration), configurationWithIdentifier:std::ptr::null::<AnyObject>(), previewProvider:std::ptr::null::<AnyObject>(), actionProvider:&*provider] };
+            done.call((Retained::as_ptr(&config) as *mut AnyObject,));
+        }
         // WKNavigationDelegate's webView:didFinishNavigation:, which WKWebView calls on the
         // object we set as its navigationDelegate; responding to the selector is all that's
         // required.
@@ -86,8 +122,16 @@ define_class!(
             let subframe = !frame.is_null() && !unsafe { msg_send![&*frame, isMainFrame] };
             let req: Retained<NSURLRequest> = unsafe { msg_send![action, request] };
             let url = req.URL().and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default();
+            if self.ivars().tabs.borrow().is_some() && let Some(request)=tab_scheme_request(&url) {
+                day_uikit::emit(self.ivars().node.get(), new_tab_event(request.url,request.background));
+                handler.call((POLICY_CANCEL,)); return;
+            }
             let kind: isize = unsafe { msg_send![action, navigationType] };
             let activated = kind == 0; // WKNavigationTypeLinkActivated
+            if self.ivars().tabs.borrow().is_some() && frame.is_null() {
+                day_uikit::emit(self.ivars().node.get(),new_tab_event(url,false));
+                handler.call((POLICY_CANCEL,)); return;
+            }
             let external = match &*self.ivars().inline_base.borrow() {
                 Some(base) => !subframe && !url.starts_with(base.as_str()) && url != "about:blank",
                 None => self.ivars().external_links.get() && super::external_document_link(
@@ -112,6 +156,7 @@ impl WebNav {
             node: Cell::new(node),
             inline_base: RefCell::new(None),
             external_links: Cell::new(false),
+            tabs: RefCell::new(None),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -169,6 +214,7 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
             if let Some(nav) = m.borrow().get(&key) {
                 nav.ivars().node.set(id);
                 nav.ivars().external_links.set(p.external_links);
+                *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
             }
         });
         return view;
@@ -178,6 +224,16 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
     let config =
         super::resources_apple::configuration(p.resources.as_ref().map(ResourceProvider::id), mtm);
     super::storage_apple::configure(&config, &p.profile);
+    if p.tabs.is_some() {
+        unsafe {
+            let script: *mut AnyObject = msg_send![objc2::class!(WKUserScript), alloc];
+            let script: *mut AnyObject = msg_send![script, initWithSource: &*NSString::from_str(TAB_MODIFIER_SCRIPT), injectionTime: 0isize, forMainFrameOnly: false];
+            let script = Retained::from_raw(script).expect("WKUserScript init");
+            let controller: Retained<AnyObject> = msg_send![&*config, userContentController];
+            let _: () = msg_send![&*controller,addUserScript:&*script];
+        }
+    }
+
     let web: Retained<WKWebView> = unsafe {
         msg_send![WKWebView::alloc(mtm), initWithFrame: objc2_foundation::NSRect::ZERO, configuration: &*config]
     };
@@ -193,7 +249,11 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
         }
     }
     let nav = WebNav::new(mtm, id);
+    unsafe {
+        let _: () = msg_send![&*web, setUIDelegate: &*nav];
+    }
     nav.ivars().external_links.set(p.external_links);
+    *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
     let _: () = unsafe { msg_send![&web, setNavigationDelegate: &*nav] };
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the assets tree is loose files in the app bundle, so
@@ -252,7 +312,18 @@ fn node_of(view: &Retained<UIView>) -> Option<NodeId> {
 /// Same contract as the AppKit arm (see its `eval`): the front-end's wrapper makes the result
 /// always a JS string, so the completion's `id` is an `NSString` and no JSON walk is needed.
 fn eval(web: &WKWebView, node: NodeId, req: u64, script: &str) {
-    if super::storage_apple::request(web, script, move |text| day_uikit::emit(node, Event::Custom { tag: "webview:eval", num: req as f64, text })) { return; }
+    if super::storage_apple::request(web, script, move |text| {
+        day_uikit::emit(
+            node,
+            Event::Custom {
+                tag: "webview:eval",
+                num: req as f64,
+                text,
+            },
+        )
+    }) {
+        return;
+    }
     let js = NSString::from_str(script);
     let handler = RcBlock::new(move |result: *mut AnyObject, error: *mut NSError| {
         let payload = if !result.is_null() {

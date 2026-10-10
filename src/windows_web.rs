@@ -32,6 +32,7 @@ impl Host {
         id: NodeId,
         emit: fn(NodeId, Event),
         profile: WebProfile,
+        tabs: bool,
     ) -> Result<Self, String> {
         let loading = Rc::new(Cell::new(false));
         let title = Rc::new(RefCell::new(String::new()));
@@ -92,6 +93,12 @@ impl Host {
                     });
                 },
             );
+        }
+        if tabs {
+            builder = builder.with_new_window_req_handler(move |url, _| {
+                emit(id, new_tab_event(url, false));
+                wry::NewWindowResponse::Deny
+            });
         }
         let view = builder
             .with_url(url)

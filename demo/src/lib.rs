@@ -12,6 +12,7 @@ use day_piece_webview::{
     JsHandle, LinkPolicy, NavigationState, eval_support, inline_support, support, web_view,
     web_view_inline,
 };
+use std::collections::HashMap;
 
 // The mobile entry point; a plain cargo desktop build enters through src/main.rs.
 day::day_start!(options: window(), root);
@@ -41,6 +42,8 @@ enum Source {
 #[derive(Clone, Copy)]
 struct Browser {
     source: Signal<Source>,
+    home_start: Signal<Option<String>>,
+    resource_base: Signal<String>,
     location: Signal<String>,
     address: Signal<String>,
     navigation: Signal<NavigationState>,
@@ -57,6 +60,7 @@ struct Browser {
 impl Browser {
     fn home(self) {
         self.status.set(String::new());
+        self.home_start.set(None);
         self.source.set(Source::Home);
         self.location.set(String::new());
         self.address.set("day://home".into());
@@ -157,11 +161,389 @@ fn home_localization() -> String {
     let text = serde_json::json!({"title":res::str::home_title().format(),"heading":res::str::home_heading().format(),"intro":res::str::home_intro().format(),"loaded":res::str::home_loaded().format(),"app":res::str::home_app_link().format(),"web":res::str::home_web_link().format(),"next":res::str::home_next().format(),"second":res::str::second_title().format(),"second_text":res::str::second_text().format()});
     format!("if (window.dayDemoLocalize) window.dayDemoLocalize({text})")
 }
+#[derive(Clone, Copy)]
+struct BrowserCommands {
+    browser: Browser,
+    private: Signal<bool>,
+    generation: Signal<u64>,
+    tools: Signal<bool>,
+    address_focus: Signal<bool>,
+}
+#[derive(Clone, Copy)]
+struct BrowserTabs {
+    tabs: TabSet<String>,
+    serial: Signal<u64>,
+    urls: Signal<HashMap<String, String>>,
+    titles: Signal<HashMap<String, String>>,
+    profiles: Signal<HashMap<String, bool>>,
+    views: Signal<HashMap<String, BrowserCommands>>,
+    closed: Signal<Vec<String>>,
+}
+impl BrowserTabs {
+    fn open(self, url: String, foreground: bool) {
+        let private = self
+            .active()
+            .map(|view| view.private.get_untracked())
+            .unwrap_or_else(|| day::prefs::get("demo.web.incognito").as_deref() == Some("true"));
+        self.open_profile(url, foreground, private);
+    }
+    fn open_profile(self, url: String, foreground: bool, private: bool) {
+        self.serial.update(|n| *n += 1);
+        let key = self.serial.get_untracked().to_string();
+        batch(|| {
+            self.urls.update(|urls| {
+                urls.insert(key.clone(), url);
+            });
+            self.profiles.update(|profiles| {
+                profiles.insert(key.clone(), private);
+            });
+            self.tabs.open(key, foreground);
+        });
+    }
+    fn active(self) -> Option<BrowserCommands> {
+        self.tabs
+            .selected()
+            .and_then(|key| self.views.get().get(&key).copied())
+    }
+    fn close(self, key: &String) {
+        if let Some(view) = self.views.get_untracked().get(key)
+            && !view.private.get_untracked()
+        {
+            let url = tab_url(view.browser);
+            self.closed.update(|closed| {
+                closed.push(url);
+                if closed.len() > 20 {
+                    closed.remove(0);
+                }
+            });
+        }
+        self.tabs.close(key);
+        self.urls.update(|urls| {
+            urls.remove(key);
+        });
+        self.titles.update(|titles| {
+            titles.remove(key);
+        });
+        self.profiles.update(|profiles| {
+            profiles.remove(key);
+        });
+        if self.tabs.keys().is_empty() {
+            self.open(String::new(), true);
+        }
+    }
+    fn close_selected(self) {
+        if let Some(key) = self.tabs.selected() {
+            self.close(&key);
+        }
+    }
+    fn reopen(self) {
+        let mut closed = self.closed.get_untracked();
+        if let Some(url) = closed.pop() {
+            self.closed.set(closed);
+            self.open(url, true);
+        }
+    }
+    fn duplicate(self) {
+        if let Some(view) = self.active() {
+            self.open_profile(tab_url(view.browser), true, view.private.get_untracked());
+        }
+    }
+    fn move_selected(self, after: bool) {
+        if let Some(key) = self.tabs.selected()
+            && let Some(at) = self.tabs.keys().iter().position(|k| k == &key)
+        {
+            self.tabs
+                .move_to(&key, if after { at + 1 } else { at.saturating_sub(1) });
+        }
+    }
+}
+fn canonical_tab_url(browser: Browser, url: &str) -> String {
+    let source = browser.source.get_untracked();
+    if source == Source::Home
+        && (url.starts_with("file:")
+            || url.starts_with("qrc:")
+            || url.starts_with("resource:")
+            || support() == Support::Emulated)
+    {
+        let prefix = format!("/{}/", res::assets::site.as_str());
+        if let Some((_, path)) = url.split_once(&prefix) {
+            return format!("day://home/{path}");
+        }
+    }
+    if source == Source::Resources {
+        let base = browser.resource_base.get_untracked();
+        if !base.is_empty()
+            && let Some(path) = url.strip_prefix(&base)
+        {
+            return format!("day://resources/{path}");
+        }
+    }
+    url.to_owned()
+}
+fn tab_url(browser: Browser) -> String {
+    let location = browser.location.get_untracked();
+    if location.is_empty() {
+        browser.address.get_untracked()
+    } else {
+        canonical_tab_url(browser, &location)
+    }
+}
+fn tab_widget_id(tab: u64, base: &str) -> String {
+    if tab == 1 {
+        base.to_owned()
+    } else {
+        format!("{base}-tab-{tab}")
+    }
+}
 pub fn root() -> impl Piece {
+    let tabs = BrowserTabs {
+        tabs: TabSet::new(),
+        serial: Signal::new(0),
+        urls: Signal::new(HashMap::new()),
+        titles: Signal::new(HashMap::new()),
+        profiles: Signal::new(HashMap::new()),
+        views: Signal::new(HashMap::new()),
+        closed: Signal::new(Vec::new()),
+    };
+    let native_tabs =
+        Signal::new(day::prefs::get("demo.web.native-tabs").as_deref() != Some("false"));
+    watch(
+        move || native_tabs.get(),
+        move |value, _| {
+            day::prefs::set("demo.web.native-tabs", &value.to_string());
+        },
+    );
+    day::register_preferences_with(
+        day::WindowOptions {
+            title: res::str::browser_settings().format(),
+            size: Size::new(520.0, 480.0),
+            ..Default::default()
+        },
+        move || preferences(tabs, native_tabs),
+    );
+    tabs.open(String::new(), true);
+    app_menu_reactive(move || {
+        tabs.active()
+            .map(|commands| browser_menus(tabs, commands))
+            .unwrap_or_default()
+    });
+    column((document_tabs(
+        tabs.tabs,
+        res::str::new_tab(),
+        res::str::close_tab(),
+        move |key| {
+            tabs.titles
+                .get()
+                .get(key)
+                .filter(|title| !title.is_empty())
+                .cloned()
+                .unwrap_or_else(|| res::str::new_tab().format())
+        },
+        move |key| browser_page(tabs, key.clone()),
+    )
+    .native(move || native_tabs.get())
+    .on_new(move || tabs.open(String::new(), true))
+    .on_close(move |key| tabs.close(&key))
+    .id("browser-tabs")
+    .grow(),))
+}
+fn tab_controls(tabs: BrowserTabs, tab_number: u64) -> impl Piece {
+    row((
+        button(res::str::new_tab())
+            .icon(Symbol::Add)
+            .icon_only()
+            .compact()
+            .action(move || tabs.open(String::new(), true))
+            .id(tab_widget_id(tab_number, "tab-new"))
+            .width(40.0),
+        button(res::str::close_tab())
+            .icon(Symbol::Close)
+            .icon_only()
+            .compact()
+            .action(move || tabs.close_selected())
+            .id(tab_widget_id(tab_number, "tab-close"))
+            .width(40.0),
+        button(res::str::previous_tab())
+            .icon(Symbol::Back)
+            .icon_only()
+            .compact()
+            .action(move || tabs.tabs.select_next(true))
+            .id(tab_widget_id(tab_number, "tab-previous"))
+            .width(40.0),
+        button(res::str::next_tab())
+            .icon(Symbol::Forward)
+            .icon_only()
+            .compact()
+            .action(move || tabs.tabs.select_next(false))
+            .id(tab_widget_id(tab_number, "tab-next"))
+            .width(40.0),
+        button(res::str::move_tab_before())
+            .icon(Symbol::Back)
+            .icon_only()
+            .compact()
+            .action(move || tabs.move_selected(false))
+            .id(tab_widget_id(tab_number, "tab-move-before"))
+            .width(40.0),
+        button(res::str::move_tab_after())
+            .icon(Symbol::Forward)
+            .icon_only()
+            .compact()
+            .action(move || tabs.move_selected(true))
+            .id(tab_widget_id(tab_number, "tab-move-after"))
+            .width(40.0),
+    ))
+    .spacing(6.0)
+    .padding(6.0)
+}
+fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry> {
+    let BrowserCommands {
+        private: _,
+        browser,
+        generation,
+        tools,
+        address_focus,
+    } = commands;
+    vec![
+        sub_menu(
+            res::str::menu_file().format(),
+            vec![
+                menu_item(res::str::new_tab().format())
+                    .key("t")
+                    .id("browser-new-tab")
+                    .action(move || tabs.open(String::new(), true)),
+                menu_item(res::str::close_tab().format())
+                    .key("w")
+                    .id("browser-close-tab")
+                    .action(move || tabs.close_selected()),
+                menu_item(res::str::reopen_tab().format())
+                    .shortcut(Shortcut::new("t").shift())
+                    .enabled(!tabs.closed.get().is_empty())
+                    .action(move || tabs.reopen()),
+                menu_separator(),
+                menu_item(if day::share_support() == Support::Native {
+                    res::str::share().format()
+                } else {
+                    res::str::copy_link().format()
+                })
+                .id("browser-share")
+                .enabled(browser.can_share())
+                .action(move || browser.share()),
+            ],
+        )
+        .bar_role(MenuBarRole::File),
+        sub_menu(
+            res::str::menu_tabs().format(),
+            vec![
+                menu_item(res::str::next_tab().format())
+                    .shortcut(Shortcut::plain("Tab").control())
+                    .action(move || tabs.tabs.select_next(false)),
+                menu_item(res::str::previous_tab().format())
+                    .shortcut(Shortcut::plain("Tab").control().shift())
+                    .action(move || tabs.tabs.select_next(true)),
+                menu_separator(),
+                menu_item(res::str::move_tab_before().format())
+                    .action(move || tabs.move_selected(false)),
+                menu_item(res::str::move_tab_after().format())
+                    .action(move || tabs.move_selected(true)),
+                menu_item(res::str::duplicate_tab().format()).action(move || tabs.duplicate()),
+            ],
+        ),
+        sub_menu(
+            res::str::menu_go().format(),
+            vec![
+                menu_item(res::str::back().format())
+                    .id("browser-back")
+                    .key("[")
+                    .enabled(support() == Support::Native && browser.navigation.get().can_go_back)
+                    .action(move || browser.back.notify()),
+                menu_item(res::str::forward().format())
+                    .id("browser-forward")
+                    .key("]")
+                    .enabled(
+                        support() == Support::Native && browser.navigation.get().can_go_forward,
+                    )
+                    .action(move || browser.forward.notify()),
+                menu_separator(),
+                menu_item(res::str::home().format())
+                    .id("browser-home")
+                    .shortcut(Shortcut::plain("Home").alt())
+                    .action(move || {
+                        browser.home();
+                        generation.update(|n| *n = n.wrapping_add(1));
+                    }),
+            ],
+        ),
+        sub_menu(
+            res::str::menu_browser().format(),
+            vec![
+                menu_item(res::str::open_location().format())
+                    .id("browser-open-location")
+                    .key("l")
+                    .action(move || address_focus.set(true)),
+                menu_item(res::str::reload().format())
+                    .id("browser-reload")
+                    .key("r")
+                    .action(move || browser.reload.notify()),
+                menu_item(res::str::force_reload().format())
+                    .id("browser-force-reload")
+                    .shortcut(Shortcut::new("r").shift())
+                    .enabled(day_piece_webview::force_reload_support() == Support::Native)
+                    .action(move || browser.force_reload.notify()),
+                menu_item(res::str::stop().format())
+                    .id("browser-stop")
+                    .shortcut(Shortcut::plain("Escape"))
+                    .enabled(support() == Support::Native && browser.navigation.get().loading)
+                    .action(move || browser.stop.notify()),
+                menu_separator(),
+                menu_item(res::str::test_tools().format())
+                    .id("browser-tools")
+                    .checked(tools.get())
+                    .action(move || tools.set(!tools.get_untracked())),
+                menu_item(res::str::browser_settings().format())
+                    .id("browser-settings")
+                    .key(",")
+                    .action(|| {
+                        day::open_preferences();
+                    }),
+            ],
+        ),
+    ]
+}
+fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
+    let tab_number = tab_key.parse::<u64>().unwrap_or(1);
+    let initial = tabs
+        .urls
+        .get_untracked()
+        .get(&tab_key)
+        .cloned()
+        .unwrap_or_default();
+    let remote = !initial.is_empty()
+        && !initial.starts_with("day://home")
+        && !initial.starts_with("day://resources");
+    let initial_source = if initial.starts_with("day://resources") {
+        Source::Resources
+    } else if remote {
+        Source::Remote
+    } else {
+        Source::Home
+    };
+    let home_start = Signal::new(initial.strip_prefix("day://home/").map(str::to_owned));
+    let resource_start = Signal::new(
+        initial
+            .strip_prefix("day://resources/")
+            .unwrap_or("pages/index.html")
+            .to_owned(),
+    );
     let browser = Browser {
-        source: Signal::new(Source::Home),
-        location: Signal::new(String::new()),
-        address: Signal::new("day://home".into()),
+        source: Signal::new(initial_source),
+        home_start,
+        resource_base: Signal::new(String::new()),
+        location: Signal::new(if remote {
+            initial.clone()
+        } else {
+            String::new()
+        }),
+        address: Signal::new(if remote { initial } else { "day://home".into() }),
         navigation: Signal::new(NavigationState::default()),
         status: Signal::new(String::new()),
         received: Signal::new(String::new()),
@@ -173,10 +555,14 @@ pub fn root() -> impl Piece {
         reload: Trigger::new(),
         force_reload: Trigger::new(),
     };
-    let private = Signal::new(day::prefs::get("demo.web.incognito").as_deref() == Some("true"));
+    let private = Signal::new(
+        tabs.profiles
+            .get_untracked()
+            .get(&tab_key)
+            .copied()
+            .unwrap_or(false),
+    );
     let generation = Signal::new(0u64);
-    let clearing = Signal::new(false);
-    let settings = Signal::new(None::<String>);
     let tools = Signal::new(false);
     let address_focus = Signal::new(false);
     let script = Signal::new(String::new());
@@ -187,85 +573,39 @@ pub fn root() -> impl Piece {
             day::prefs::set("demo.web.incognito", &value.to_string());
         },
     );
-    app_menu_reactive(move || {
-        vec![
-            sub_menu(
-                res::str::menu_file().format(),
-                vec![
-                    menu_item(if day::share_support() == Support::Native {
-                        res::str::share().format()
-                    } else {
-                        res::str::copy_link().format()
-                    })
-                    .id("browser-share")
-                    .enabled(browser.can_share())
-                    .action(move || browser.share()),
-                    menu_role(MenuRole::CloseWindow),
-                ],
-            )
-            .bar_role(MenuBarRole::File),
-            sub_menu(
-                res::str::menu_go().format(),
-                vec![
-                    menu_item(res::str::back().format())
-                        .id("browser-back")
-                        .key("[")
-                        .enabled(
-                            support() == Support::Native && browser.navigation.get().can_go_back,
-                        )
-                        .action(move || browser.back.notify()),
-                    menu_item(res::str::forward().format())
-                        .id("browser-forward")
-                        .key("]")
-                        .enabled(
-                            support() == Support::Native && browser.navigation.get().can_go_forward,
-                        )
-                        .action(move || browser.forward.notify()),
-                    menu_separator(),
-                    menu_item(res::str::home().format())
-                        .id("browser-home")
-                        .shortcut(Shortcut::plain("Home").alt())
-                        .action(move || {
-                            browser.home();
-                            generation.update(|n| *n = n.wrapping_add(1));
-                        }),
-                ],
-            ),
-            sub_menu(
-                res::str::menu_browser().format(),
-                vec![
-                    menu_item(res::str::open_location().format())
-                        .id("browser-open-location")
-                        .key("l")
-                        .action(move || address_focus.set(true)),
-                    menu_item(res::str::reload().format())
-                        .id("browser-reload")
-                        .key("r")
-                        .action(move || browser.reload.notify()),
-                    menu_item(res::str::force_reload().format())
-                        .id("browser-force-reload")
-                        .shortcut(Shortcut::new("r").shift())
-                        .enabled(day_piece_webview::force_reload_support() == Support::Native)
-                        .action(move || browser.force_reload.notify()),
-                    menu_item(res::str::stop().format())
-                        .id("browser-stop")
-                        .shortcut(Shortcut::plain("Escape"))
-                        .enabled(support() == Support::Native && browser.navigation.get().loading)
-                        .action(move || browser.stop.notify()),
-                    menu_separator(),
-                    menu_item(res::str::test_tools().format())
-                        .id("browser-tools")
-                        .checked(tools.get())
-                        .action(move || tools.set(!tools.get_untracked())),
-                    menu_item(res::str::browser_settings().format())
-                        .id("browser-settings")
-                        .key(",")
-                        .action(move || settings.set(Some("settings".into()))),
-                ],
-            ),
-        ]
+    let commands = BrowserCommands {
+        private,
+        browser,
+        generation,
+        tools,
+        address_focus,
+    };
+    tabs.views.update(|views| {
+        views.insert(tab_key.clone(), commands);
     });
-    let key = move || (browser.source.get(), private.get(), generation.get());
+    let cleanup_key = tab_key.clone();
+    Scope::current().on_cleanup(move || {
+        tabs.views.update(|views| {
+            views.remove(&cleanup_key);
+        })
+    });
+    let title_key = tab_key.clone();
+    watch(
+        move || browser.navigation.get().title,
+        move |title, _| {
+            tabs.titles.update(|titles| {
+                titles.insert(title_key.clone(), title.clone());
+            });
+        },
+    );
+    let key = move || {
+        (
+            browser.source.get(),
+            private.get(),
+            generation.get(),
+            browser.home_start.get(),
+        )
+    };
     let polling = day::task(async move {
         loop {
             let requested = key();
@@ -306,64 +646,74 @@ pub fn root() -> impl Piece {
         },
     );
     column((
+        tab_controls(tabs, tab_number),
         column((
             row((
                 button(res::str::back())
                     .icon(Symbol::Back)
                     .icon_only()
+                    .compact()
                     .enabled(move || {
                         support() == Support::Native && browser.navigation.get().can_go_back
                     })
                     .action(move || browser.back.notify())
-                    .id("webview-back"),
+                    .id(tab_widget_id(tab_number, "webview-back")),
                 button(res::str::forward())
                     .icon(Symbol::Forward)
                     .icon_only()
+                    .compact()
                     .enabled(move || {
                         support() == Support::Native && browser.navigation.get().can_go_forward
                     })
                     .action(move || browser.forward.notify())
-                    .id("webview-forward"),
+                    .id(tab_widget_id(tab_number, "webview-forward")),
                 button(res::str::reload())
                     .icon(Symbol::Refresh)
                     .icon_only()
+                    .compact()
                     .action(move || browser.reload.notify())
-                    .id("webview-reload"),
+                    .id(tab_widget_id(tab_number, "webview-reload")),
                 button(res::str::stop())
                     .icon(Symbol::Stop)
                     .icon_only()
+                    .compact()
                     .enabled(move || {
                         support() == Support::Native && browser.navigation.get().loading
                     })
                     .action(move || browser.stop.notify())
-                    .id("webview-stop"),
+                    .id(tab_widget_id(tab_number, "webview-stop")),
                 button(res::str::home())
                     .icon(Symbol::Home)
                     .icon_only()
+                    .compact()
                     .action(move || {
                         browser.home();
                         generation.update(|n| *n = n.wrapping_add(1));
                     })
-                    .id("webview-home"),
+                    .id(tab_widget_id(tab_number, "webview-home")),
                 spacer().grow_w(),
                 when(
                     move || private.get(),
-                    || {
+                    move || {
                         label(res::str::private_badge())
                             .font(Font::Caption)
-                            .id("browser-private")
+                            .id(tab_widget_id(tab_number, "browser-private"))
                     },
                 ),
                 button(res::str::test_tools())
                     .icon(Symbol::Code)
                     .icon_only()
+                    .compact()
                     .action(move || tools.set(!tools.get_untracked()))
-                    .id("webview-tools"),
+                    .id(tab_widget_id(tab_number, "webview-tools")),
                 button(res::str::browser_settings())
                     .icon(Symbol::Settings)
                     .icon_only()
-                    .action(move || settings.set(Some("settings".into())))
-                    .id("webview-settings"),
+                    .compact()
+                    .action(|| {
+                        day::open_preferences();
+                    })
+                    .id(tab_widget_id(tab_number, "webview-settings")),
             ))
             .spacing(4.0)
             .align(VAlign::Center),
@@ -372,22 +722,24 @@ pub fn root() -> impl Piece {
                     .focused(address_focus)
                     .placeholder(res::str::address_hint())
                     .on_submit(move || browser.navigate())
-                    .id("webview-address")
+                    .id(tab_widget_id(tab_number, "webview-address"))
                     .grow_w(),
                 button(res::str::go())
                     .icon(Symbol::Forward)
                     .icon_only()
+                    .compact()
                     .action(move || browser.navigate())
-                    .id("webview-go"),
+                    .id(tab_widget_id(tab_number, "webview-go")),
                 button(res::str::open_external())
                     .image(res::vectors::open_external)
                     .icon_only()
+                    .compact()
                     .enabled(move || {
                         browser.location.get().starts_with("https://")
                             || browser.location.get().starts_with("http://")
                     })
                     .action(move || open_url(&browser.location.get_untracked()))
-                    .id("webview-open-external"),
+                    .id(tab_widget_id(tab_number, "webview-open-external")),
                 button(move || {
                     if day::share_support() == Support::Native {
                         res::str::share().format()
@@ -397,28 +749,55 @@ pub fn root() -> impl Piece {
                 })
                 .icon(Symbol::Share)
                 .icon_only()
+                .compact()
                 .enabled(move || browser.can_share())
                 .action(move || browser.share())
-                .id("webview-share"),
+                .id(tab_widget_id(tab_number, "webview-share")),
             ))
             .spacing(8.0)
             .align(VAlign::Center),
         ))
         .spacing(6.0)
         .padding(10.0),
-        each(items(move || vec![key()], |key| *key), move |slot| {
-            let (source, private, _) = slot.get();
+        each(items(move || vec![key()], |key| key.clone()), move |slot| {
+            let (source, private, _, _) = slot.get();
             if private && day_piece_webview::private_browsing_support() == Support::Unsupported {
                 return label(res::str::private_hint())
-                    .id("webview-unsupported")
+                    .id(tab_widget_id(tab_number, "webview-unsupported"))
                     .any();
             }
             let view = match source {
-                Source::Home => web_view_inline(res::assets::site).url_binding(browser.location),
-                Source::Resources => return resource_site(browser, private),
+                Source::Home => {
+                    let view = web_view_inline(res::assets::site).url_binding(browser.location);
+                    if let Some(path) = home_start.get_untracked() {
+                        view.start_page(path)
+                    } else {
+                        view
+                    }
+                }
+                Source::Resources => {
+                    return resource_site(
+                        browser,
+                        private,
+                        tabs,
+                        tab_number,
+                        resource_start.get_untracked(),
+                    );
+                }
                 Source::Remote => web_view(browser.location),
             };
             view.profile(demo_profile(private))
+                .on_new_tab(
+                    res::str::open_link_new_tab().format(),
+                    res::str::open_link_background_tab().format(),
+                    move |request| {
+                        tabs.open_profile(
+                            canonical_tab_url(browser, &request.url),
+                            !request.background,
+                            private,
+                        )
+                    },
+                )
                 .js(browser.js)
                 .go(browser.go)
                 .back(browser.back)
@@ -446,7 +825,7 @@ pub fn root() -> impl Piece {
                         });
                     }
                 })
-                .id("webview")
+                .id(tab_widget_id(tab_number, "webview"))
                 .any()
         })
         .grow(),
@@ -461,15 +840,19 @@ pub fn root() -> impl Piece {
             })
             .single_line()
             .grow_w()
-            .id("webview-title"),
+            .id(tab_widget_id(tab_number, "webview-title")),
             when(
                 move || browser.navigation.get().loading,
-                || spinner().frame(16.0, 16.0).id("browser-loading"),
+                move || {
+                    spinner()
+                        .frame(16.0, 16.0)
+                        .id(tab_widget_id(tab_number, "browser-loading"))
+                },
             ),
             label(move || browser.status.get())
                 .font(Font::Caption)
                 .single_line()
-                .id("browser-status"),
+                .id(tab_widget_id(tab_number, "browser-status")),
         ))
         .spacing(8.0)
         .padding(Insets::symmetric(10.0, 6.0)),
@@ -495,7 +878,7 @@ pub fn root() -> impl Piece {
                     row((
                         text_field(script)
                             .placeholder(res::str::js_hint())
-                            .id("webview-js")
+                            .id(tab_widget_id(tab_number, "webview-js"))
                             .grow_w(),
                         button(res::str::js_run())
                             .action(move || {
@@ -508,13 +891,13 @@ pub fn root() -> impl Piece {
                                 });
                             })
                             .enabled(|| eval_support() == Support::Native)
-                            .id("webview-js-run"),
+                            .id(tab_widget_id(tab_number, "webview-js-run")),
                     ))
                     .spacing(8.0),
                     label(move || answer.get())
                         .font(Font::Footnote)
                         .single_line()
-                        .id("webview-js-result"),
+                        .id(tab_widget_id(tab_number, "webview-js-result")),
                     label(move || {
                         let route = browser.received.get();
                         if route.is_empty() {
@@ -525,11 +908,12 @@ pub fn root() -> impl Piece {
                     })
                     .font(Font::Footnote)
                     .single_line()
-                    .id("webview-link"),
+                    .id(tab_widget_id(tab_number, "webview-link")),
                     row((
                         button(res::str::home_next())
                             .icon(Symbol::Forward)
                             .icon_only()
+                            .compact()
                             .enabled(move || browser.source.get() == Source::Home)
                             .action(move || {
                                 // Use an application navigation, like entering a URL. A script's
@@ -547,7 +931,7 @@ pub fn root() -> impl Piece {
                                     }
                                 });
                             })
-                            .id("webview-next-page"),
+                            .id(tab_widget_id(tab_number, "webview-next-page")),
                         button(res::str::resource_demo())
                             .action(move || {
                                 browser.location.set(String::new());
@@ -559,7 +943,7 @@ pub fn root() -> impl Piece {
                                     },
                                 );
                             })
-                            .id("resource-demo"),
+                            .id(tab_widget_id(tab_number, "resource-demo")),
                     ))
                     .spacing(8.0),
                 ))
@@ -568,59 +952,86 @@ pub fn root() -> impl Piece {
                 .padding(10.0)
             },
         ),
-        cover(settings, move |_: &String| {
-            column((
-                label(res::str::browser_settings()).font(Font::Title),
-                labeled(
-                    res::str::incognito_mode(),
-                    toggle(private).id("webview-incognito"),
-                ),
-                labeled(
-                    res::str::support_private(),
-                    support_label(
-                        day_piece_webview::private_browsing_support(),
-                        "webview-private-support",
-                    ),
-                ),
-                labeled(
-                    res::str::support_profiles(),
-                    support_label(
-                        day_piece_webview::profile_support(),
-                        "webview-profile-support",
-                    ),
-                ),
-                label(res::str::private_hint()).font(Font::Footnote),
-                button(res::str::forget_data())
-                    .action(move || {
-                        clearing.set(true);
-                        day::task(async move {
-                            let text = if browser.js.clear_data().await.is_ok() {
-                                generation.update(|n| *n = n.wrapping_add(1));
-                                res::str::data_cleared().format()
-                            } else {
-                                res::str::data_clear_failed().format()
-                            };
-                            answer.set(text);
-                            clearing.set(false);
-                        });
-                    })
-                    .enabled(move || {
-                        !clearing.get()
-                            && day_piece_webview::clear_data_support() == Support::Native
-                    })
-                    .id("webview-clear-data"),
-                label(move || answer.get())
-                    .font(Font::Footnote)
-                    .id("webview-data-result"),
-                button(res::str::settings_done())
-                    .action(move || settings.set(None))
-                    .id("webview-settings-done"),
-            ))
-            .spacing(12.0)
-            .padding(20.0)
-        })
-        .unrouted(),
     ))
+}
+fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
+    let window = day::current_window();
+    let private = Signal::new(day::prefs::get("demo.web.incognito").as_deref() == Some("true"));
+    let clearing = Signal::new(false);
+    let result = Signal::new(String::new());
+    watch(
+        move || private.get(),
+        move |value, _| {
+            day::prefs::set("demo.web.incognito", &value.to_string());
+            if let Some(commands) = tabs.active() {
+                commands.private.set(*value);
+            }
+        },
+    );
+    column((
+        label(res::str::browser_settings()).font(Font::Title),
+        labeled(
+            res::str::native_tabs(),
+            toggle(native_tabs).id("webview-native-tabs"),
+        ),
+        label(res::str::native_tabs_hint()).font(Font::Footnote),
+        labeled(
+            res::str::incognito_mode(),
+            toggle(private).id("webview-incognito"),
+        ),
+        labeled(
+            res::str::support_private(),
+            support_label(
+                day_piece_webview::private_browsing_support(),
+                "webview-private-support",
+            ),
+        ),
+        labeled(
+            res::str::support_profiles(),
+            support_label(
+                day_piece_webview::profile_support(),
+                "webview-profile-support",
+            ),
+        ),
+        label(res::str::private_hint()).font(Font::Footnote),
+        button(res::str::forget_data())
+            .action(move || {
+                let Some(commands) = tabs.active() else {
+                    return;
+                };
+                clearing.set(true);
+                day::task(async move {
+                    let cleared = commands.browser.js.clear_data().await.is_ok();
+                    if cleared && let Some(value) = commands.generation.try_get() {
+                        commands.generation.set(value.wrapping_add(1));
+                    }
+                    result.set(if cleared {
+                        res::str::data_cleared().format()
+                    } else {
+                        res::str::data_clear_failed().format()
+                    });
+                    clearing.set(false);
+                });
+            })
+            .enabled(move || {
+                !clearing.get()
+                    && tabs.active().is_some()
+                    && day_piece_webview::clear_data_support() == Support::Native
+            })
+            .id("webview-clear-data"),
+        label(move || result.get())
+            .font(Font::Footnote)
+            .id("webview-data-result"),
+        button(res::str::settings_done())
+            .action(move || {
+                if let Some(window) = &window {
+                    window.close();
+                }
+            })
+            .id("webview-settings-done"),
+    ))
+    .spacing(12.0)
+    .padding(20.0)
 }
 fn support_label(answer: Support, id: &'static str) -> impl Piece {
     label(match answer {
@@ -632,7 +1043,13 @@ fn support_label(answer: Support, id: &'static str) -> impl Piece {
     .id(id)
 }
 
-fn resource_site(browser: Browser, private: bool) -> AnyPiece {
+fn resource_site(
+    browser: Browser,
+    private: bool,
+    tabs: BrowserTabs,
+    tab_number: u64,
+    start: String,
+) -> AnyPiece {
     use day_piece_webview::{ResourceProvider, ResourceResponse, web_view_resources};
     // Localize on the UI thread; the provider itself runs on native IO workers.
     let title = res::str::resource_demo().format();
@@ -653,7 +1070,19 @@ fn resource_site(browser: Browser, private: bool) -> AnyPiece {
         _=>ResourceResponse::not_found(),
     }
     });
-    web_view_resources(provider, "pages/index.html")
+    browser.resource_base.set(provider.base_url());
+    web_view_resources(provider, &start)
+        .on_new_tab(
+            res::str::open_link_new_tab().format(),
+            res::str::open_link_background_tab().format(),
+            move |request| {
+                tabs.open_profile(
+                    canonical_tab_url(browser, &request.url),
+                    !request.background,
+                    private,
+                )
+            },
+        )
         .profile(demo_profile(private))
         .url_binding(browser.location)
         .js(browser.js)
@@ -663,7 +1092,7 @@ fn resource_site(browser: Browser, private: bool) -> AnyPiece {
         .stop(browser.stop)
         .reload(browser.reload)
         .force_reload(browser.force_reload)
-        .id("webview")
+        .id(tab_widget_id(tab_number, "webview"))
         .any()
 }
 

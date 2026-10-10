@@ -20,8 +20,17 @@ use day_spec::NodeId;
 const WEBVIEW_CLASS: &str = "dev/daybrite/day/piece/webview/DayWebView";
 
 pub(crate) fn capability(method: &str) -> day_spec::Support {
-    let supported = with_env(|env| env.dcall_static(WEBVIEW_CLASS, method, "()Z", &[]).ok().and_then(|value| value.z().ok()).unwrap_or(false));
-    if supported { day_spec::Support::Native } else { day_spec::Support::Unsupported }
+    let supported = with_env(|env| {
+        env.dcall_static(WEBVIEW_CLASS, method, "()Z", &[])
+            .ok()
+            .and_then(|value| value.z().ok())
+            .unwrap_or(false)
+    });
+    if supported {
+        day_spec::Support::Native
+    } else {
+        day_spec::Support::Unsupported
+    }
 }
 
 fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
@@ -49,11 +58,16 @@ fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
     with_env(|env| {
         // A Java throw (e.g. the staged DayWebView class missing) must not panic inside
         // realize: the panic unwinds the JNI up-call and aborts. Placeholder instead.
-        let made =
-            env.new_string(&url).ok().and_then(|url| {
-                let prefix = env.new_string(&prefix).ok()?;
-                let profile = env.new_string(if p.profile == WebProfile::default() { String::new() } else { p.profile.storage_key() }).ok()?;
-                day_android::try_make_view_on(
+        let made = env.new_string(&url).ok().and_then(|url| {
+            let prefix = env.new_string(&prefix).ok()?;
+            let profile = env
+                .new_string(if p.profile == WebProfile::default() {
+                    String::new()
+                } else {
+                    p.profile.storage_key()
+                })
+                .ok()?;
+            day_android::try_make_view_on(
                     env,
                     WEBVIEW_CLASS,
                     "makeWebView",
@@ -69,13 +83,30 @@ fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
                     ],
                 )
                 .ok()
-            });
+        });
         let view = made.unwrap_or_else(|| {
             log::warn!(
                 "day-piece-webview: DayWebView.makeWebView failed; substituting a placeholder"
             );
             day_android::placeholder_view(env, "web_view")
         });
+        if let Some(labels) = &p.tabs {
+            if let (Ok(foreground), Ok(background)) = (
+                env.new_string(&labels.foreground),
+                env.new_string(&labels.background),
+            ) {
+                let _ = env.dcall_static(
+                    WEBVIEW_CLASS,
+                    "configureTabs",
+                    "(Landroid/view/View;Ljava/lang/String;Ljava/lang/String;)V",
+                    &[
+                        JValue::Object(view.as_obj()),
+                        JValue::Object(&foreground),
+                        JValue::Object(&background),
+                    ],
+                );
+            }
+        }
         if p.transparent {
             let _ = env.dcall_static(
                 WEBVIEW_CLASS,
@@ -135,9 +166,20 @@ fn update(_backend: &mut Android, h: &AHandle, patch: &WebPatch) {
     });
 }
 
+fn release(_backend: &mut Android, handle: &AHandle) {
+    with_env(|env| {
+        let _ = env.dcall_static(
+            WEBVIEW_CLASS,
+            "release",
+            "(Landroid/view/View;)V",
+            &[JValue::Object(handle.0.as_obj())],
+        );
+    });
+}
+
 day_pieces::renderer!(day_android::RENDERERS, Android,
     kind: KIND, props: WebProps, patch: WebPatch,
-    make: make, update: update, measure: day_pieces::fill_measure);
+    make: make, update: update, measure: day_pieces::fill_measure, release: release);
 
 // Called by WebView's IO worker, never by the UI thread.
 #[unsafe(no_mangle)]

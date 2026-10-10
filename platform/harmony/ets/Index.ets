@@ -34,6 +34,10 @@ class DayWebViewInstance {
 
 class DayWebViewParams {
   id: number = 0;
+  tabs: boolean = false;
+  foregroundLabel: string = '';
+  backgroundLabel: string = '';
+  ui: UIContext | undefined = undefined;
   url: string = '';
   // Inline mode (docs/webview.md): the URL prefix of the bundled site under rawfile ('' =
   // remote mode). A main-document navigation outside it is blocked in onLoadIntercept and
@@ -66,6 +70,24 @@ function dayWebViewBuilder(params: DayWebViewParams) {
     .backgroundColor(params.transparent ? Color.Transparent : Color.White)
     .javaScriptAccess(true)
     .domStorageAccess(true)
+    .multiWindowAccess(params.tabs)
+    .javaScriptOnDocumentStart(params.tabs ? [{script: "(()=>{const click=e=>{const a=e.composedPath().find(n=>n?.tagName==='A'&&n.href);if(!a||!(e.metaKey||e.ctrlKey||e.button===1))return;e.preventDefault();e.stopImmediatePropagation();location.href='day-tab://open/'+(e.shiftKey?'0':'1')+'/'+encodeURIComponent(a.href);};addEventListener('click',click,true);addEventListener('auxclick',click,true);})();", scriptRules:['*']}] : [])
+    .onWindowNew((event) => {
+      if (params.tabs && event.isUserTrigger && event.targetUrl !== '') {
+        nativeEntry.pieceEvent(params.id,JSON.stringify({url:event.targetUrl,background:false}),-4);
+      }
+    })
+    .onContextMenuShow((event) => {
+      const url: string = event.param.getLinkUrl();
+      if (!params.tabs || url === '') return false;
+      params.ui?.getPromptAction().showActionMenu({buttons:[
+        {text:params.foregroundLabel,color:'#007DFF'},
+        {text:params.backgroundLabel,color:'#007DFF'}
+      ]}).then((result) => {
+        if(!params.state.isDisposed())nativeEntry.pieceEvent(params.id,JSON.stringify({url:url,background:result.index===1}),-4);
+      }).catch(() => {});
+      return true;
+    })
     .onControllerAttached(() => {
       console.info(`day-piece-webview: controller attached for ${params.id}`);
       setTimeout(() => {params.state.attach();if(params.resources)nativeEntry.pieceEvent(params.id,'day-web-'+params.id,-3);}, 0);
@@ -79,6 +101,14 @@ function dayWebViewBuilder(params: DayWebViewParams) {
       }
     })
     .onLoadIntercept((event) => {
+      if (event !== undefined && params.tabs && !params.state.isDisposed()) {
+        const request: string = event.data.getRequestUrl();
+        if (request.startsWith('day-tab://open/')) {
+          const parts: string[] = request.substring('day-tab://open/'.length).split('/');
+          nativeEntry.pieceEvent(params.id,JSON.stringify({url:decodeURIComponent(parts.slice(1).join('/')),background:parts[0]==='1'}),-4);
+          return true;
+        }
+      }
       if (event === undefined || params.state.isDisposed() ||
         params.inlinePrefix === '' || !event.data.isMainFrame()) {
         return false; // remote mode and subframes do not dispatch app navigation
@@ -129,6 +159,7 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
   });
   const params: DayWebViewParams = new DayWebViewParams(controller, state);
   params.id = id;
+  params.ui = ui;
   // Inline mode arrives as `day-inline<US><root>[<US><start>]` (0x1F-separated, the piece's own
   // props encoding): the site lives under rawfile `day/<root>/` (resources/arkui.rs staging),
   // which ArkWeb browses through `resource://rawfile/` URLs, so relative references resolve
@@ -136,6 +167,11 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
   const SEP: string = '\u001F';
   // A transparent view leads with its own marker (lib-arkui.rs), ahead of everything below.
   let rest: string = props;
+  if (rest.startsWith('day-tabs'+SEP)) {
+    const labels: string[] = rest.split(SEP);
+    params.tabs=true;params.foregroundLabel=labels[1];params.backgroundLabel=labels[2];
+    rest=labels.slice(3).join(SEP);
+  }
   if (rest.startsWith('day-private'+SEP)) {params.privateMode=true;state.setPrivate(true);rest=rest.substring(('day-private'+SEP).length);}
   if (rest.startsWith('day-resource'+SEP)) {params.resources=true;rest=rest.substring(('day-resource'+SEP).length);}
   if (rest.startsWith('day-transparent' + SEP)) {

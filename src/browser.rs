@@ -8,6 +8,7 @@ day_bridge::bridge! {
     extern "day" {
         fn attach_browser(id: i32, base: &str);
         fn observe_browser_load(id: i32);
+        fn attach_tabs(id: i32, foreground: &str, background: &str);
         fn resource_namespace() -> Result<f64, day_bridge::Error>;
         fn attach_resources(id: i32, base: &str, start: &str);
         fn resource_reply(token: i32, status: i32, headers: &str, body: &[u8]);
@@ -80,6 +81,33 @@ day_bridge::bridge! {
             frame.addEventListener('load', loaded);
             dayHost.dom.onRelease(id, () => frame.removeEventListener('load', loaded));
         }
+        function attach_tabs(id, foreground, background) {
+            const frame=dayHost.dom.element(id);
+            const open=(url,background)=>dayHost.dom.emit(id,-4,JSON.stringify({url,background}));
+            let current, cleanup=()=>{};
+            function loaded() {
+                cleanup();
+                try { current=frame.contentDocument; if(!current)return; } catch {return;}
+                let menu=null;
+                const dismiss=()=>{menu?.remove();menu=null;};
+                const link=e=>e.composedPath().find(n=>n?.tagName==='A'&&n.href);
+                const click=e=>{const a=link(e);if(!a||!(e.metaKey||e.ctrlKey||e.button===1||a.target==='_blank'))return;e.preventDefault();e.stopImmediatePropagation();open(a.href,!e.shiftKey&&(e.metaKey||e.ctrlKey||e.button===1));};
+                const context=e=>{
+                    const a=link(e);if(!a)return;e.preventDefault();e.stopImmediatePropagation();dismiss();
+                    menu=current.createElement('div');menu.setAttribute('role','menu');
+                    Object.assign(menu.style,{position:'fixed',left:e.clientX+'px',top:e.clientY+'px',zIndex:2147483647,background:'Canvas',color:'CanvasText',border:'1px solid GrayText',padding:'4px',boxShadow:'0 2px 8px #0005'});
+                    for(const [label,backgroundTab] of [[foreground,false],[background,true]]) {
+                        const item=current.createElement('button');item.textContent=label;item.setAttribute('role','menuitem');item.style.display='block';item.onclick=()=>{open(a.href,backgroundTab);dismiss();};menu.append(item);
+                    }
+                    current.body.append(menu);menu.firstChild.focus();
+                };
+                const key=e=>{if(e.key==='Escape')dismiss();};
+                current.addEventListener('click',click,true);current.addEventListener('auxclick',click,true);current.addEventListener('contextmenu',context,true);current.addEventListener('keydown',key,true);
+                cleanup=()=>{dismiss();current.removeEventListener('click',click,true);current.removeEventListener('auxclick',click,true);current.removeEventListener('contextmenu',context,true);current.removeEventListener('keydown',key,true);};
+            }
+            frame.addEventListener('load',loaded);
+            dayHost.dom.onRelease(id,()=>{cleanup();frame.removeEventListener('load',loaded);});
+        }
         function attach_browser(id, base) {
             const frame = dayHost.dom.element(id);
             const site = new URL(base, document.baseURI);
@@ -120,6 +148,8 @@ day_bridge::bridge! {
     #[day_bridge::impl(rust, platforms = [other])]
     fn observe_browser_load(id: i32) { let _ = id; }
     #[day_bridge::impl(rust, platforms = [other])]
+    fn attach_tabs(id:i32,foreground:&str,background:&str) {let _=(id,foreground,background);}
+    #[day_bridge::impl(rust, platforms = [other])]
     fn attach_browser(id: i32, base: &str) { let _ = (id, base); }
     #[day_bridge::impl(rust, platforms = [other])]
     fn eval_browser(id: i32, req: f64, script: &str) { let _ = (id, req, script); }
@@ -129,6 +159,9 @@ pub(crate) fn observe_load(id: i32) {
     observe_browser_load(id);
 }
 
+pub(crate) fn tabs(id: i32, labels: &crate::TabLinkLabels) {
+    attach_tabs(id, &labels.foreground, &labels.background);
+}
 pub(crate) fn attach(id: i32, base: &str) {
     attach_browser(id, base);
 }

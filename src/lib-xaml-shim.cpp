@@ -162,6 +162,8 @@ struct WebViewCtx {
     uint64_t resource_provider = 0;
     std::wstring inline_dir;
     void (*link_cb)(uint64_t, const char *){};
+    void (*tab_cb)(uint64_t, const char *, bool){};
+    std::wstring tab_foreground, tab_background;
     // WebView::transparent: the engine's default background is cleared once the controller is
     // up, and the URL label under the render visual is blanked so it cannot show through.
     bool transparent{};
@@ -563,6 +565,42 @@ static void on_engine_ready(void *handle, WebViewCtx *c2) {
                 CoTaskMemFree(url);CoTaskMemFree(method);CoTaskMemFree(range);return S_OK;
             }).Get(),&token);
     }
+    if(c2->webview) {
+        EventRegistrationToken token{};
+        c2->webview->add_NewWindowRequested(wrl::Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+            [handle](ICoreWebView2 *,ICoreWebView2NewWindowRequestedEventArgs *args)->HRESULT {
+                auto c=find_ctx(handle);if(!c||!c->tab_cb)return S_OK;
+                args->put_Handled(TRUE); LPWSTR uri=nullptr;
+                if(SUCCEEDED(args->get_Uri(&uri))&&uri) { auto url=to_utf8(winrt::hstring{uri}); c->tab_cb(c->id,url.c_str(),false);CoTaskMemFree(uri); }
+                return S_OK;
+            }).Get(),&token);
+        wrl::ComPtr<ICoreWebView2_2> menuCore;
+        wrl::ComPtr<ICoreWebView2Environment> environment;
+        if(SUCCEEDED(c2->webview.As(&menuCore)))menuCore->get_Environment(&environment);
+        wrl::ComPtr<ICoreWebView2_11> menus;
+        wrl::ComPtr<ICoreWebView2Environment9> menuEnvironment;
+        if(environment && SUCCEEDED(c2->webview.As(&menus)) && SUCCEEDED(environment->QueryInterface(IID_PPV_ARGS(&menuEnvironment)))) {
+            menus->add_ContextMenuRequested(wrl::Callback<ICoreWebView2ContextMenuRequestedEventHandler>(
+                [handle,menuEnvironment](ICoreWebView2 *,ICoreWebView2ContextMenuRequestedEventArgs *args)->HRESULT {
+                    auto c=find_ctx(handle);if(!c||!c->tab_cb)return S_OK;
+                    wrl::ComPtr<ICoreWebView2ContextMenuTarget> target;args->get_ContextMenuTarget(&target);
+                    BOOL hasLink=FALSE;if(!target||FAILED(target->get_HasLinkUri(&hasLink))||!hasLink)return S_OK;
+                    LPWSTR uri=nullptr;if(FAILED(target->get_LinkUri(&uri))||!uri)return S_OK;
+                    auto url=to_utf8(winrt::hstring{uri});CoTaskMemFree(uri);
+                    wrl::ComPtr<ICoreWebView2ContextMenuItemCollection> items;args->get_MenuItems(&items);
+                    for(int background=0;background<2;++background) {
+                        wrl::ComPtr<ICoreWebView2ContextMenuItem> item;
+                        auto &label=background?c->tab_background:c->tab_foreground;
+                        if(FAILED(menuEnvironment->CreateContextMenuItem(label.c_str(),nullptr,COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND,&item)))continue;
+                        EventRegistrationToken selected{};
+                        item->add_CustomItemSelected(wrl::Callback<ICoreWebView2CustomItemSelectedEventHandler>(
+                            [handle,url,background](ICoreWebView2ContextMenuItem *,IUnknown *)->HRESULT {auto c=find_ctx(handle);if(c&&c->tab_cb)c->tab_cb(c->id,url.c_str(),background!=0);return S_OK;}).Get(),&selected);
+                        items->InsertValueAtIndex(background,item.Get());
+                    }
+                    return S_OK;
+                }).Get(),&token);
+        }
+    }
     if (c2->webview && !c2->inline_prefix.empty()) {
         // Inline mode: map the exe-relative assets tree under the virtual
         // host before the first Navigate, then police top-level
@@ -636,7 +674,7 @@ static void on_engine_ready(void *handle, WebViewCtx *c2) {
                          ICoreWebView2NewWindowRequestedEventArgs *args)
                     -> HRESULT {
                     auto *cn = find_ctx(handle);
-                    if (!cn || cn->inline_prefix.empty())
+                    if (!cn || cn->tab_cb || cn->inline_prefix.empty())
                         return S_OK;
                     args->put_Handled(TRUE);
                     LPWSTR uri = nullptr;
@@ -995,6 +1033,10 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
     void *mounted = day_xaml_box(winrt::get_abi(placeholder));
     g_webviews[mounted] = c;
     return mounted;
+}
+
+void day_webview_xaml_tabs(void *handle,const char *foreground,const char *background,void (*callback)(uint64_t,const char *,bool)) {
+    if(auto c=find_ctx(handle)) {c->tab_cb=callback;c->tab_foreground=hs(foreground).c_str();c->tab_background=hs(background).c_str();}
 }
 
 void day_webview_xaml_release(void *handle) {

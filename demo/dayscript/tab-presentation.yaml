@@ -1,0 +1,22 @@
+# Synthetic JavaScript markers exercise live presentation without a page reload.
+name: tab-presentation
+description: Preserve browser pages across native and emulated tabs and a separate preferences window.
+flow:
+  - web_eval: { id: webview, script: "window.tabPresentationFixture = 321", text: "321", timeout_secs: 30 }
+  - tap: { id: tab-new }
+  - web_eval: { id: webview-tab-2, script: "typeof window.tabPresentationFixture", text: "undefined", timeout_secs: 30 }
+  - tap: { id: tab-move-before-tab-2 }
+  - tap: { id: tab-next-tab-2 }
+  - web_eval: { id: webview, script: "window.tabPresentationFixture", text: "321" }
+  - tap: { id: webview-settings }
+  - wait_for: { id: webview-native-tabs }
+  - toggle: { id: webview-native-tabs, value: false }
+  - web_eval: { id: webview, script: "window.tabPresentationFixture", text: "321" }
+  - toggle: { id: webview-native-tabs, value: true }
+  - web_eval: { id: webview, script: "window.tabPresentationFixture", text: "321" }
+  - tap: { id: webview-settings-done }
+  - tap: { id: tab-close }
+  - assert_visible: { id: webview-tab-2 }
+  - tap: { id: tab-close-tab-2 }
+  - wait_for: { id: webview-tab-3 }
+  - assert_no_placeholders: {}

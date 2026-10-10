@@ -17,7 +17,7 @@ use day_spec::NodeId;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::NSView;
+use objc2_app_kit::{NSApplication, NSEvent, NSMenu, NSMenuItem, NSResponder, NSView};
 use objc2_foundation::{NSError, NSObject, NSString, NSURL, NSURLRequest};
 use objc2_web_kit::{
     WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKWebView,
@@ -33,6 +33,9 @@ struct NavIvars {
     /// permits ordinary document navigation; `external_links` separately intercepts clicks.
     inline_base: RefCell<Option<String>>,
     external_links: Cell<bool>,
+    tabs: RefCell<Option<TabLinkLabels>>,
+    background: Cell<bool>,
+    link_item: RefCell<Option<Retained<NSMenuItem>>>,
 }
 
 define_class!(
@@ -43,6 +46,28 @@ define_class!(
     struct WebNav;
 
     unsafe impl NSObjectProtocol for WebNav {}
+
+    impl WebNav {
+        #[unsafe(method(openBackgroundTab:))]
+        fn open_background(&self, _sender: Option<&AnyObject>) {
+            let item = self.ivars().link_item.borrow().clone();
+            if let Some(item) = item {
+                self.ivars().background.set(true);
+                unsafe { if let Some(action) = item.action() {
+                    NSApplication::sharedApplication(self.mtm()).sendAction_to_from(action, item.target().as_deref(), Some(&item));
+                } }
+            }
+        }
+        #[unsafe(method(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
+        fn new_window(&self, _web: &WKWebView, _config: &AnyObject, action: &WKNavigationAction, _features: &AnyObject) -> *mut AnyObject {
+            if self.ivars().tabs.borrow().is_some() {
+                if let Some(url) = unsafe { action.request() }.URL().and_then(|u|u.absoluteString()) {
+                    (self.ivars().emit)(self.ivars().node.get(), new_tab_event(url.to_string(), self.ivars().background.replace(false)));
+                }
+            }
+            std::ptr::null_mut()
+        }
+    }
 
     unsafe impl WKNavigationDelegate for WebNav {
         // Fired when a navigation completes: reports the new URL back to the piece.
@@ -73,6 +98,16 @@ define_class!(
                 .unwrap_or_default();
             let activated = unsafe { action.navigationType() }
                 == objc2_web_kit::WKNavigationType::LinkActivated;
+            let modifiers: usize = unsafe { msg_send![action, modifierFlags] };
+            let button: isize = unsafe { msg_send![action, buttonNumber] };
+            if self.ivars().tabs.borrow().is_some() && !subframe &&
+                (frame.is_none() || (activated && (modifiers & (1 << 20) != 0 || button == 2))) {
+                let background = self.ivars().background.replace(false) ||
+                    (activated && (modifiers & (1 << 20) != 0 || button == 2) && modifiers & (1 << 17) == 0);
+                (self.ivars().emit)(self.ivars().node.get(), new_tab_event(url, background));
+                handler.call((WKNavigationActionPolicy::Cancel,));
+                return;
+            }
             let external = match &*self.ivars().inline_base.borrow() {
                 Some(base) => !subframe && !url.starts_with(base.as_str()) && url != "about:blank",
                 None => {
@@ -104,6 +139,40 @@ define_class!(
     }
 );
 
+define_class!(
+    #[unsafe(super(WKWebView, NSView, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "DayTabbedWebView"]
+    struct TabWebView;
+    unsafe impl NSObjectProtocol for TabWebView {}
+    impl TabWebView {
+        #[unsafe(method(willOpenMenu:withEvent:))]
+        fn will_open_menu(&self, menu: &NSMenu, event: &NSEvent) {
+            unsafe { let _: () = msg_send![super(self), willOpenMenu: menu, withEvent: event]; }
+            let delegate = DELEGATES.with(|m|m.borrow().get(&(self as *const Self as usize)).cloned());
+            let Some(nav) = delegate else { return; };
+            let labels = nav.ivars().tabs.borrow().clone();
+            let Some(labels) = labels else { return; };
+            // WebKit assigns its public context-menu tags to the native menu. Preserve
+            // the engine-owned action and represented object so it resolves the link.
+            for item in menu.itemArray().iter() {
+                if item.tag() == 1 {
+                    item.setTitle(&NSString::from_str(&labels.foreground));
+                    *nav.ivars().link_item.borrow_mut() = Some(item.clone());
+                    let background = NSMenuItem::new(self.mtm());
+                    background.setTitle(&NSString::from_str(&labels.background));
+                    unsafe {
+                        background.setTarget(Some(&nav));
+                        background.setAction(Some(objc2::sel!(openBackgroundTab:)));
+                    }
+                    menu.insertItem_atIndex(&background, menu.indexOfItem(&item) + 1);
+                    break;
+                }
+            }
+        }
+    }
+);
+
 impl WebNav {
     fn new(mtm: MainThreadMarker, node: NodeId, emit: fn(NodeId, Event)) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(NavIvars {
@@ -111,6 +180,9 @@ impl WebNav {
             emit,
             inline_base: RefCell::new(None),
             external_links: Cell::new(false),
+            tabs: RefCell::new(None),
+            background: Cell::new(false),
+            link_item: RefCell::new(None),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -181,6 +253,8 @@ pub(crate) fn make(
             if let Some(nav) = m.borrow().get(&key) {
                 nav.ivars().node.set(id);
                 nav.ivars().external_links.set(p.external_links);
+                *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
+                *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
             }
         });
         return view;
@@ -190,9 +264,11 @@ pub(crate) fn make(
     let config =
         super::resources_apple::configuration(p.resources.as_ref().map(ResourceProvider::id), mtm);
     super::storage_apple::configure(&config, &p.profile);
-    let web: Retained<WKWebView> = unsafe {
-        msg_send![WKWebView::alloc(mtm), initWithFrame: objc2_foundation::NSRect::ZERO, configuration: &*config]
+    let this = TabWebView::alloc(mtm).set_ivars(());
+    let web: Retained<TabWebView> = unsafe {
+        msg_send![super(this), initWithFrame: objc2_foundation::NSRect::ZERO, configuration: &*config]
     };
+    let web: Retained<WKWebView> = web.into_super();
     if p.transparent {
         // WKWebView paints a white sheet under the page unless told not to. `drawsBackground` is
         // the key Safari's own transparent views set (there is no public setter on macOS), read
@@ -205,6 +281,10 @@ pub(crate) fn make(
     }
     let nav = WebNav::new(mtm, id, emit);
     nav.ivars().external_links.set(p.external_links);
+    *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
+    unsafe {
+        let _: () = msg_send![&*web, setUIDelegate: &*nav];
+    }
     unsafe { web.setNavigationDelegate(Some(ProtocolObject::from_ref(&*nav))) };
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the bundled site is loose files (the assets tree in

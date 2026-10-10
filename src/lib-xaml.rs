@@ -30,6 +30,12 @@ unsafe extern "C" {
         directory: *const c_char,
         private: bool,
     ) -> *mut c_void;
+    fn day_webview_xaml_tabs(
+        handle: *mut c_void,
+        foreground: *const c_char,
+        background: *const c_char,
+        callback: extern "C" fn(u64, *const c_char, bool),
+    );
     fn day_webview_xaml_release(handle: *mut c_void);
     fn day_webview_xaml_load(handle: *mut c_void, url: *const c_char);
     fn day_webview_xaml_back(handle: *mut c_void);
@@ -92,6 +98,19 @@ extern "C" fn on_link(id: u64, url: *const c_char) {
     );
 }
 
+extern "C" fn on_tab(id: u64, url: *const c_char, background: bool) {
+    if !url.is_null() {
+        day_xaml::emit(
+            NodeId(id),
+            new_tab_event(
+                unsafe { CStr::from_ptr(url) }
+                    .to_string_lossy()
+                    .into_owned(),
+                background,
+            ),
+        );
+    }
+}
 fn cstr(s: &str) -> CString {
     CString::new(s).unwrap_or_default()
 }
@@ -145,7 +164,7 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
             p.inline_root
         );
     }
-    WinHandle(unsafe {
+    let handle = WinHandle(unsafe {
         day_webview_xaml_new(
             cstr(&p.url).as_ptr(),
             id.0,
@@ -160,7 +179,18 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
             cstr(p.profile.directory.as_deref().unwrap_or("")).as_ptr(),
             p.profile.private,
         )
-    })
+    });
+    if let Some(labels) = &p.tabs {
+        unsafe {
+            day_webview_xaml_tabs(
+                handle.0,
+                cstr(&labels.foreground).as_ptr(),
+                cstr(&labels.background).as_ptr(),
+                on_tab,
+            );
+        }
+    }
+    handle
 }
 
 fn update(_backend: &mut Xaml, h: &WinHandle, patch: &WebPatch) {

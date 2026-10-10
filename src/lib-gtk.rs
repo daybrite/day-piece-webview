@@ -198,6 +198,57 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
         // grant opens up is the extracted asset tree the view is already showing the site from.
         settings.set_allow_file_access_from_file_urls(true);
     }
+    if let Some(labels) = p.tabs.clone() {
+        wv.connect_decide_policy(move |_, decision, kind| {
+            let Some(action) = decision
+                .downcast_ref::<webkit6::NavigationPolicyDecision>()
+                .and_then(|d| d.navigation_action())
+            else {
+                return false;
+            };
+            let modified = action.modifiers()
+                & (gtk4::gdk::ModifierType::CONTROL_MASK.bits()
+                    | gtk4::gdk::ModifierType::META_MASK.bits())
+                != 0;
+            if kind != webkit6::PolicyDecisionType::NewWindowAction
+                && !modified
+                && action.mouse_button() != 2
+            {
+                return false;
+            }
+            let Some(uri) = action.request().and_then(|r| r.uri()) else {
+                return false;
+            };
+            decision.ignore();
+            day_gtk::emit(
+                id,
+                new_tab_event(
+                    uri.to_string(),
+                    (modified || action.mouse_button() == 2)
+                        && action.modifiers() & gtk4::gdk::ModifierType::SHIFT_MASK.bits() == 0,
+                ),
+            );
+            true
+        });
+        wv.connect_context_menu(move |_, menu, hit| {
+            if let Some(url) = hit.link_uri() {
+                for (name, label, background) in [
+                    ("day-tab-open", &labels.foreground, false),
+                    ("day-tab-background", &labels.background, true),
+                ] {
+                    let action = gtk4::gio::SimpleAction::new(name, None);
+                    let url = url.to_string();
+                    action.connect_activate(move |_, _| {
+                        day_gtk::emit(id, new_tab_event(url.clone(), background))
+                    });
+                    menu.prepend(&webkit6::ContextMenuItem::from_gaction(
+                        &action, label, None,
+                    ));
+                }
+            }
+            false
+        });
+    }
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): extract-to-cache (above), then a file URL; WebKit
         // resolves the site's relative references natively. The policy handler polices by the

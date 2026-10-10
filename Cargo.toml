@@ -45,7 +45,7 @@ dom = ["dep:day-dom"]
 
 [package.metadata.day]
 # The day minor this release is built and tested against. `day build` notes a mismatch.
-compat = "0.4"
+compat = "0.5"
 
 # Backends this piece carries a native-renderer [features] entry for. `day` unions `<pkg>/<backend>`
 # into an app build (Tier A.2), so an app depends on this piece with a plain `{ git = "…" }` line,

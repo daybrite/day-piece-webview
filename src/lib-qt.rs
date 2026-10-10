@@ -26,6 +26,12 @@ unsafe extern "C" {
         inline_path_prefix: *const c_char,
         link_cb: extern "C" fn(u64, *const c_char),
     ) -> *mut c_void;
+    fn day_webview_tabs(
+        w: *mut c_void,
+        foreground: *const c_char,
+        background: *const c_char,
+        callback: extern "C" fn(u64, *const c_char, bool),
+    );
     fn day_webview_load(w: *mut c_void, url: *const c_char);
     fn day_webview_back(w: *mut c_void);
     fn day_webview_forward(w: *mut c_void);
@@ -86,6 +92,20 @@ extern "C" fn on_link(id: u64, url: *const c_char) {
     );
 }
 
+extern "C" fn on_tab(id: u64, url: *const c_char, background: bool) {
+    if !url.is_null() {
+        day_qt::emit(
+            NodeId(id),
+            new_tab_event(
+                unsafe { CStr::from_ptr(url) }
+                    .to_string_lossy()
+                    .into_owned(),
+                background,
+            ),
+        );
+    }
+}
+
 fn cstr(s: &str) -> CString {
     CString::new(s).unwrap_or_default()
 }
@@ -102,7 +122,13 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
     // normalizes qrc URL spellings, and a string compare would cancel the site's own first
     // load (the AppKit arm learned the same lesson with file URLs).
     let (url, path_prefix) = if p.inline_root.is_empty() {
-        (p.url.clone(), p.resources.as_ref().map(ResourceProvider::base_url).unwrap_or_default())
+        (
+            p.url.clone(),
+            p.resources
+                .as_ref()
+                .map(ResourceProvider::base_url)
+                .unwrap_or_default(),
+        )
     } else {
         (
             format!("qrc:/day/assets/{}/{}", p.inline_root, p.inline_start),
@@ -122,6 +148,16 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
             on_link,
         )
     });
+    if let Some(labels) = &p.tabs {
+        unsafe {
+            day_webview_tabs(
+                handle.0,
+                cstr(&labels.foreground).as_ptr(),
+                cstr(&labels.background).as_ptr(),
+                on_tab,
+            )
+        };
+    }
     if p.transparent {
         unsafe { day_webview_set_transparent(handle.0) };
     }

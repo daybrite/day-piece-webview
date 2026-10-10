@@ -1,0 +1,17 @@
+# Synthetic markers verify that switching and reordering preserve the native page.
+name: tabs
+description: Open, reorder, switch and close independent browser tabs.
+flow:
+  - web_eval: { id: webview, script: "window.tabFixtureMarker = 123", text: "123", timeout_secs: 30 }
+  - tap: { id: tab-new }
+  - wait_for: { id: webview-tab-2 }
+  - web_eval: { id: webview-tab-2, script: "typeof window.tabFixtureMarker", text: "undefined", timeout_secs: 30 }
+  - tap: { id: tab-move-before-tab-2 }
+  - assert_visible: { id: webview-tab-2 }
+  - tap: { id: tab-next-tab-2 }
+  - web_eval: { id: webview, script: "window.tabFixtureMarker", text: "123" }
+  - tap: { id: tab-close }
+  - assert_visible: { id: webview-tab-2 }
+  - tap: { id: tab-close-tab-2 }
+  - wait_for: { id: webview-tab-3 }
+  - assert_no_placeholders: {}

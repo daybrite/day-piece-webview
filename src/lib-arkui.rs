@@ -42,7 +42,21 @@ fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
     } else {
         props
     };
-    let props = if p.profile.private { format!("day-private{}{props}", super::SEP) } else { props };
+    let props = if p.profile.private {
+        format!("day-private{}{props}", super::SEP)
+    } else {
+        props
+    };
+    let props = if let Some(labels) = &p.tabs {
+        format!(
+            "day-tabs{SEP}{}{SEP}{}{SEP}{props}",
+            labels.foreground,
+            labels.background,
+            SEP = super::SEP
+        )
+    } else {
+        props
+    };
     piece::make(KIND, id, &props)
 }
 
