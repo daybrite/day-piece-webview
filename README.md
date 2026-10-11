@@ -1,9 +1,9 @@
 <!-- Copyright © The Daybrite Project; SPDX-License-Identifier: CC-BY-SA-4.0 -->
 # day-piece-webview
 
-Embed web content in a [Day](https://daybrite.dev) app. The piece uses the platform's browser
-engine and provides one Rust API for navigation, shared browser profiles, private browsing, JavaScript evaluation, bundled websites, and
-application-provided resources.
+Embed web content in a [Day](https://daybrite.dev) app. The piece uses native browser components
+or the host browser's iframe. One Rust API provides navigation, shared browser profiles, private
+browsing, JavaScript evaluation, bundled websites, and application-provided resources.
 
 ## Install
 
@@ -14,7 +14,7 @@ day-piece-webview = { git = "https://github.com/daybrite/day-piece-webview.git" 
 
 `day build` selects the backend feature and stages native code and browser assets automatically.
 You do not need a feature entry for each toolkit in the app's dependency declaration.
-This checkout requires Rust 1.89+ and Day 0.4. Keep the CLI, framework, and piece compatible;
+This checkout requires Rust 1.89+ and Day 0.5. Keep the CLI, framework, and piece compatible;
 use the same Day Git source throughout the dependency graph. See [Cargo.toml](Cargo.toml).
 
 ## Choose a content source
@@ -61,36 +61,75 @@ runs on the app's browser thread.
 
 ## Renderers
 
-| Target | Renderer |
-|---|---|
-| macos-appkit, macos-gtk, ios-uikit | WKWebView |
-| android-mdc | Android WebView |
-| linux-gtk | WebKitGTK 6 |
-| macos-qt, linux-qt | Qt WebEngine; requires WebEngine at build time |
-| windows-xaml | WebView2 composition controller in the XAML visual tree |
-| windows-gtk | WebView2 child window through Wry |
-| windows-qt | Qt WebEngine when available; otherwise WebView2 through Wry |
-| harmony-arkui | ArkWeb through an ArkTS Web component |
-| web-dom | An iframe in the host browser |
+The component links below lead to upstream API documentation. Notes describe the current Day
+adapter as well as engine requirements; support for an engine feature does not imply that the
+piece exposes it on every host.
 
-On macOS GTK, the host forwards GTK wheel and trackpad events to the embedded
-WKWebView, including pixel deltas, modifiers, and gesture phases. Native hit testing
-keeps scrolling inside the browser (including nested scroll regions); detached or
-hidden browser views do not consume gestures.
+| Target | Component and hosting | Notes and compatibility |
+|---|---|---|
+| `macos-appkit` | [WKWebView][wkwebview], a native AppKit view using system WebKit | Web features depend on the installed OS. Named persistent profiles require macOS 14+; older systems use isolated memory storage for explicit profiles. |
+| `macos-gtk` | [WKWebView][wkwebview], a Cocoa child positioned from a GTK allocation anchor | Separate native child: check clipping, overlays, focus, and scrolling. GTK widget snapshots omit it; capture the native window. Apple profile limits also apply. |
+| `macos-qt` | [QWebEngineView][qt-webview], a Qt widget using Chromium | Requires Qt 6 WebEngineWidgets at build time; otherwise only a URL label is shown. Package the engine helpers and resources. See Qt resource limits below. |
+| `ios-uikit` | [WKWebView][wkwebview], a native UIKit view using system WebKit | Named persistent profiles require iOS 17+; older systems use isolated memory storage for explicit profiles. File content is restricted to the configured read-access root. |
+| `android-mdc` | [android.webkit.WebView][android-webview], hosted as an Android view | Capabilities depend on the installed WebView provider. Named profiles and complete data clearing require AndroidX feature support. Private browsing is unsupported by this adapter. |
+| `linux-gtk` | [WebKitWebView][webkitgtk], a GTK 4 widget using WebKitGTK's 6.0 API | Needs WebKitGTK development/runtime libraries. Bundled sites are extracted to a cache. The AppImage sandbox exception below reduces isolation. |
+| `linux-qt` | [QWebEngineView][qt-webview], a Qt widget using Chromium | Requires Qt 6 WebEngineWidgets; otherwise only a URL label is shown. Flatpak packaging needs the matching WebEngine BaseApp. See Qt resource limits below. |
+| `windows-winui` | [Microsoft.UI.Xaml.Controls.WebView2][winui-webview], the WinUI 3 control using Edge Chromium | Requires the WebView2 Runtime plus compatible app-local WebView2 loader and Core DLLs. The control handles input, focus, DPI, and composition. |
+| `windows-xaml` | [ICoreWebView2CompositionController][webview2-composition], attached to a XAML Islands visual | Requires the WebView2 Runtime. The adapter forwards input and tracks layout. Legacy EdgeHTML WebView is unsupported in this host. |
+| `windows-gtk` | [WebView2][webview2] through [Wry][wry], in a child HWND positioned from GTK | Requires the WebView2 Runtime. The child window has clipping/overlap constraints; test popovers, focus, resizing, and visibility. |
+| `windows-qt` | [QWebEngineView][qt-webview] when detected; otherwise [WebView2][webview2] through [Wry][wry] in a QWidget | Selection happens at build time. The Wry path needs the WebView2 Runtime and has child-window constraints; Qt WebEngine's resource limits apply to the other path. |
+| `harmony-arkui` | ArkWeb through the ArkTS [Web component][arkweb] | Resource interception needs API 12+. The installed engine must match the device/emulator ABI. Named profiles are emulated; complete per-profile clearing is unsupported. |
+| `web-dom` | An HTML [iframe][iframe] rendered by the host browser | Sites can block embedding. Evaluation needs same-origin content; URL/history readback and Back/Forward/Stop are unavailable. The adapter cannot provide isolated browser profiles or private mode. |
 
-`support()`, `inline_support()`, and `eval_support()` describe the compiled backend. They do
-not probe engine installation, page readiness, service-worker permissions, or whether a remote
-site permits embedding. Browser evaluation requires same-origin content. Browser Back, Forward,
-and Stop commands are not implemented. See [platform limitations](docs/platforms.md).
+### Integration notes
+
+- **Apple:** the OS manages profile storage locations; a requested directory changes the profile
+  identity but does not relocate its files. On macOS GTK, the adapter forwards wheel and trackpad
+  events to WKWebView and synchronizes the Cocoa child's position with GTK layout.
+- **Qt WebEngine:** custom resource replies cannot reproduce arbitrary HTTP status codes.
+  Response headers and Fetch API support for the provider scheme require Qt 6.6+.
+  See [resource loading](docs/platforms.md#resource-loading) and the upstream
+  [request-job API](https://doc.qt.io/qt-6/qwebengineurlrequestjob.html).
+- **WebKitGTK AppImage:** the launcher defaults
+  `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` to work around bundled helpers lacking an AppArmor
+  profile on Ubuntu. This reduces browser-process isolation; it does not apply to Flatpak or
+  distro builds. See [packaging](docs/platforms.md#packaging-and-diagnostics).
+- **WebView2:** the SDK/loader and installed browser Runtime are separate dependencies. Engine
+  startup and newer profile/resource APIs can fail on a missing or incompatible Runtime.
+  WinUI's control, the XAML composition host, and Wry's child HWND are different integrations.
+- **ArkWeb:** a successful HAP build or JavaScript result does not prove that the web surface
+  paints. Emulator engine installation and GPU setup need separate verification; see
+  [Harmony diagnostics](docs/harmony-emulator.md).
+- **Browser iframe:** resource providers require service workers, HTTPS or localhost, and a live
+  owning app tab. The frame has no `sandbox` attribute by default, so same-origin content is not
+  isolated from the app. See [browser deployment](docs/resource-provider.md#browser-deployment).
+
+`support()`, `inline_support()`, and `eval_support()` describe the compiled backend, not runtime
+engine availability or page readiness. In particular, Qt can report support even when its build
+uses the URL-label fallback. Check the separate [profile capabilities](docs/profiles.md) before
+exposing private browsing or data-clearing controls. The [test coverage guide](docs/testing.md)
+distinguishes implementation support from platforms exercised in CI; macOS GTK/Qt and Windows
+GTK/Qt are not part of the demo matrix.
+
+[wkwebview]: https://developer.apple.com/documentation/webkit/wkwebview
+[android-webview]: https://developer.android.com/reference/android/webkit/WebView
+[webkitgtk]: https://webkitgtk.org/reference/webkitgtk/stable/class.WebView.html
+[qt-webview]: https://doc.qt.io/qt-6/qwebengineview.html
+[winui-webview]: https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.controls.webview2
+[webview2-composition]: https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2compositioncontroller
+[webview2]: https://learn.microsoft.com/en-us/microsoft-edge/webview2/
+[wry]: https://docs.rs/wry/latest/wry/
+[arkweb]: https://github.com/openharmony/docs/blob/master/en/application-dev/reference/apis-arkweb/arkts-basic-components-web.md
+[iframe]: https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-iframe-element
 
 ## Run the demo
 
 ```sh
 cd demo
-day launch -p macos-appkit --script dayscript/webview.yaml
+day launch -t macos-appkit --script dayscript/webview.yaml
 ```
 
-Choose another target with `-p`, for example `ios-uikit`, `android-mdc`, or `web-dom`.
+Choose another target with `-t`, for example `ios-uikit`, `android-mdc`, or `web-dom`.
 The [demo browser](demo/src/lib.rs) has an editable URL bar, Back/Forward, Reload/Stop,
 Home, an external-browser button, and private browsing settings. The Code button opens
 a testing drawer with a JavaScript console, support information and a resource-provider demo.
