@@ -60,10 +60,9 @@ define_class!(
         }
         #[unsafe(method(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
         fn new_window(&self, _web: &WKWebView, _config: &AnyObject, action: &WKNavigationAction, _features: &AnyObject) -> *mut AnyObject {
-            if self.ivars().tabs.borrow().is_some() {
-                if let Some(url) = unsafe { action.request() }.URL().and_then(|u|u.absoluteString()) {
-                    (self.ivars().emit)(self.ivars().node.get(), new_tab_event(url.to_string(), self.ivars().background.replace(false)));
-                }
+            if self.ivars().tabs.borrow().is_some()
+                && let Some(url) = unsafe { action.request() }.URL().and_then(|u|u.absoluteString()) {
+                (self.ivars().emit)(self.ivars().node.get(), new_tab_event(url.to_string(), self.ivars().background.replace(false)));
             }
             std::ptr::null_mut()
         }

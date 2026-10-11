@@ -90,22 +90,22 @@ fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
             );
             day_android::placeholder_view(env, "web_view")
         });
-        if let Some(labels) = &p.tabs {
-            if let (Ok(foreground), Ok(background)) = (
+        if let Some(labels) = &p.tabs
+            && let (Ok(foreground), Ok(background)) = (
                 env.new_string(&labels.foreground),
                 env.new_string(&labels.background),
-            ) {
-                let _ = env.dcall_static(
-                    WEBVIEW_CLASS,
-                    "configureTabs",
-                    "(Landroid/view/View;Ljava/lang/String;Ljava/lang/String;)V",
-                    &[
-                        JValue::Object(view.as_obj()),
-                        JValue::Object(&foreground),
-                        JValue::Object(&background),
-                    ],
-                );
-            }
+            )
+        {
+            let _ = env.dcall_static(
+                WEBVIEW_CLASS,
+                "configureTabs",
+                "(Landroid/view/View;Ljava/lang/String;Ljava/lang/String;)V",
+                &[
+                    JValue::Object(view.as_obj()),
+                    JValue::Object(&foreground),
+                    JValue::Object(&background),
+                ],
+            );
         }
         if p.transparent {
             let _ = env.dcall_static(

@@ -925,7 +925,7 @@ const NEW_TAB_REPORT: f64 = -4.0;
     all(target_os = "ios", feature = "uikit"),
     feature = "qt",
     all(feature = "gtk", not(target_os = "macos"), not(windows)),
-    windows
+    all(windows, any(feature = "xaml", feature = "gtk", feature = "qt"))
 ))]
 fn new_tab_event(url: String, background: bool) -> Event {
     Event::Custom {
