@@ -56,3 +56,6 @@ Reload from Server (shift+primary+R), Stop (Escape) and Open Location (primary+L
 Primary is Command on Apple platforms and Control elsewhere. Alt+Home opens the bundled
 home page; primary+comma opens Browser Settings. Unavailable commands are disabled.
 Share opens the OS chooser. Platforms without a native chooser explicitly offer Copy Link.
+The Tabs menu switches, moves and duplicates tabs. Its Show Tab Controls item (also a switch
+in the testing drawer) reveals a row of tab buttons above each page that the
+[tab walkthroughs](dayscript/tabs.yaml) tap; it is hidden by default.

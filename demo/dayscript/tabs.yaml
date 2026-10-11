@@ -3,6 +3,9 @@ name: tabs
 description: Open, reorder, switch and close independent browser tabs.
 flow:
   - web_eval: { id: webview, script: "window.tabFixtureMarker = 123", text: "123", timeout_secs: 30 }
+  # The tab buttons are a testing aid, hidden until the drawer's switch shows them.
+  - tap: { id: webview-tools }
+  - toggle: { id: tab-controls, value: true }
   - tap: { id: tab-new }
   - wait_for: { id: webview-tab-2 }
   - web_eval: { id: webview-tab-2, script: "typeof window.tabFixtureMarker", text: "undefined", timeout_secs: 30 }

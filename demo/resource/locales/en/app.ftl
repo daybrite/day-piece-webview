@@ -74,6 +74,7 @@ move_tab_before = Move Tab Earlier
 move_tab_after = Move Tab Later
 duplicate_tab = Duplicate Tab
 menu_tabs = Tabs
+show_tab_controls = Show Tab Controls
 open_link_new_tab = Open Link in New Tab
 open_link_background_tab = Open Link in Background Tab
 

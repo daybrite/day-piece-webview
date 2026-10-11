@@ -178,6 +178,9 @@ struct BrowserTabs {
     profiles: Signal<HashMap<String, bool>>,
     views: Signal<HashMap<String, BrowserCommands>>,
     closed: Signal<Vec<String>>,
+    /// Whether each page shows the row of tab test buttons. Off by default: the native strip
+    /// and the Tabs menu carry the same commands, so the row is a scripting aid, not chrome.
+    controls: Signal<bool>,
 }
 impl BrowserTabs {
     fn open(self, url: String, foreground: bool) {
@@ -304,6 +307,7 @@ pub fn root() -> impl Piece {
         profiles: Signal::new(HashMap::new()),
         views: Signal::new(HashMap::new()),
         closed: Signal::new(Vec::new()),
+        controls: Signal::new(false),
     };
     let native_tabs =
         Signal::new(day::prefs::get("demo.web.native-tabs").as_deref() != Some("false"));
@@ -446,6 +450,11 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
                 menu_item(res::str::move_tab_after().format())
                     .action(move || tabs.move_selected(true)),
                 menu_item(res::str::duplicate_tab().format()).action(move || tabs.duplicate()),
+                menu_separator(),
+                menu_item(res::str::show_tab_controls().format())
+                    .id("browser-tab-controls")
+                    .checked(tabs.controls.get())
+                    .action(move || tabs.controls.set(!tabs.controls.get_untracked())),
             ],
         ),
         sub_menu(
@@ -646,7 +655,10 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
         },
     );
     column((
-        tab_controls(tabs, tab_number),
+        when(
+            move || tabs.controls.get(),
+            move || tab_controls(tabs, tab_number),
+        ),
         column((
             row((
                 button(res::str::back())
@@ -875,6 +887,12 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         ),
                     ))
                     .spacing(4.0),
+                    // The same switch as Tabs > Show Tab Controls, for the platforms whose
+                    // walkthroughs have no menu bar to reach it through.
+                    labeled(
+                        res::str::show_tab_controls(),
+                        toggle(tabs.controls).id("tab-controls"),
+                    ),
                     row((
                         text_field(script)
                             .placeholder(res::str::js_hint())
