@@ -116,12 +116,63 @@ first engine startup, disk/network caches, and debug compilation can dominate sm
 | `linux-gtk`, `linux-qt` | Offscreen Day Canvas | EGL/OpenGL, fontconfig, FreeType, LLVM 19+, Python 3.11+; Xvfb/Mesa for CI |
 | `windows-xaml`, `windows-winui` | Offscreen Day Canvas / ANGLE | MSVC, LLVM, Python; GNU GTK/Qt targets are not supported by this adapter |
 | `android-mdc` | Offscreen Day Canvas / EGL | NDK 28.2.13676358; matching rustls Kotlin verifier AAR; APK, lifecycle/comparison tests, and live HTTPS smoke test passed locally |
-| `harmony-arkui` | Offscreen Day Canvas / EGL | OpenHarmony 6 native SDK (API 20) or newer; ARM64 and x86_64 HAPs built locally; emulator runtime checks run in CI |
+| `harmony-arkui` | Offscreen Day Canvas / EGL | **Paused** (see [below](#paused-openharmony)): the host code compiles and ran once on the 7.0 emulator with local workarounds, but the published SpiderMonkey archive cannot be used as shipped |
 
 The comparison CI matrix builds and runs both dayscripts for every row and publishes paired
-captures by target. Adding a matrix row is not evidence of a successful run: Windows, Linux,
-and Harmony full runtime validation is still pending a successful CI run.
+captures by target. Adding a matrix row is not evidence of a successful run: Windows and Linux
+full runtime validation is still pending a successful CI run.
 Servo has no iOS or WebAssembly host here; those targets retain their native integration.
+
+## Paused: OpenHarmony
+
+The `harmony-arkui` row is out of the comparison matrix and out of `demo/Day-servo.toml`'s
+targets as of 2026-10-13. The adapter's ArkUI host (`renderer::surface` on a Day canvas) stays
+in the tree and compiles with `--features servo,arkui`; it is the engine's dependencies that
+block a supportable build. Three problems stood between `day launch -t harmony-arkui --flavor
+servo` and a Servo tab on the OpenHarmony 7.0 x86_64 emulator; the first two are why this is
+paused rather than fixed.
+
+1. **libc++ ABI mismatch with the prebuilt SpiderMonkey.** mozjs-sys downloads
+   `libmozjs-x86_64-unknown-linux-ohos.tar.gz`, which the mozjs project builds with
+   `CARGO_OHOS_DOWNLOAD_PREBUILT=19`, the openharmony-rs LLVM 19 toolchain, because every
+   published SDK's clang (15.0.4 in the 5.1, 6.0.0.1, and 7.0 SDKs) is too old for Servo. That
+   toolchain's libc++ uses the `std::__h` ABI namespace; the SDK's `libc++_shared.so` uses
+   `std::__n1`. A HAP linked with the SDK clang therefore fails to load:
+   `Error relocating libentry.so: _ZNSt3__h11__call_onceERVmPvPFvS2_E: symbol not found`, which
+   the ArkTS host reports as `Cannot read property setEnv of undefined`. This is the failure in
+   the comparison job's log. Building with the same external toolchain and bundling its
+   `libc++.so` works; the Day CLI now stages whatever cargo-ohos reports under
+   `runtime_libraries`, so `CARGO_OHOS_DOWNLOAD_PREBUILT=19` (plus a cache of
+   `~/.cache/cargo-ohos/ohos-llvm`, about 2 GB) is the whole workflow-side change for this one.
+2. **mozglue's env interposer crashes on OpenHarmony.** The same archive carries
+   `mozglue/interposers/env_interposer.cpp`, which overrides `setenv`, `getenv`, `putenv`,
+   `unsetenv`, and `clearenv` process-wide and resolves the real functions with
+   `dlsym(RTLD_NEXT, …)`. That lookup fails on OHOS's musl loader, and `InterposerHelper.h`'s
+   `dlopen("libc.so")` fallback is compiled only `#if defined(ANDROID)`, so the first `setenv`
+   (Day's ArkTS host applying the launch environment) is a `MOZ_CRASH`: `SIGSEGV` at address 0
+   in `get_real_symbol` under `std::env::set_var`. The only local workaround is binary surgery:
+   `llvm-ar d js/src/build/libjs_static.a Unified_cpp_mozglue_interposers0.o` on a copy of the
+   archive, handed to mozjs-sys through `MOZJS_ARCHIVE` (which it ignores whenever a tarball is
+   already cached in its `OUT_DIR`). Not something to carry in CI.
+3. **No resource reader on OpenHarmony.** The `servo` crate links `servo-default-resources`
+   on every platform except `target_env = "ohos"`, where it expects the embedder to register one,
+   so the constellation panicked at startup ("No resource reader registered"). Fixed: the
+   adapter links the default reader there, and a panic hook now routes Servo thread panics to
+   the logger, where they were previously lost with the process's stderr.
+
+With all three addressed locally (release profile, since the 232 MB debug HAP exceeds the
+emulator's install reserve), a Servo tab loaded the bundled site and answered `web_eval` on the
+7.0 emulator. The full `experiments/servo.yaml` and `renderer-comparison.yaml` walkthroughs
+have not been run there.
+
+**To resume:** (a) a mozjs-sys release whose OpenHarmony archive no longer crashes in the env
+interposer — upstream, extend the Android fallback in `mozglue/interposers/InterposerHelper.h`
+to `__OHOS__`, or leave the interposers out of the standalone OHOS build — and (b) agreement to
+build with the external LLVM 19 toolchain until an OpenHarmony SDK ships a new enough clang.
+Then put the matrix row and the flavor target back, add `CARGO_OHOS_DOWNLOAD_PREBUILT=19` and
+the toolchain cache to the "Install Servo OpenHarmony native SDK" step, and run both
+walkthroughs on the emulator. `scripts/install-servo-ohos-sdk.sh` and
+`scripts/boot-servo-ohos-ci.sh` are kept for that.
 
 CI uses an isolated Python environment for screenshot checks. Untitled pixel-proof captures
 are validated alongside the published pairs but do not require gallery titles or captions.

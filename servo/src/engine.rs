@@ -8,6 +8,11 @@ use day_piece_webview::renderer::{
 use day_piece_webview::{ResourceProvider, ResourceResponse, WebPatch, WebProps};
 use day_spec::{Event, NodeId};
 use servo::{EventLoopWaker, Servo, ServoBuilder};
+// Servo itself skips its default resource reader on OpenHarmony (`not(target_env = "ohos")` in
+// servo's lib.rs), leaving registration to the embedder; this import is what links the crate and
+// its `submit_resource_reader!` constructor into the app (see servo/Cargo.toml).
+#[cfg(target_env = "ohos")]
+use servo_default_resources as _;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -41,6 +46,23 @@ struct Engine {
     _storage: tempfile::TempDir,
 }
 pub(crate) fn engine() -> Result<Servo, String> {
+    // Servo runs its constellation, script, layout, and network on threads of its own, and a
+    // panic there reaches only the default hook's stderr, which an Android or OpenHarmony
+    // process does not surface: the engine then merely reports "Lost connection to
+    // Constellation". Route every panic's thread, message, and location through the logger
+    // first, then let the previous hook (Day's, or std's) do what it did.
+    static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
+    PANIC_HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let thread = std::thread::current();
+            log::error!(
+                "panic in thread {:?}: {info}",
+                thread.name().unwrap_or("<unnamed>")
+            );
+            previous(info);
+        }));
+    });
     ENGINE.with(|slot| {
         if let Some(engine) = slot.borrow().as_ref() {
             return Ok(engine.servo.clone());

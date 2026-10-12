@@ -7,6 +7,15 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 ## Unreleased
 
+- Changed: the experimental Servo renderer's `harmony-arkui` host is paused: out of the
+  comparison CI matrix and the demo's `servo` flavor targets, code retained. The prebuilt
+  SpiderMonkey archive needs the external LLVM 19 toolchain's libc++ and its env interposer
+  crashes on OpenHarmony's loader; docs/servo.md ("Paused: OpenHarmony") records the three
+  findings and what has to change upstream before it returns.
+- Fixed: the Servo adapter registered no resource reader on OpenHarmony, where the `servo`
+  crate leaves that to the embedder, so the constellation panicked at startup; it now links
+  Servo's default reader there. Servo thread panics are logged through Day's logger instead of
+  vanishing with the process's stderr on mobile hosts.
 - Fixed: Linux GTK JavaScript evaluation timed out on web views with an automation ID.
   Evaluation replies now retain the internal node ID separately from GTK's widget name,
   which Day replaces with the automation ID.

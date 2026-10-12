@@ -319,12 +319,12 @@ CLI update is required to publish their comparison pairs as well as upload their
 
 The native demo matrix continues to run `dayscript/webview.yaml` on all primary targets.
 The `renderer-comparison` matrix covers AppKit, macOS/Linux GTK and Qt, Windows XAML and
-WinUI (MSVC), Android, and OpenHarmony. It installs Servo's additional build requirements,
+WinUI (MSVC), and Android; OpenHarmony is [paused](servo.md#paused-openharmony) and its
+workflow steps are inert. It installs Servo's additional build requirements,
 builds the demo (both ARM64 and x86_64 on mobile), then runs `experiments/servo.yaml` and `experiments/renderer-comparison.yaml`
 with the default-off `servo` flavor. Linux uses Xvfb and Mesa; mobile rows boot their emulator
-and test both engines in the same application. OpenHarmony uses the shared workflow's pinned
-7.0 image and native ArkWeb setup, with the Servo-compatible API 20 native compiler. Local
-Harmony validation is compile-only; its emulator runs in CI.
+and test both engines in the same application. The retained OpenHarmony steps use the shared
+workflow's pinned 7.0 image and native ArkWeb setup, with the API 20 native SDK.
 
 The comparison script checks user agents, script execution, stylesheets, and relative resource
 loading in both engines. It captures the same bundled and provider pages at the same window size,

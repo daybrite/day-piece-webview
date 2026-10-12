@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 [app]
-targets = ["macos-appkit", "macos-gtk", "macos-qt", "linux-gtk", "linux-qt", "windows-winui", "windows-xaml", "android-mdc", "harmony-arkui"]
+# harmony-arkui is paused: see docs/servo.md, "Paused: OpenHarmony", for what has to change
+# upstream before it returns here and to the CI comparison matrix.
+targets = ["macos-appkit", "macos-gtk", "macos-qt", "linux-gtk", "linux-qt", "windows-winui", "windows-xaml", "android-mdc"]
 
 [cargo]
 features = ["servo"]

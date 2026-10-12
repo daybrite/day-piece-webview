@@ -25,8 +25,9 @@ before migrating downstream applications. See [the rollout requirements](docs/se
 ## Experimental Servo
 
 The separate [`day-piece-webview-servo`](servo/) package adds an experimental renderer on
-macOS (AppKit, GTK, Qt), Linux (GTK, Qt), Windows (XAML, WinUI), Android, and
-OpenHarmony. Its `servo` Cargo feature is disabled by default. Native-only consumers do not
+macOS (AppKit, GTK, Qt), Linux (GTK, Qt), Windows (XAML, WinUI), and Android; the
+OpenHarmony host is [paused](docs/servo.md#paused-openharmony). Its `servo` Cargo feature is
+disabled by default. Native-only consumers do not
 resolve Servo dependencies; applications that opt into the adapter do. A Servo-enabled app
 can show Servo and toolkit-native WebView pages at the same time. The demo enables it with
 `day launch -t macos-appkit --flavor servo`, offers a default-renderer preference, and has a
@@ -91,7 +92,7 @@ piece exposes it on every host.
 | Target | Component and hosting | Notes and compatibility |
 |---|---|---|
 | `macos-appkit` (optional Servo adapter) | [Servo 0.6](https://docs.rs/servo/0.6.0/servo/), Surfman/WebRender in an AppKit view | Experimental, disabled by default. Runs in-process; shared engine storage, incomplete native input/UI integration, and reduced media/GPU web features. See [limits](docs/servo.md#current-limits). |
-| Linux GTK/Qt, macOS GTK/Qt, Windows XAML/WinUI, Android MDC, Harmony ArkUI (optional Servo adapter) | [Servo 0.6 embedding](https://book.servo.org/embedding/overview.html), offscreen Surfman/WebRender frames presented through Day Canvas | Experimental CPU frame copies, 1× raster scale, basic input only; no IME or soft-keyboard integration. Windows requires MSVC. See [platform requirements and validation](docs/servo.md#platforms). |
+| Linux GTK/Qt, macOS GTK/Qt, Windows XAML/WinUI, Android MDC (optional Servo adapter; the Harmony ArkUI host is [paused](docs/servo.md#paused-openharmony)) | [Servo 0.6 embedding](https://book.servo.org/embedding/overview.html), offscreen Surfman/WebRender frames presented through Day Canvas | Experimental CPU frame copies, 1× raster scale, basic input only; no IME or soft-keyboard integration. Windows requires MSVC. See [platform requirements and validation](docs/servo.md#platforms). |
 | `macos-appkit` | [WKWebView][wkwebview], a native AppKit view using system WebKit | Web features depend on the installed OS. Named persistent profiles require macOS 14+; older systems use isolated memory storage for explicit profiles. |
 | `macos-gtk` | [WKWebView][wkwebview], a Cocoa child positioned from a GTK allocation anchor | Separate native child: check clipping, overlays, focus, and scrolling. Requires Day’s native-window capture path on macOS; widget-only snapshots omit it. Apple profile limits also apply. |
 | `macos-qt` | [QWebEngineView][qt-webview], a Qt widget using Chromium | Requires Qt 6 WebEngineWidgets at build time; otherwise only a URL label is shown. Package the engine helpers and resources. See Qt resource limits below. |

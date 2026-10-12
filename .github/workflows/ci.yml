@@ -132,6 +132,9 @@ jobs:
 
   # Only implemented Servo hosts belong here. Both engines render the same fixtures in one
   # process; the ordinary native-only matrix below still tests every supported toolkit.
+  # harmony-arkui is paused (docs/servo.md, "Paused: OpenHarmony"): the prebuilt SpiderMonkey
+  # needs the external LLVM 19 toolchain's libc++ and its env interposer crashes on OHOS. The
+  # `matrix.target == 'harmony-arkui'` steps below stay so resuming is one matrix row again.
   renderer-comparison:
     name: renderer comparison (${{ matrix.target }})
     strategy:
@@ -146,7 +149,6 @@ jobs:
           - { os: windows-latest, target: windows-winui }
           - { os: windows-latest, target: windows-xaml }
           - { os: ubuntu-24.04, target: android-mdc }
-          - { os: ubuntu-24.04, target: harmony-arkui }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
     permissions:
@@ -157,6 +159,8 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       DAY_TARGET: ${{ matrix.target }}
       DAY_LOG: warn
+      # Where the demo is built from; Windows remaps it to a short drive below.
+      DEMO_DIR: demo
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -207,6 +211,16 @@ jobs:
           if (!(Test-Path $linker)) { throw "MSVC linker missing: $linker" }
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" >> $env:GITHUB_ENV
           clang --version
+          # mozangle 0.7.1's build script links libGLESv2.dll by passing all 196 object paths to
+          # cl.exe on one command line. Under the runner's D:\a\<repo>\<repo>\demo\build\day\
+          # flavors\servo\cargo\<target>\debug\debug\build\mozangle-<hash>\out prefix that is
+          # ~36k characters, past Windows' 32,767 limit: CreateProcess fails with error 206 ("The
+          # filename or extension is too long") and the script panics. Building from a drive
+          # letter mapped to the workspace keeps the same files and caches and cuts ~38 characters
+          # per object. Remove once mozangle links through a response file.
+          subst W: $env:GITHUB_WORKSPACE
+          if (!(Test-Path 'W:\demo\Day.toml')) { throw 'subst W: did not map the workspace' }
+          'DEMO_DIR=W:\demo' >> $env:GITHUB_ENV
       - name: Install Servo Android NDK
         if: matrix.target == 'android-mdc'
         shell: bash
@@ -238,7 +252,7 @@ jobs:
           shared-key: servo-${{ matrix.target }}
       - name: Build ARM64 mobile application
         if: matrix.target == 'android-mdc' || matrix.target == 'harmony-arkui'
-        working-directory: demo
+        working-directory: ${{ env.DEMO_DIR }}
         env:
           DAY_ANDROID_ABI: arm64-v8a
           DAY_OHOS_ARCH: arm64
@@ -246,7 +260,7 @@ jobs:
         run: '"$DAY_BIN" build -t "$DAY_TARGET" --flavor servo'
       - name: Build the mixed-renderer application
         id: mixed-build
-        working-directory: demo
+        working-directory: ${{ env.DEMO_DIR }}
         shell: bash
         run: '"$DAY_BIN" build -t "$DAY_TARGET" --flavor servo'
       - name: Enable emulator acceleration
@@ -275,7 +289,7 @@ jobs:
         if: matrix.target == 'harmony-arkui'
         uses: daybrite/actions/.github/actions/setup-harmony-webview@main
       - name: Run mixed-renderer regression and comparison scripts
-        working-directory: demo
+        working-directory: ${{ env.DEMO_DIR }}
         shell: bash
         env:
           # Ubuntu hosted runners prohibit WebKit's bubblewrap network namespace.

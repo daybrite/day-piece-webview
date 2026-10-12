@@ -12,7 +12,7 @@ publish = false
 
 [features]
 default = []
-servo = ["dep:servo", "dep:raw-window-handle", "dep:dpi", "dep:euclid", "dep:rustls", "dep:pkcs1", "dep:http", "dep:tempfile", "dep:image", "dep:rustls-platform-verifier", "dep:rustls-platform-verifier-android"]
+servo = ["dep:servo", "dep:raw-window-handle", "dep:dpi", "dep:euclid", "dep:rustls", "dep:pkcs1", "dep:http", "dep:tempfile", "dep:image", "dep:rustls-platform-verifier", "dep:rustls-platform-verifier-android", "dep:servo-default-resources"]
 gtk = ["day-piece-webview/gtk"]
 qt = ["day-piece-webview/qt"]
 xaml = ["day-piece-webview/xaml"]
@@ -66,6 +66,13 @@ objc2-foundation = { version = "0.3", optional = true, features = ["NSString", "
 # Hosted Windows runners need ANGLE/D3D rather than the system's legacy OpenGL driver.
 [target.'cfg(windows)'.dependencies]
 servo = { version = "=0.6.0", optional = true, default-features = false, features = ["bundled", "js_jit", "webcrypto", "no-wgl"] }
+
+# Servo links its baked-in resource reader (servo-default-resources, feature `baked-in-resources`)
+# on every platform but OpenHarmony, where it expects the embedder to register one; without a
+# reader the constellation panics at startup ("No resource reader registered"). Take the default
+# reader directly there; `use … as _` in engine.rs is what keeps it linked.
+[target.'cfg(target_env = "ohos")'.dependencies]
+servo-default-resources = { version = "=0.6.0", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 day-android = { git = "https://github.com/daybrite/day.git", optional = true }
