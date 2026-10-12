@@ -224,7 +224,11 @@ receives the same commands. Ordinary canvases do not gain browser evaluation ope
 
 Servo wakes Day's main queue when it has work. Wakes are coalesced. Painting follows
 Servo's frame-ready notifications; the adapter does not subscribe to Day's frame clock or
-install an idle polling timer. AppKit forwards resizing, backing scale, focus, mouse, scroll,
+install an idle polling timer. The canvas host registers a screenshot hold
+(`day_spec::capture::register_hold`, Day's docs/window-image.md): a dayscript `screenshot` or
+`sample_pixel` waits until every attached Servo view has presented its latest frame, since the
+toolkit's own render checkpoint cannot see a frame that is still being read back or decoded.
+A page that animates continuously keeps a capture waiting until the step times out. AppKit forwards resizing, backing scale, focus, mouse, scroll,
 and keyboard events. Closing a non-session view releases its browsing context and rendering
 surface. The shared engine stays available for the next view.
 

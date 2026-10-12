@@ -56,7 +56,30 @@ pub(crate) fn register() -> Result<(), renderer::RegistrationError> {
         update,
         release,
     };
+    // Once per process, whatever the registration below answers: a capture must not race the
+    // frames this host presents (see `frames_settled`).
+    static HOLD: std::sync::Once = std::sync::Once::new();
+    HOLD.call_once(|| day_spec::capture::register_hold(frames_settled));
     renderer::surface::register(WebRenderer::Servo, &HOST)
+}
+
+/// The screenshot hold this host registers (`day_spec::capture::register_hold`): a frame
+/// reaches the canvas only after Servo's paint, a read-back, a PNG round trip through the
+/// toolkit's decoder, and a replay, none of which the toolkit's render checkpoint can see. A
+/// dayscript capture therefore waits until every attached view with a live page has presented
+/// at least one frame and has none waiting to be read (`dirty`) or decoding. On an emulator
+/// the first frame after a renderer switch can trail the page's JavaScript replies by more
+/// than the capture's own latency, which showed as an empty canvas in the proof captures.
+fn frames_settled() -> bool {
+    VIEWS.with(|views| {
+        views.borrow().values().all(|view| {
+            view.node.get().is_none()
+                || view.web.borrow().is_none()
+                || (view.bitmap.borrow().is_some()
+                    && !view.state.dirty.get()
+                    && !view.decoding.get())
+        })
+    })
 }
 
 fn get(node: RNode) -> Option<Rc<View>> {

@@ -7,6 +7,11 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 ## Unreleased
 
+- Fixed: a dayscript screenshot could capture a Servo canvas before its frame arrived (the
+  Android comparison job's Servo proof came out blank while the page's JavaScript had already
+  answered). The canvas host now registers a capture hold with Day, so `screenshot` and
+  `sample_pixel` wait until every attached Servo view has presented its latest frame; needs a
+  Day with `day_spec::capture::register_hold`.
 - Changed: the experimental Servo renderer's `harmony-arkui` host is paused: out of the
   comparison CI matrix and the demo's `servo` flavor targets, code retained. The prebuilt
   SpiderMonkey archive needs the external LLVM 19 toolchain's libc++ and its env interposer
