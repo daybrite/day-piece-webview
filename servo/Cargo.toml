@@ -1,0 +1,54 @@
+# Copyright © The Daybrite Project
+# SPDX-License-Identifier: MPL-2.0
+[package]
+name = "day-piece-webview-servo"
+version = "0.4.3"
+edition = "2024"
+rust-version = "1.89"
+description = "Experimental Servo renderer for day-piece-webview"
+repository = "https://github.com/daybrite/day-piece-webview"
+license = "MPL-2.0"
+publish = false
+
+[features]
+default = []
+servo = ["dep:servo", "dep:raw-window-handle", "dep:dpi", "dep:euclid", "dep:dispatch2", "dep:rustls", "dep:pkcs1", "dep:http", "dep:tempfile"]
+appkit = ["day-piece-webview/appkit", "dep:day-appkit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
+
+[dependencies]
+day-piece-webview = { path = ".." }
+day-spec = { git = "https://github.com/daybrite/day.git" }
+serde_json = "1"
+url = "2"
+log = "0.4"
+
+[package.metadata.day]
+compat = "0.5"
+
+[package.metadata.day.piece]
+backends = ["appkit"]
+
+[package.metadata.day.macos]
+selective-archive-loading = { feature = "servo" }
+libraries = [{ name = "c++", feature = "servo" }, { name = "z", feature = "servo" }]
+# SpiderMonkey uses tagged static pointers that chained dyld fixups cannot represent.
+linker-options = [{ name = "-no_fixup_chains", feature = "servo" }]
+
+# Resolve this experimental package independently from the native piece.
+[workspace]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+servo = { version = "=0.6.0", optional = true, default-features = false, features = ["bundled", "js_jit", "webcrypto"] }
+# Servo's RSA prerelease is incompatible with pkcs1 rc.5; match Servo 0.6's lockfile.
+pkcs1 = { version = "=0.8.0-rc.4", optional = true }
+http = { version = "1.4", optional = true }
+tempfile = { version = "3", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+dpi = { version = "0.1", optional = true }
+euclid = { version = "0.22", optional = true }
+dispatch2 = { version = "0.3", optional = true }
+rustls = { version = "0.23", optional = true, default-features = false, features = ["aws_lc_rs"] }
+day-appkit = { git = "https://github.com/daybrite/day.git", optional = true }
+objc2 = { version = "0.6", optional = true }
+objc2-app-kit = { version = "0.3", optional = true, features = ["NSView", "NSResponder"] }
+objc2-foundation = { version = "0.3", optional = true, features = ["NSString", "NSURL", "NSURLRequest", "NSError"] }

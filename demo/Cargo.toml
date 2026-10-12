@@ -10,7 +10,8 @@ publish = false
 # `mock` keeps bare cargo and rust-analyzer compiling; `day build` overrides it with
 # `--no-default-features --features <backend>` (https://daybrite.dev/docs/project-structure).
 default = ["mock"]
-appkit = ["day/appkit"]
+servo = ["dep:day-piece-webview-servo", "day-piece-webview-servo/servo"]
+appkit = ["day/appkit", "day-piece-webview-servo?/appkit"]
 gtk = ["day/gtk"]
 qt = ["day/qt"]
 uikit = ["day/uikit"]
@@ -39,6 +40,7 @@ day = { git = "https://github.com/daybrite/day.git" }
 # depends on it from git instead:
 #     day-piece-webview = { git = "https://github.com/daybrite/day-piece-webview.git" }
 day-piece-webview = { path = ".." }
+day-piece-webview-servo = { path = "../servo", optional = true, default-features = false }
 
 [build-dependencies]
 day-build = { git = "https://github.com/daybrite/day.git" }

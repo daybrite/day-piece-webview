@@ -272,3 +272,39 @@ blank document is ignored, requested loads and reloads notify `on_load`, cross-o
 use the assigned URL, and disposing a view removes its listener. Day-News's
 `native-reader-interactions.yaml` checks that the notification arms visibility-triggered
 reader extraction in Chromium, as well as the native toolkits.
+
+## Experimental Servo on AppKit
+
+The opt-in [Servo walkthrough](../demo/experiments/servo.yaml) checks a real Servo user agent,
+bundled CSS, isolated JavaScript heaps, preservation of a native tab while a Servo tab changes,
+repeated engine replacement, relative provider resources, iframe loading, reload, and close.
+It lives outside the default walkthrough directory because ordinary CI builds exclude Servo.
+
+```sh
+cd demo
+day launch -t macos-appkit --flavor servo --script experiments/servo.yaml
+```
+
+Supply `DAY_BUILD_TOOL_PATH` as described in [Servo setup](servo.md). These assertions test
+integration behavior; they do not establish browser conformance, sandboxing, or a performance
+comparison. Inspect the saved screenshots to verify actual painting.
+
+`experiments/servo-remote.yaml` additionally loads `https://daybrite.dev` in both engines,
+checks the saved default-renderer preference, and moves the resident pages into native document
+windows. It requires network access. The initial AppKit validation passed 36/36 local steps,
+39/39 remote steps, and the ordinary native-only walkthrough's 62 applicable steps. Both
+remote screenshots were inspected for painted page content. These debug runs are functional
+checks, not performance benchmarks; other Servo hosts have not been implemented or tested.
+The two remote tabs were also detached through AppKit's window-tab action, arranged side by
+side, and captured independently. Both retained their URL and engine, and the native page
+retained its JavaScript marker after detachment and resizing.
+
+The native dependency check (`python3 scripts/check-native-resolution.py`) creates a fresh
+consumer manifest and lockfile outside either package workspace, forwards all native toolkit
+features, and rejects Servo, SpiderMonkey, Surfman, or WebRender engine packages. Standalone
+utilities such as `servo_arc`, also used by native dependencies, are allowed. Run adapter checks separately with
+`cargo clippy --manifest-path servo/Cargo.toml --features appkit,servo --all-targets -- -D warnings`
+and `cargo test --manifest-path servo/Cargo.toml --features appkit,servo --lib`, using the Python,
+LLVM, and deployment-target environment described in [Servo setup](servo.md). Base package tests
+cover registration idempotence and conflicts without initializing an engine; the demo scripts
+exercise actual mixed-engine routing and lifetime.

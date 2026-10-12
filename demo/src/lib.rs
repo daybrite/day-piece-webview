@@ -9,8 +9,8 @@
 
 use day::prelude::*;
 use day_piece_webview::{
-    JsHandle, LinkPolicy, NavigationState, eval_support, inline_support, support, web_view,
-    web_view_inline,
+    JsHandle, LinkPolicy, NavigationState, WebRenderer, eval_support, inline_support, support,
+    web_view, web_view_inline,
 };
 use std::collections::HashMap;
 
@@ -163,6 +163,7 @@ fn home_localization() -> String {
 }
 #[derive(Clone, Copy)]
 struct BrowserCommands {
+    renderer: Signal<WebRenderer>,
     browser: Browser,
     private: Signal<bool>,
     generation: Signal<u64>,
@@ -299,6 +300,10 @@ fn tab_widget_id(tab: u64, base: &str) -> String {
     }
 }
 pub fn root() -> impl Piece {
+    #[cfg(all(feature = "servo", feature = "appkit", target_os = "macos"))]
+    if let Err(error) = day_piece_webview_servo::register() {
+        day::warn!("Servo renderer registration failed: {error}");
+    }
     let tabs = BrowserTabs {
         tabs: TabSet::new(),
         serial: Signal::new(0),
@@ -401,6 +406,7 @@ fn tab_controls(tabs: BrowserTabs, tab_number: u64) -> impl Piece {
 }
 fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry> {
     let BrowserCommands {
+        renderer,
         private: _,
         browser,
         generation,
@@ -501,7 +507,11 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
                 menu_item(res::str::stop().format())
                     .id("browser-stop")
                     .shortcut(Shortcut::plain("Escape"))
-                    .enabled(support() == Support::Native && browser.navigation.get().loading)
+                    .enabled(
+                        renderer.get() == WebRenderer::WebView
+                            && support() == Support::Native
+                            && browser.navigation.get().loading,
+                    )
                     .action(move || browser.stop.notify()),
                 menu_separator(),
                 menu_item(res::str::test_tools().format())
@@ -571,6 +581,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
             .copied()
             .unwrap_or(false),
     );
+    let renderer = Signal::new(default_renderer());
     let generation = Signal::new(0u64);
     let tools = Signal::new(false);
     let address_focus = Signal::new(false);
@@ -583,6 +594,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
         },
     );
     let commands = BrowserCommands {
+        renderer,
         private,
         browser,
         generation,
@@ -613,14 +625,14 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
             private.get(),
             generation.get(),
             browser.home_start.get(),
+            renderer.get(),
         )
     };
     let polling = day::task(async move {
         loop {
             let requested = key();
             if support() == Support::Native
-                && !(requested.1
-                    && day_piece_webview::private_browsing_support() == Support::Unsupported)
+                && !(requested.1 && requested.4.private_browsing_support() == Support::Unsupported)
                 && let futures_util::future::Either::Left((Ok(state), _)) =
                     futures_util::future::select(
                         Box::pin(browser.js.navigation_state()),
@@ -690,7 +702,9 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     .icon_only()
                     .compact()
                     .enabled(move || {
-                        support() == Support::Native && browser.navigation.get().loading
+                        renderer.get() == WebRenderer::WebView
+                            && support() == Support::Native
+                            && browser.navigation.get().loading
                     })
                     .action(move || browser.stop.notify())
                     .id(tab_widget_id(tab_number, "webview-stop")),
@@ -710,6 +724,30 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         label(res::str::private_badge())
                             .font(Font::Caption)
                             .id(tab_widget_id(tab_number, "browser-private"))
+                    },
+                ),
+                when(
+                    || WebRenderer::Servo.available(),
+                    move || {
+                        button(move || renderer_label(renderer.get()))
+                            .compact()
+                            .enabled(move || !private.get())
+                            .action(move || {
+                                let url = tab_url(browser);
+                                if let Some(path) = url.strip_prefix("day://home/") {
+                                    home_start.set(Some(path.to_owned()));
+                                }
+                                if let Some(path) = url.strip_prefix("day://resources/") {
+                                    resource_start.set(path.to_owned());
+                                }
+                                browser.navigation.set(NavigationState::default());
+                                renderer.set(if renderer.get_untracked() == WebRenderer::Servo {
+                                    WebRenderer::WebView
+                                } else {
+                                    WebRenderer::Servo
+                                });
+                            })
+                            .id(tab_widget_id(tab_number, "webview-renderer"))
                     },
                 ),
                 button(res::str::test_tools())
@@ -772,8 +810,8 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
         .spacing(6.0)
         .padding(10.0),
         each(items(move || vec![key()], |key| key.clone()), move |slot| {
-            let (source, private, _, _) = slot.get();
-            if private && day_piece_webview::private_browsing_support() == Support::Unsupported {
+            let (source, private, _, _, renderer) = slot.get();
+            if private && renderer.private_browsing_support() == Support::Unsupported {
                 return label(res::str::private_hint())
                     .id(tab_widget_id(tab_number, "webview-unsupported"))
                     .any();
@@ -794,11 +832,15 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         tabs,
                         tab_number,
                         resource_start.get_untracked(),
+                        renderer,
                     );
                 }
                 Source::Remote => web_view(browser.location),
             };
-            view.profile(demo_profile(private))
+            let Ok(view) = view.renderer(renderer) else {
+                return label(res::str::renderer_unavailable()).any();
+            };
+            view.profile(renderer_profile(renderer, private))
                 .on_new_tab(
                     res::str::open_link_new_tab().format(),
                     res::str::open_link_background_tab().format(),
@@ -975,6 +1017,17 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
 fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
     let window = day::current_window();
     let private = Signal::new(day::prefs::get("demo.web.incognito").as_deref() == Some("true"));
+    let renderer_choice = Signal::new(usize::from(default_renderer() == WebRenderer::Servo));
+    watch(
+        move || renderer_choice.get(),
+        move |choice, _| {
+            day::prefs::set(
+                "demo.web.renderer",
+                if *choice == 1 { "servo" } else { "webview" },
+            );
+        },
+    );
+    let active_renderer = move || tabs.active().map(|c| c.renderer.get()).unwrap_or_default();
     let clearing = Signal::new(false);
     let result = Signal::new(String::new());
     watch(
@@ -989,25 +1042,40 @@ fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
     column((
         label(res::str::browser_settings()).font(Font::Title),
         labeled(
+            res::str::default_renderer(),
+            picker(
+                [
+                    res::str::renderer_webview().format(),
+                    res::str::renderer_servo().format(),
+                ],
+                renderer_choice,
+            )
+            .enabled(WebRenderer::Servo.available())
+            .id("webview-default-renderer"),
+        ),
+        label(res::str::renderer_hint()).font(Font::Footnote),
+        labeled(
             res::str::native_tabs(),
             toggle(native_tabs).id("webview-native-tabs"),
         ),
         label(res::str::native_tabs_hint()).font(Font::Footnote),
         labeled(
             res::str::incognito_mode(),
-            toggle(private).id("webview-incognito"),
+            toggle(private)
+                .enabled(move || private.get() || active_renderer() == WebRenderer::WebView)
+                .id("webview-incognito"),
         ),
         labeled(
             res::str::support_private(),
             support_label(
-                day_piece_webview::private_browsing_support(),
+                active_renderer().private_browsing_support(),
                 "webview-private-support",
             ),
         ),
         labeled(
             res::str::support_profiles(),
             support_label(
-                day_piece_webview::profile_support(),
+                active_renderer().profile_support(),
                 "webview-profile-support",
             ),
         ),
@@ -1034,7 +1102,7 @@ fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
             .enabled(move || {
                 !clearing.get()
                     && tabs.active().is_some()
-                    && day_piece_webview::clear_data_support() == Support::Native
+                    && active_renderer().clear_data_support() == Support::Native
             })
             .id("webview-clear-data"),
         label(move || result.get())
@@ -1067,6 +1135,7 @@ fn resource_site(
     tabs: BrowserTabs,
     tab_number: u64,
     start: String,
+    renderer: WebRenderer,
 ) -> AnyPiece {
     use day_piece_webview::{ResourceProvider, ResourceResponse, web_view_resources};
     // Localize on the UI thread; the provider itself runs on native IO workers.
@@ -1089,29 +1158,54 @@ fn resource_site(
     }
     });
     browser.resource_base.set(provider.base_url());
-    web_view_resources(provider, &start)
-        .on_new_tab(
-            res::str::open_link_new_tab().format(),
-            res::str::open_link_background_tab().format(),
-            move |request| {
-                tabs.open_profile(
-                    canonical_tab_url(browser, &request.url),
-                    !request.background,
-                    private,
-                )
-            },
-        )
-        .profile(demo_profile(private))
-        .url_binding(browser.location)
-        .js(browser.js)
-        .go(browser.go)
-        .back(browser.back)
-        .forward(browser.forward)
-        .stop(browser.stop)
-        .reload(browser.reload)
-        .force_reload(browser.force_reload)
-        .id(tab_widget_id(tab_number, "webview"))
-        .any()
+    let Ok(view) = web_view_resources(provider, &start).renderer(renderer) else {
+        return label(res::str::renderer_unavailable()).any();
+    };
+    view.on_new_tab(
+        res::str::open_link_new_tab().format(),
+        res::str::open_link_background_tab().format(),
+        move |request| {
+            tabs.open_profile(
+                canonical_tab_url(browser, &request.url),
+                !request.background,
+                private,
+            )
+        },
+    )
+    .profile(renderer_profile(renderer, private))
+    .url_binding(browser.location)
+    .js(browser.js)
+    .go(browser.go)
+    .back(browser.back)
+    .forward(browser.forward)
+    .stop(browser.stop)
+    .reload(browser.reload)
+    .force_reload(browser.force_reload)
+    .id(tab_widget_id(tab_number, "webview"))
+    .any()
+}
+
+fn default_renderer() -> WebRenderer {
+    if WebRenderer::Servo.available()
+        && day::prefs::get("demo.web.renderer").as_deref() == Some("servo")
+    {
+        WebRenderer::Servo
+    } else {
+        WebRenderer::WebView
+    }
+}
+fn renderer_label(renderer: WebRenderer) -> String {
+    match renderer {
+        WebRenderer::WebView => res::str::renderer_webview().format(),
+        WebRenderer::Servo => res::str::renderer_servo().format(),
+    }
+}
+fn renderer_profile(renderer: WebRenderer, private: bool) -> day_piece_webview::WebProfile {
+    if renderer == WebRenderer::Servo {
+        day_piece_webview::WebProfile::default()
+    } else {
+        demo_profile(private)
+    }
 }
 
 fn demo_profile(private: bool) -> day_piece_webview::WebProfile {

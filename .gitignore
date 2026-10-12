@@ -23,3 +23,8 @@ __pycache__/
 /demo/platform/android/**/build/
 /demo/platform/android/local.properties
 /demo/platform/android/.idea/
+
+# The experimental adapter has an independent Cargo resolution.
+/servo/target
+/servo/Cargo.lock
+/servo/.cargo/config.toml

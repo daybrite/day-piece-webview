@@ -55,3 +55,11 @@ JavaScript/data operations fail instead of falling back to persistent storage. P
 controls browser storage only, not application-managed downloads or the app's own databases.
 The demo's Browser Settings page rebuilds its browser when Incognito Mode changes and exposes
 the engine's capabilities and profile clearing for manual experiments.
+
+## Optional Servo engine
+
+The separate `day-piece-webview-servo` package adds a per-view engine choice on macos-appkit.
+Its `servo` feature is disabled by default; native consumers do not depend on this package.
+Native WebView remains available alongside it. Existing platform capability tables
+on this page describe native integrations. See [Servo](servo.md) for engine selection,
+coexistence, build requirements, profile restrictions, and current host limitations.

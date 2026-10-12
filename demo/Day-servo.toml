@@ -1,0 +1,12 @@
+# Copyright © The Daybrite Project
+# SPDX-License-Identifier: MPL-2.0
+
+[app]
+targets = ["macos-appkit"]
+
+[cargo]
+features = ["servo"]
+
+[env]
+# Servo 0.6's published SpiderMonkey archive contains macOS 15.5 objects.
+MACOSX_DEPLOYMENT_TARGET = "15.5"

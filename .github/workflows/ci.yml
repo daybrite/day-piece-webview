@@ -57,9 +57,17 @@ jobs:
           esac
       - run: cargo fmt --all -- --check
         if: matrix.features == 'gtk'
+      - run: cargo fmt --manifest-path servo/Cargo.toml --all -- --check
+        if: matrix.features == 'gtk'
+      - name: Verify native consumer dependency isolation
+        if: matrix.features == 'gtk'
+        run: python3 scripts/check-native-resolution.py
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo clippy --features ${{ matrix.features }} -- -D warnings
       - run: cargo test
+      - name: Test AppKit renderer registration
+        if: matrix.features == 'appkit'
+        run: cargo test --features appkit --lib
       - name: Test Qt WebView startup lifecycle
         if: matrix.features == 'qt'
         run: |

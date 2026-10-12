@@ -80,3 +80,9 @@ open_link_background_tab = Open Link in Background Tab
 
 native_tabs = Use native tabs
 native_tabs_hint = Use system window tabs or toolkit tab controls where available. Turn off to use app-drawn tabs. Existing pages stay open when switching.
+
+renderer_webview = WebView
+renderer_servo = Servo
+default_renderer = Default renderer
+renderer_hint = Applies to new tabs. Click the renderer button in a tab to switch engines and reload its current page. Servo is experimental and requires the Servo build flavor.
+renderer_unavailable = This renderer is unavailable in this build.

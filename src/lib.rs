@@ -26,6 +26,7 @@ use day_core::{BuildCx, Flex, Piece, RNode, with_tree};
 use day_reactive::{Signal, Trigger, watch};
 use day_spec::Event;
 
+pub mod renderer;
 mod resources;
 pub use resources::{ResourceProvider, ResourceRequest, ResourceResponse};
 
@@ -234,6 +235,7 @@ const DATA_REQUEST: &str = "day-web-data:";
 /// Full props (realize). The initial `url` is loaded when the native view is created.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WebProps {
+    pub renderer: WebRenderer,
     pub profile: WebProfile,
     pub resources: Option<ResourceProvider>,
     /// On Apple backends, report user-activated links in ordinary documents as well.
@@ -745,6 +747,7 @@ pub struct NavigationState {
 pub struct JsHandle {
     node: Signal<Option<RNode>>,
     blocked: Signal<bool>,
+    renderer: Signal<WebRenderer>,
 }
 
 impl Default for JsHandle {
@@ -754,11 +757,16 @@ impl Default for JsHandle {
 }
 
 impl JsHandle {
+    /// Engine currently attached to this handle.
+    pub fn renderer(&self) -> WebRenderer {
+        self.renderer.get_untracked()
+    }
     #[track_caller]
     pub fn new() -> Self {
         JsHandle {
             node: Signal::new(None),
             blocked: Signal::new(false),
+            renderer: Signal::new(WebRenderer::default()),
         }
     }
 
@@ -920,13 +928,6 @@ pub struct TabLinkLabels {
     pub background: String,
 }
 const NEW_TAB_REPORT: f64 = -4.0;
-#[cfg(any(
-    all(target_os = "macos", any(feature = "appkit", feature = "gtk")),
-    all(target_os = "ios", feature = "uikit"),
-    feature = "qt",
-    all(feature = "gtk", not(target_os = "macos"), not(windows)),
-    all(windows, any(feature = "xaml", feature = "gtk", feature = "qt"))
-))]
 fn new_tab_event(url: String, background: bool) -> Event {
     Event::Custom {
         tag: "webview:new-tab",
@@ -965,6 +966,7 @@ type LinkDecider = Rc<dyn Fn(&str) -> LinkPolicy>;
 type NewTabHandler = (TabLinkLabels, Rc<dyn Fn(&NewTabRequest)>);
 
 pub struct WebView {
+    renderer: WebRenderer,
     profile: WebProfile,
     resources: Option<ResourceProvider>,
     url: Signal<String>,
@@ -996,6 +998,7 @@ pub fn web_view(url: Signal<String>) -> WebView {
     // target a webview some constructor built, so registration here is always in time.
     register_script_eval();
     WebView {
+        renderer: WebRenderer::default(),
         profile: WebProfile::default(),
         url,
         go: None,
@@ -1040,6 +1043,15 @@ pub fn web_view_resources(provider: ResourceProvider, page: &str) -> WebView {
 }
 
 impl WebView {
+    /// Select an engine for this context, failing instead of falling back silently.
+    /// Rebuild the piece at its current URL to switch an existing page's renderer.
+    pub fn renderer(mut self, renderer: WebRenderer) -> Result<Self, RendererUnavailable> {
+        if !renderer.available() {
+            return Err(RendererUnavailable(renderer));
+        }
+        self.renderer = renderer;
+        Ok(self)
+    }
     /// Share cookies, local storage, cache and engine site data with other views using this profile.
     pub fn profile(mut self, profile: WebProfile) -> Self {
         self.profile = profile;
@@ -1190,6 +1202,7 @@ pub fn support() -> day_spec::Support {
 impl Piece for WebView {
     fn build(self, cx: &mut BuildCx) -> RNode {
         let WebView {
+            renderer,
             profile,
             url,
             go,
@@ -1222,11 +1235,11 @@ impl Piece for WebView {
             // A retained engine still needs its original namespace while detached. Like the
             // retained page itself, the first provider wins until process shutdown.
             day_core::tls_group! {
-                static SESSION_RESOURCES: RefCell<HashMap<u64, (ResourceProvider, String)>> = RefCell::new(HashMap::new());
+                static SESSION_RESOURCES: RefCell<HashMap<(WebRenderer, u64), (ResourceProvider, String)>> = RefCell::new(HashMap::new());
             }
             let retained = SESSION_RESOURCES.with(|m| {
                 m.borrow_mut()
-                    .entry(session_id)
+                    .entry((renderer, session_id))
                     .or_insert_with(|| (provider.clone(), initial_url.clone()))
                     .clone()
             });
@@ -1234,9 +1247,13 @@ impl Piece for WebView {
             initial_url = retained.1;
             url.set(initial_url.clone());
         }
-        let blocked_private =
-            profile.private && private_browsing_support() == day_spec::Support::Unsupported;
+        let blocked_private = (profile.private
+            && renderer.private_browsing_support() == day_spec::Support::Unsupported)
+            || (renderer != WebRenderer::WebView
+                && renderer.profile_support() == day_spec::Support::Unsupported
+                && profile != WebProfile::default());
         let initial = WebProps {
+            renderer,
             profile,
             resources: if blocked_private {
                 None
@@ -1344,6 +1361,7 @@ impl Piece for WebView {
 
         // Bind the eval handle to the realized node so `handle.eval(…)` knows where to send.
         if let Some(js) = js {
+            js.renderer.set(renderer);
             js.blocked.set(blocked_private);
             js.node.set(Some(node));
         }
@@ -1558,8 +1576,74 @@ impl<Inner: WebViewBuilder + day_pieces::prelude::Piece> WebViewBuilder
     }
 }
 
+/// Rendering engine selected independently for each view.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum WebRenderer {
+    /// The toolkit's embedded browser; the default.
+    #[default]
+    WebView,
+    /// Experimental engine supplied by the separately registered `day-piece-webview-servo` package.
+    Servo,
+}
+impl WebRenderer {
+    /// Whether this build can create this renderer, without initializing an engine.
+    pub fn available(self) -> bool {
+        match self {
+            Self::WebView => support() != day_spec::Support::Unsupported,
+            Self::Servo => renderer::capabilities(self).is_some(),
+        }
+    }
+    /// Whether isolated private browsing contexts are supported.
+    pub fn private_browsing_support(self) -> day_spec::Support {
+        match self {
+            Self::WebView => private_browsing_support(),
+            Self::Servo => renderer::capabilities(self)
+                .map_or(day_spec::Support::Unsupported, |caps| caps.private_browsing),
+        }
+    }
+    /// Whether named storage profiles are supported.
+    pub fn profile_support(self) -> day_spec::Support {
+        match self {
+            Self::WebView => profile_support(),
+            Self::Servo => renderer::capabilities(self)
+                .map_or(day_spec::Support::Unsupported, |caps| caps.profiles),
+        }
+    }
+    /// Whether all data in a profile can be deleted.
+    pub fn clear_data_support(self) -> day_spec::Support {
+        match self {
+            Self::WebView => clear_data_support(),
+            Self::Servo => renderer::capabilities(self)
+                .map_or(day_spec::Support::Unsupported, |caps| caps.clear_data),
+        }
+    }
+}
+/// An explicitly selected renderer is unavailable in this build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RendererUnavailable(pub WebRenderer);
+impl std::fmt::Display for RendererUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} renderer is unavailable in this build", self.0)
+    }
+}
+impl std::error::Error for RendererUnavailable {}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn servo_selection_is_explicit_and_does_not_claim_native_profiles() {
+        assert_eq!(super::WebRenderer::default(), super::WebRenderer::WebView);
+        assert!(!super::WebRenderer::Servo.available());
+        assert_eq!(
+            super::WebRenderer::Servo.private_browsing_support(),
+            day_spec::Support::Unsupported
+        );
+        assert_eq!(
+            super::WebRenderer::Servo.profile_support(),
+            day_spec::Support::Unsupported
+        );
+    }
+
     use super::*;
 
     #[test]

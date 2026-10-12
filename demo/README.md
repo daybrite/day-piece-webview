@@ -59,3 +59,26 @@ Share opens the OS chooser. Platforms without a native chooser explicitly offer 
 The Tabs menu switches, moves and duplicates tabs. Its Show Tab Controls item (also a switch
 in the testing drawer) reveals a row of tab buttons above each page that the
 [tab walkthroughs](dayscript/tabs.yaml) tap; it is hidden by default.
+
+
+## Generated native projects
+
+Use a Day CLI with automatic native project generation; Apple builds require **Xcode 27
+or newer**. Xcode project documents, Android Gradle files, and HarmonyOS hvigor files are
+created under `build/` by `day prepare`, `day build`, and `day launch`. Open the selected
+project with `day open -t <target>`; edits to generated files are disposable. Apple Swift
+sources, plists and `.xcconfig` files, and any Android resource overlays, remain app-owned
+under `platform/`. For additional native configuration, use
+`day project add-target <target> --persist-native-project` to create a persistent override.
+
+## Experimental Servo comparison
+
+`day launch -t macos-appkit --flavor servo` enables the optional `day-piece-webview-servo`
+adapter alongside WKWebView. The demo registers it before creating views. Settings chooses
+the default for new tabs; each tab's renderer button reloads its current URL with the other
+engine. Open the same URL in two tabs, switch one to Servo, and drag a native tab out to compare
+separate windows. The ordinary build remains native-only. See
+[Servo setup and limitations](../docs/servo.md), including its additional build tools.
+
+The demo declares the adapter as an optional dependency, so Cargo resolves its engine graph
+even in a native demo build. Apps depending only on `day-piece-webview` avoid that graph.

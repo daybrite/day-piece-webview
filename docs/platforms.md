@@ -156,3 +156,11 @@ transient documents even on hosts that ignore engine retention.
 
 The piece owns these adapters. Core Day supplies generic piece registration, native build
 contributions, browser bridging, layout, and the named-operation interface used by dayscript.
+
+## Optional Servo engine
+
+The separate `day-piece-webview-servo` package adds a per-view engine choice on macos-appkit.
+Its `servo` feature is disabled by default; native consumers do not depend on this package.
+Native WebView remains available alongside it. Existing platform capability tables
+on this page describe native integrations. See [Servo](servo.md) for engine selection,
+coexistence, build requirements, profile restrictions, and current host limitations.
