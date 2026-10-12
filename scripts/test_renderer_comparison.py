@@ -15,6 +15,26 @@ spec.loader.exec_module(comparison)
 
 
 class RendererComparison(unittest.TestCase):
+    def test_untitled_proofs_are_checked_but_do_not_require_publication_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory, index = self.fixture(root)
+            proof = dict(index["screenshots"][0], shot="renderer-servo-proof", title=None,
+                         caption=None)
+            index["screenshots"].append(proof)
+            manifest = directory / "gallery.json"
+            manifest.write_text(json.dumps(index))
+            comparison.verify(root, "macos-appkit")
+            proof["sha256"] = "corrupt proof fixture"
+            manifest.write_text(json.dumps(index))
+            with self.assertRaisesRegex(ValueError, "bytes disagree"):
+                comparison.verify(root, "macos-appkit")
+            index["screenshots"].pop()
+            index["screenshots"][0]["title"] = None
+            manifest.write_text(json.dumps(index))
+            with self.assertRaisesRegex(ValueError, "Missing localized publication"):
+                comparison.verify(root, "macos-appkit")
+
     def fixture(self, root):
         directory = root / "macos-appkit"
         (directory / "default").mkdir(parents=True)

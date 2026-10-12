@@ -159,6 +159,18 @@ fn attach(cx: &mut BuildCx, node: RNode, props: &WebProps) {
 }
 impl View {
     fn resize(&self, size: Size) {
+        #[cfg(all(
+            any(feature = "gtk", feature = "qt"),
+            target_os = "linux",
+            not(target_env = "ohos")
+        ))]
+        let _graphics = match crate::linux_gl::Guard::enter() {
+            Ok(guard) => guard,
+            Err(error) => {
+                log::error!("Servo graphics binding: {error}");
+                return;
+            }
+        };
         if !size.width.is_finite()
             || !size.height.is_finite()
             || size.width <= 0.0
@@ -202,6 +214,18 @@ impl View {
         self.replay();
     }
     fn with_web(&self, f: impl FnOnce(&servo::WebView)) {
+        #[cfg(all(
+            any(feature = "gtk", feature = "qt"),
+            target_os = "linux",
+            not(target_env = "ohos")
+        ))]
+        let _graphics = match crate::linux_gl::Guard::enter() {
+            Ok(guard) => guard,
+            Err(error) => {
+                log::error!("Servo graphics binding: {error}");
+                return;
+            }
+        };
         let web = self.web.borrow().clone();
         if let Some(web) = web {
             f(&web);
@@ -209,9 +233,8 @@ impl View {
         }
     }
     fn update(&self, patch: &WebPatch) {
-        if let Some(web) = self.web.borrow().clone() {
-            engine::update(&self.state, &web, patch);
-            Waker.wake();
+        if self.web.borrow().is_some() {
+            self.with_web(|web| engine::update(&self.state, web, patch));
         } else if let WebPatch::Eval { req, .. } = patch {
             let error = self
                 .state
@@ -299,6 +322,18 @@ fn update(node: RNode, patch: &WebPatch) {
     }
 }
 fn release(node: RNode) {
+    #[cfg(all(
+        any(feature = "gtk", feature = "qt"),
+        target_os = "linux",
+        not(target_env = "ohos")
+    ))]
+    let _graphics = match crate::linux_gl::Guard::enter() {
+        Ok(guard) => guard,
+        Err(error) => {
+            log::error!("Servo graphics binding: {error}");
+            return;
+        }
+    };
     if let Some(view) = VIEWS.with(|views| views.borrow_mut().remove(&node)) {
         view.node.set(None);
         if view.state.props.session == 0 {

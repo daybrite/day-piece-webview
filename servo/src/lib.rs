@@ -4,6 +4,14 @@
 //! then call [`register`] on the UI thread before constructing views. See `docs/servo.md`.
 pub use day_piece_webview::renderer::RegistrationError;
 
+#[cfg(all(
+    feature = "servo",
+    any(feature = "gtk", feature = "qt"),
+    target_os = "linux",
+    not(target_env = "ohos")
+))]
+mod linux_gl;
+
 #[cfg(all(feature = "servo", target_os = "windows", not(target_env = "msvc")))]
 compile_error!("The Servo adapter requires the MSVC Windows toolchain (xaml or winui).");
 

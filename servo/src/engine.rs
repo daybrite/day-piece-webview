@@ -81,6 +81,18 @@ pub(crate) fn engine() -> Result<Servo, String> {
     })
 }
 fn pump() {
+    #[cfg(all(
+        any(feature = "gtk", feature = "qt"),
+        target_os = "linux",
+        not(target_env = "ohos")
+    ))]
+    let _graphics = match crate::linux_gl::Guard::enter() {
+        Ok(guard) => guard,
+        Err(error) => {
+            log::error!("Servo graphics binding: {error}");
+            return;
+        }
+    };
     let engine = ENGINE.with(|s| s.borrow().as_ref().map(|engine| engine.servo.clone()));
     if let Some(engine) = engine {
         engine.spin_event_loop();

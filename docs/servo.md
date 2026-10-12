@@ -120,8 +120,16 @@ first engine startup, disk/network caches, and debug compilation can dominate sm
 
 The comparison CI matrix builds and runs both dayscripts for every row and publishes paired
 captures by target. Adding a matrix row is not evidence of a successful run: Windows, Linux,
-and Harmony runtime results must be checked on the first CI run of this implementation.
+and Harmony full runtime validation is still pending a successful CI run.
 Servo has no iOS or WebAssembly host here; those targets retain their native integration.
+
+CI uses an isolated Python environment for screenshot checks. Untitled pixel-proof captures
+are validated alongside the published pairs but do not require gallery titles or captions.
+Windows explicitly selects the MSVC linker to avoid Git Bash's unrelated `link.exe`.
+Harmony installs the API-20 native compiler separately from Day's API-18 packaging SDK;
+installing both SDKs into the same directory mixes incompatible component versions.
+The Linux GTK fixture job disables WebKit's sandbox only in that CI process, because hosted
+runner restrictions prevent its bubblewrap network namespace from starting.
 
 Use `day launch -t <target> --flavor servo` for any listed target. Android's certificate verifier
 is initialized with Day's application context before starting Servo; its Maven contribution
@@ -146,6 +154,12 @@ One lazily initialized Servo engine serves all Servo views on the Day UI thread.
 views have a Surfman/WebRender rendering context attached to their NSView. Other toolkits
 use offscreen contexts and present decoded frames in a Day canvas. Day's existing piece
 renderer registration supplies the native view; there is no Servo dependency in day-core.
+
+On desktop Linux, the adapter preserves and restores the toolkit's GLX or EGL binding around
+Servo initialization, commands, painting and release. EGL cannot become current while a GLX
+context remains bound through libglvnd. The standalone `tests/linux/gl-context.rs` regression
+uses real Mesa contexts under Xvfb to reproduce that conflict and check restoration, nested
+calls and unwinding without building the Servo engine.
 
 `day_piece_webview_servo::register()` selects a static host descriptor for the active toolkit,
 using `day_piece_webview::renderer::appkit` or `renderer::surface`. Re-registering the same descriptor is harmless; replacing
@@ -207,7 +221,8 @@ lifetime. Resource providers are retained while their view or session uses them.
   dependencies and release/LTO configurations before shipping. This is a workaround for the
   bundled-library link conflict, not proof that overlapping library versions are interchangeable.
   Universal Servo builds are rejected until selective loading has architecture-specific roots
-  and corresponding integration coverage. The tested configuration is arm64 Debug.
+  and corresponding integration coverage. AppKit arm64 Debug and Release have passed the
+  mixed-renderer regression; LTO configurations remain untested.
 
 Upstream references: [Servo embedding guide](https://book.servo.org/embedding/overview.html),
 [LTS requirements](https://book.servo.org/embedding/lts-release.html), and
@@ -226,5 +241,6 @@ contract, adapter, and comparison demo be reviewed together. A separate Git repo
 not further isolate Cargo resolution; the one-way package dependency already does that.
 
 The shared API does not imply equal capabilities. Servo retains the profile, privacy, reload,
-input, and process-isolation limits listed above. Release/LTO and universal Servo configurations
-have not been validated.
+input, and process-isolation limits listed above. Release runtime has been exercised on AppKit;
+LTO and universal Servo configurations have not been validated. See the
+[release build size comparison](build-sizes.md) for the measured artifacts on other platforms.

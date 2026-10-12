@@ -18,6 +18,11 @@ on:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      measure-sizes:
+        description: Compare native-only and Servo release artifact sizes
+        type: boolean
+        default: true
   schedule:
     # Daily: day's main moves on weeks nobody pushes here.
     - cron: "0 11 * * *"
@@ -88,6 +93,8 @@ jobs:
       - run: node --test tests/*.mjs
         if: matrix.features == 'gtk'
       - run: python3 -m unittest discover -s scripts -p test_renderer_comparison.py -v
+        if: matrix.features == 'gtk'
+      - run: python3 -m unittest discover -s scripts -p test_renderer_size.py -v
         if: matrix.features == 'gtk'
 
   # The mobile and web arms compile for their targets. A link is not attempted here (the demo
@@ -183,12 +190,22 @@ jobs:
           echo LIBGL_ALWAYS_SOFTWARE=1 >> "$GITHUB_ENV"
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
-      - name: Configure Windows Servo tools
-        if: runner.os == 'Windows'
+      - name: Test Linux graphics context switching
+        if: startsWith(matrix.target, 'linux-')
         shell: bash
         run: |
-          echo 'C:/Program Files/LLVM/bin' >> "$GITHUB_PATH"
-          echo 'LIBCLANG_PATH=C:/Program Files/LLVM/bin' >> "$GITHUB_ENV"
+          rustc --edition 2024 --test tests/linux/gl-context.rs -D warnings -o "$RUNNER_TEMP/linux-gl-context"
+          xvfb-run -a "$RUNNER_TEMP/linux-gl-context"
+      - name: Configure Windows Servo tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          'C:/Program Files/LLVM/bin' >> $env:GITHUB_PATH
+          'LIBCLANG_PATH=C:/Program Files/LLVM/bin' >> $env:GITHUB_ENV
+          # Git Bash prepends its own link.exe, even after msvc-dev-cmd sets PATH.
+          $linker = Join-Path $env:VCToolsInstallDir 'bin/Hostx64/x64/link.exe'
+          if (!(Test-Path $linker)) { throw "MSVC linker missing: $linker" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" >> $env:GITHUB_ENV
           clang --version
       - name: Install Servo Android NDK
         if: matrix.target == 'android-mdc'
@@ -197,19 +214,21 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358'
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
           echo DAY_ANDROID_ABI=x86_64 >> "$GITHUB_ENV"
+      - name: Cache Servo OpenHarmony native SDK
+        if: matrix.target == 'harmony-arkui'
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/servo-ohos-sdk-6.0.0.1/native
+          key: servo-ohos-native-linux-6.0.0.1-42955c8106ca
       - name: Install Servo OpenHarmony native SDK (API 20)
         if: matrix.target == 'harmony-arkui'
-        id: servo-ohos
-        uses: openharmony-rs/setup-ohos-sdk@v1
-        with:
-          version: 6.0.0.1
-      - name: Select Servo OpenHarmony compiler
-        if: matrix.target == 'harmony-arkui'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # Keep the API-18 packaging SDK installed by setup-day-deps intact.
+          bash scripts/install-servo-ohos-sdk.sh
           {
-            echo "OHOS_SDK_NATIVE=${{ steps.servo-ohos.outputs.ohos_sdk_native }}"
-            echo "OHOS_NDK_HOME=${{ steps.servo-ohos.outputs.ohos_sdk_native }}"
             echo DAY_OHOS_ARCH=x86_64
             echo DAY_OHOS_SHOT_SETTLE_MS=2500
           } >> "$GITHUB_ENV"
@@ -226,6 +245,7 @@ jobs:
         shell: bash
         run: '"$DAY_BIN" build -t "$DAY_TARGET" --flavor servo'
       - name: Build the mixed-renderer application
+        id: mixed-build
         working-directory: demo
         shell: bash
         run: '"$DAY_BIN" build -t "$DAY_TARGET" --flavor servo'
@@ -257,6 +277,10 @@ jobs:
       - name: Run mixed-renderer regression and comparison scripts
         working-directory: demo
         shell: bash
+        env:
+          # Ubuntu hosted runners prohibit WebKit's bubblewrap network namespace.
+          # This exception is confined to the CI process running bundled fixtures.
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: ${{ matrix.target == 'linux-gtk' && '1' || '' }}
         run: |
           set -euo pipefail
           run_day() {
@@ -271,15 +295,22 @@ jobs:
       - name: Verify matched captures and browser pixels
         shell: bash
         run: |
-          python -m pip install 'Pillow==11.3.0'
-          python scripts/verify-renderer-comparison.py demo/build/day/flavors/servo/screenshots --target "$DAY_TARGET"
-          python scripts/verify-webview-render.py demo/build/day/flavors/servo/screenshots --pattern 'renderer-*-proof.png' --color 00ff00
+          python -m venv "$RUNNER_TEMP/renderer-checks"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            CHECK_PYTHON="$RUNNER_TEMP/renderer-checks/Scripts/python.exe"
+          else
+            CHECK_PYTHON="$RUNNER_TEMP/renderer-checks/bin/python"
+          fi
+          "$CHECK_PYTHON" -m pip install 'Pillow==11.3.0'
+          "$CHECK_PYTHON" scripts/verify-renderer-comparison.py demo/build/day/flavors/servo/screenshots --target "$DAY_TARGET"
+          "$CHECK_PYTHON" scripts/verify-webview-render.py demo/build/day/flavors/servo/screenshots --pattern 'renderer-*-proof.png' --color 00ff00
       # The shared website/release jobs collect screenshots-* after this matrix succeeds.
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && steps.mixed-build.outcome == 'success' }}
         with:
           name: screenshots-renderer-comparison-${{ matrix.target }}
           path: demo/build/day/flavors/servo/screenshots/
-          if-no-files-found: error
+          if-no-files-found: warn
       - name: Upload script diagnostics
         if: always()
         uses: actions/upload-artifact@v7
@@ -287,6 +318,23 @@ jobs:
           name: renderer-comparison-reports-${{ matrix.target }}
           path: demo/build/day/flavors/servo/reports/dayscript/
           if-no-files-found: warn
+
+      - name: Compare native and Servo release sizes
+        if: ${{ !cancelled() && inputs.measure-sizes == true && steps.mixed-build.outcome == 'success' }}
+        env:
+          # Rebuild every staged Android ABI so neither variant retains the other engine.
+          DAY_ANDROID_ABI: arm64-v8a,x86_64
+          DAY_OHOS_ARCH: arm64
+          MACOSX_DEPLOYMENT_TARGET: '15.5'
+        shell: bash
+        run: python scripts/measure-renderer-size.py --target "$DAY_TARGET" --profile release
+      - name: Upload renderer size reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: renderer-sizes-${{ matrix.target }}
+          path: demo/build/renderer-sizes/
+          if-no-files-found: ignore
 
   # The proof: the demo app, driven end to end by the shared Day workflow. It builds against day's
   # newest main, runs dayscript/webview.yaml, and fails on a failed assertion or a blank capture.

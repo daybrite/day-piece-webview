@@ -31,6 +31,10 @@ resolve Servo dependencies; applications that opt into the adapter do. A Servo-e
 can show Servo and toolkit-native WebView pages at the same time. The demo enables it with
 `day launch -t macos-appkit --flavor servo`, offers a default-renderer preference, and has a
 per-tab renderer toggle. See [setup, requirements, and current limits](docs/servo.md).
+
+The demo's `servo` Cargo feature is disabled by default. Build with `--flavor servo` to include
+both renderers, or omit the flavor for a native-only app. See [build commands and size
+comparisons](docs/build-sizes.md).
 CI exercises both engines on macOS AppKit and publishes matched captures side-by-side in the
 [website gallery](https://daybrite.github.io/day-piece-webview/en/main/gallery/#macos-appkit-bundled-default).
 Native walkthroughs continue across all primary targets. See

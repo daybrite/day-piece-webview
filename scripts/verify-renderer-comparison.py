@@ -10,6 +10,7 @@ import struct
 
 SCENES = ("bundled", "resources")
 ENGINES = ("webview", "servo")
+COMPARISONS = {f"renderer-{scene}-{engine}" for scene in SCENES for engine in ENGINES}
 
 
 def verify(root, target):
@@ -25,7 +26,9 @@ def verify(root, target):
         if key in captures:
             raise ValueError(f"Duplicate comparison capture: {key}")
         captures[key] = entry
-        if not entry.get("title") or not entry.get("caption"):
+        # Pixel-proof captures intentionally have no publication metadata and stay out of
+        # the website gallery. Still check their bytes and dimensions below.
+        if entry["shot"] in COMPARISONS and (not entry.get("title") or not entry.get("caption")):
             raise ValueError(f"Missing localized publication metadata: {key}")
         path = directory / entry["variant"] / entry["file"]
         data = path.read_bytes()
@@ -36,7 +39,7 @@ def verify(root, target):
             raise ValueError(f"Screenshot dimensions disagree with the index: {path}")
         if len(data) != entry["bytes"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
             raise ValueError(f"Screenshot bytes disagree with the index: {path}")
-    variants = {variant for _, variant in captures}
+    variants = {variant for shot, variant in captures if shot in COMPARISONS}
     if not variants:
         raise ValueError("No renderer comparison captures")
     for variant in variants:

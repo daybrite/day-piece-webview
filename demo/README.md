@@ -73,6 +73,24 @@ under `platform/`. For additional native configuration, use
 
 ## Experimental Servo comparison
 
+Servo is controlled by the demo's **`servo` Cargo feature**, which is disabled by default.
+The `servo` Day flavor enables that feature and supplies the platform build settings.
+From this directory, build either version with the same target and profile:
+
+```sh
+# Toolkit-native WebView only.
+day build -t macos-appkit --profile release
+
+# Native WebView and Servo in the same app.
+day build -t macos-appkit --profile release --flavor servo
+```
+
+Replace `build` with `launch` to run either version. Selecting WebView in a Servo-enabled app
+does not remove Servo from its binary; omit `--flavor servo` when building to exclude the engine.
+Leave the `DAY_FLAVOR` environment variable unset for a native-only build.
+For local Day development, use the checkout CLI as described in
+[Servo setup](../docs/servo.md#run-the-demo), rather than an installed CLI.
+
 `day launch -t macos-appkit --flavor servo` enables the optional `day-piece-webview-servo`
 adapter alongside WKWebView. Substitute another target listed in
 [Servo platforms](../docs/servo.md#platforms) to compare its native webview with Servo.
@@ -89,3 +107,6 @@ CI runs the native walkthrough across the platform matrix and separate mixed-ren
 for all implemented Servo hosts. The website gallery groups matched WebView and Servo captures
 by target, showing bundled and provider pages side-by-side. Run `experiments/renderer-comparison.yaml` with `--flavor servo`
 to reproduce them locally. See [CI and gallery details](../docs/testing.md#renderer-comparison-in-ci-and-on-the-website).
+
+For measured native-versus-Servo sizes and the repeatable measurement command, see
+[demo build sizes](../docs/build-sizes.md).
