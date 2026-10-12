@@ -1,5 +1,6 @@
 # The shared dayapp workflow builds this with daybrite/daysite, like day-piece-charts.
-# Screenshots come from the walkthroughs on all eight primary targets; the browser demo
+# Screenshots include all native targets and paired WebView/Servo captures on macOS AppKit.
+# daysite.config.mjs adds renderer comparisons to the gallery; the browser demo
 # is published under /webapp/ and the screenshot index under /gallery/gallery.json.
 host = "https://daybrite.github.io/day-piece-webview"
 title = "Web View Demo"

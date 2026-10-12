@@ -30,6 +30,10 @@ resolve Servo dependencies; applications that opt into the adapter do. A Servo-e
 can show Servo and WKWebView pages at the same time. The demo enables it with
 `day launch -t macos-appkit --flavor servo`, offers a default-renderer preference, and has a
 per-tab renderer toggle. See [setup, requirements, and current limits](docs/servo.md).
+CI exercises both engines on macOS AppKit and publishes matched captures side-by-side in the
+[website gallery](https://daybrite.github.io/day-piece-webview/en/main/gallery/#macos-appkit-bundled-default).
+Native walkthroughs continue across all primary targets. See
+[comparison coverage and publication](docs/testing.md#renderer-comparison-in-ci-and-on-the-website).
 
 ## Choose a content source
 

@@ -1,0 +1,50 @@
+# Copyright © The Daybrite Project
+# SPDX-License-Identifier: MPL-2.0
+# Captions are localized publication metadata; assertions use synthetic bundled test data.
+name: renderer-comparison
+description: Compare identical bundled and provider pages in WebView and Servo.
+flow:
+  - tap: { id: webview-settings }
+  - select: { id: webview-default-renderer, index: 0 }
+  - toggle: { id: webview-incognito, value: false }
+  - toggle: { id: webview-native-tabs, value: false }
+  - tap: { id: webview-settings-done }
+  - tap: { id: webview-tools }
+  - toggle: { id: tab-controls, value: true }
+  - tap: { id: tab-new }
+  - assert_text: { id: webview-renderer-tab-2, key: renderer_webview }
+  - web_eval: { id: webview-tab-2, script: "navigator.userAgent.includes('Servo')", text: "false", timeout_secs: 90 }
+  - web_eval: { id: webview-tab-2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
+  - web_eval: { id: webview-tab-2, script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()", text: "yes" }
+  - screenshot:
+      name: renderer-bundled-webview
+      title: { en: "WebView (WKWebView)" }
+      caption: { en: "Bundled page · macOS AppKit" }
+  - tap: { id: webview-renderer-tab-2 }
+  - web_eval: { id: webview-tab-2, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
+  - web_eval: { id: webview-tab-2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
+  - web_eval: { id: webview-tab-2, script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()", text: "yes" }
+  - screenshot:
+      name: renderer-bundled-servo
+      title: { en: "Servo (experimental)" }
+      caption: { en: "Bundled page · macOS AppKit" }
+  - tap: { id: webview-tools-tab-2 }
+  - tap: { id: resource-demo-tab-2 }
+  - web_eval: { id: webview-tab-2, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
+  - web_eval: { id: webview-tab-2, script: "document.documentElement.dataset.resourceScript", text: "yes", timeout_secs: 30 }
+  - web_eval: { id: webview-tab-2, script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()", text: "yes" }
+  - web_eval: { id: webview-tab-2, script: "document.getElementById('resource-child').contentDocument.body.dataset.relative", text: "child" }
+  - screenshot:
+      name: renderer-resources-servo
+      title: { en: "Servo (experimental)" }
+      caption: { en: "Resource provider page · macOS AppKit" }
+  - tap: { id: webview-renderer-tab-2 }
+  - web_eval: { id: webview-tab-2, script: "navigator.userAgent.includes('Servo')", text: "false", timeout_secs: 90 }
+  - web_eval: { id: webview-tab-2, script: "document.documentElement.dataset.resourceScript", text: "yes", timeout_secs: 30 }
+  - web_eval: { id: webview-tab-2, script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()", text: "yes" }
+  - web_eval: { id: webview-tab-2, script: "document.getElementById('resource-child').contentDocument.body.dataset.relative", text: "child" }
+  - screenshot:
+      name: renderer-resources-webview
+      title: { en: "WebView (WKWebView)" }
+      caption: { en: "Resource provider page · macOS AppKit" }
+  - assert_no_placeholders: {}

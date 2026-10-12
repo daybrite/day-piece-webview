@@ -1,0 +1,44 @@
+---
+// Copyright © The Daybrite Project
+// SPDX-License-Identifier: MPL-2.0
+import type { ComponentProps } from 'astro/types';
+import DefaultGallery from 'daysite/components/GalleryPage.astro';
+import ShotPicture from 'daysite/components/ShotPicture.astro';
+import { rendererComparisons } from './renderer-comparisons.mjs';
+
+type Props = ComponentProps<typeof DefaultGallery>;
+const { data, locale } = Astro.props;
+const pairs = rendererComparisons(data.gallery, locale.code);
+const compared = new Set(pairs.flatMap((pair) => pair.captures.map((capture) => capture.shot)));
+const remaining = data.gallery!.shots.filter((shot) => !compared.has(shot.id));
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const imageURL = (src: string) => `${base}/${src.replace(/^\//, '')}`;
+---
+
+<DefaultGallery {...Astro.props} data={{ ...data, gallery: { ...data.gallery!, shots: remaining } }} />
+{pairs.map((pair) => (
+  <section class="renderer-comparison" aria-labelledby={pair.id}>
+    <h2 id={pair.id}>{pair.title}</h2>
+    <div class="renderer-pair">
+      {pair.captures.map((capture) => (
+        <figure>
+          <figcaption>{capture.title}</figcaption>
+          <a href={imageURL(capture.src)}>
+            <ShotPicture src={imageURL(capture.src)} alt={`${pair.title} · ${capture.title}`}
+              width={capture.width} height={capture.height} loading="lazy" />
+          </a>
+        </figure>
+      ))}
+    </div>
+  </section>
+))}
+
+<style>
+  .renderer-comparison { margin-block: 2rem 3rem; }
+  h2 { font-size: 1.5rem; font-weight: 650; margin-bottom: 1rem; }
+  .renderer-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+  figure { min-width: 0; }
+  figcaption { font-weight: 600; margin-bottom: .5rem; }
+  .renderer-pair :global(img) { display: block; width: 100%; height: auto; border: 1px solid var(--color-border); border-radius: .5rem; }
+  @media (max-width: 640px) { .renderer-pair { grid-template-columns: 1fr; } }
+</style>

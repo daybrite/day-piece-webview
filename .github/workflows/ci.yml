@@ -1,9 +1,10 @@
 name: ci
 
-# Three questions, answered on every push and once a day:
+# Four questions, answered on every push and once a day:
 #   host        does the crate build, lint, and pass its tests, with each desktop toolkit's arm
 #               compiled in on a host that has that toolkit's web engine?
 #   cross-check do the mobile and web arms compile for their targets?
+#   renderer-comparison do native and Servo pages pass and produce matched captures?
 #   demo        do the walkthroughs pass on all eight primary platform-toolkit pairs,
 #               against day's newest main?
 #
@@ -86,6 +87,8 @@ jobs:
           node-version: '22'
       - run: node --test tests/*.mjs
         if: matrix.features == 'gtk'
+      - run: python3 -m unittest discover -s scripts -p test_renderer_comparison.py -v
+        if: matrix.features == 'gtk'
 
   # The mobile and web arms compile for their targets. A link is not attempted here (the demo
   # below does that inside a real app), but an objc2 call that no longer type-checks, a JNI
@@ -120,11 +123,72 @@ jobs:
           java -cp target/android-resource-tests dev.daybrite.day.piece.webview.ContentTypeTest
       - run: cargo clippy --target ${{ matrix.target }} --features ${{ matrix.features }} -- -D warnings
 
+  # Only implemented Servo hosts belong here. Both engines render the same fixtures in one
+  # process; the ordinary native-only matrix below still tests every supported toolkit.
+  renderer-comparison:
+    name: renderer comparison (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: xcode-27, target: macos-appkit }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: daybrite/actions/.github/actions/setup-day-cli@v1
+      - uses: daybrite/actions/.github/actions/setup-day-deps@v1
+        with:
+          target: ${{ matrix.target }}
+          pack: false
+          extras: true
+          packages: python@3.12 llvm
+      - name: Configure Servo build tools
+        shell: bash
+        run: |
+          echo "DAY_BUILD_TOOL_PATH=$(brew --prefix python@3.12)/libexec/bin:$(brew --prefix llvm)/bin" >> "$GITHUB_ENV"
+          test "$(uname -m)" = arm64
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: demo -> build/day/flavors/servo/cargo/${{ matrix.target }}/debug
+          shared-key: servo-${{ matrix.target }}
+      - name: Run mixed-renderer regression and comparison scripts
+        working-directory: demo
+        env:
+          DAY_LOG: warn
+          DAY_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DAY_BIN" launch -t "$DAY_TARGET" --flavor servo --script experiments/servo.yaml
+          "$DAY_BIN" launch -t "$DAY_TARGET" --flavor servo --script experiments/renderer-comparison.yaml
+      - name: Verify matched captures
+        run: python3 scripts/verify-renderer-comparison.py demo/build/day/flavors/servo/screenshots --target '${{ matrix.target }}'
+      # The shared workflow consumes screenshots-* in both its website and release archive.
+      # Unique shot names avoid overwriting native screenshots at the same target/variant path.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: screenshots-renderer-comparison-${{ matrix.target }}
+          path: demo/build/day/flavors/servo/screenshots/
+          if-no-files-found: error
+      - name: Upload script diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: renderer-comparison-reports-${{ matrix.target }}
+          path: demo/build/day/flavors/servo/reports/dayscript/
+          if-no-files-found: warn
+
   # The proof: the demo app, driven end to end by the shared Day workflow. It builds against day's
   # newest main, runs dayscript/webview.yaml, and fails on a failed assertion or a blank capture.
   # The script loads a site bundled with the app, so no step waits on the network. Screenshots are
   # uploaded per target, and a tag build attaches them to the release.
   demo:
+    # Ensures comparison captures exist before the reusable workflow assembles the website.
+    needs: renderer-comparison
     uses: daybrite/actions/.github/workflows/dayapp.yml@v1
     permissions:
       contents: write # release-asset upload on tag builds

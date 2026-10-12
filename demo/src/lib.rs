@@ -292,6 +292,14 @@ fn tab_url(browser: Browser) -> String {
         canonical_tab_url(browser, &location)
     }
 }
+fn resource_page_path(url: &str) -> Option<String> {
+    let path = url.strip_prefix("day://resources/")?;
+    // Canonical tab URLs retain URI escaping; ResourceProvider::url expects a raw path.
+    percent_encoding::percent_decode_str(path)
+        .decode_utf8()
+        .ok()
+        .map(|path| path.into_owned())
+}
 fn tab_widget_id(tab: u64, base: &str) -> String {
     if tab == 1 {
         base.to_owned()
@@ -547,12 +555,8 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
         Source::Home
     };
     let home_start = Signal::new(initial.strip_prefix("day://home/").map(str::to_owned));
-    let resource_start = Signal::new(
-        initial
-            .strip_prefix("day://resources/")
-            .unwrap_or("pages/index.html")
-            .to_owned(),
-    );
+    let resource_start =
+        Signal::new(resource_page_path(&initial).unwrap_or_else(|| "pages/index.html".to_owned()));
     let browser = Browser {
         source: Signal::new(initial_source),
         home_start,
@@ -737,8 +741,8 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                                 if let Some(path) = url.strip_prefix("day://home/") {
                                     home_start.set(Some(path.to_owned()));
                                 }
-                                if let Some(path) = url.strip_prefix("day://resources/") {
-                                    resource_start.set(path.to_owned());
+                                if let Some(path) = resource_page_path(&url) {
+                                    resource_start.set(path);
                                 }
                                 browser.navigation.set(NavigationState::default());
                                 renderer.set(if renderer.get_untracked() == WebRenderer::Servo {
@@ -1158,6 +1162,9 @@ fn resource_site(
     }
     });
     browser.resource_base.set(provider.base_url());
+    // Rebuilding creates a new provider namespace. Seed the binding with that provider's
+    // URL so renderer/profile changes cannot navigate back to a disposed provider.
+    browser.location.set(provider.url(&start));
     let Ok(view) = web_view_resources(provider, &start).renderer(renderer) else {
         return label(res::str::renderer_unavailable()).any();
     };
@@ -1220,7 +1227,27 @@ fn demo_profile(private: bool) -> day_piece_webview::WebProfile {
 
 #[cfg(test)]
 mod browser_tests {
-    use super::normalize_address;
+    use super::{normalize_address, resource_page_path};
+
+    #[test]
+    fn resource_tab_paths_decode_once_before_recreating_the_provider() {
+        for path in [
+            "pages/index.html",
+            "pages/100% ready.html",
+            "pages/雪.html",
+            "pages/%2E.html",
+        ] {
+            let provider = day_piece_webview::ResourceProvider::new(|_| {
+                day_piece_webview::ResourceResponse::not_found()
+            });
+            let canonical =
+                provider
+                    .url(path)
+                    .replacen(&provider.base_url(), "day://resources/", 1);
+            assert_eq!(resource_page_path(&canonical).as_deref(), Some(path));
+        }
+        assert_eq!(resource_page_path("https://example.test/page.html"), None);
+    }
 
     #[test]
     fn addresses_accept_hosts_and_preserve_navigation_components() {

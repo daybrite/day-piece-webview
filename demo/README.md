@@ -82,3 +82,8 @@ separate windows. The ordinary build remains native-only. See
 
 The demo declares the adapter as an optional dependency, so Cargo resolves its engine graph
 even in a native demo build. Apps depending only on `day-piece-webview` avoid that graph.
+
+CI runs the native walkthrough across the platform matrix and a separate mixed-renderer job
+on macOS AppKit. The website gallery shows matched WebView and Servo captures of bundled and
+provider pages side-by-side. Run `experiments/renderer-comparison.yaml` with `--flavor servo`
+to reproduce them locally. See [CI and gallery details](../docs/testing.md#renderer-comparison-in-ci-and-on-the-website).
