@@ -11,11 +11,14 @@ flow:
   - tap: { id: webview-tools }
   - toggle: { id: tab-controls, value: true }
   - tap: { id: tab-new }
+  # Finish the initial bundled load before editing the address; its load event updates it.
+  - web_eval: { id: webview-tab-2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
+  - wait_idle: {}
   - input: { id: webview-address-tab-2, text: "https://daybrite.dev" }
   - tap: { id: webview-go-tab-2 }
   - web_eval: { id: webview-tab-2, script: "location.origin + ' ' + document.readyState", text: "https://daybrite.dev complete", timeout_secs: 90 }
   - web_eval: { id: webview-tab-2, script: "window.rendererFixture = 'native'; navigator.userAgent.includes('Servo')", text: "false" }
-  - screenshot: { name: daybrite-webview, title: "daybrite.dev in WKWebView" }
+  - screenshot: { name: daybrite-webview, title: "daybrite.dev in WebView" }
   - tap: { id: tab-new-tab-2 }
   - tap: { id: webview-renderer-tab-3 }
   - web_eval: { id: webview-tab-3, script: "document.readyState", text: "complete", timeout_secs: 30 }

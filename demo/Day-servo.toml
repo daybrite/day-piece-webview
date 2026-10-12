@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 [app]
-targets = ["macos-appkit"]
+targets = ["macos-appkit", "macos-gtk", "macos-qt", "linux-gtk", "linux-qt", "windows-winui", "windows-xaml", "android-mdc", "harmony-arkui"]
 
 [cargo]
 features = ["servo"]

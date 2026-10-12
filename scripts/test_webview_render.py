@@ -20,3 +20,12 @@ class BrowserPaint(unittest.TestCase):
             Image.new("RGB", (100, 100), (18, 217, 164)).save(screenshot)
             render.verify_render(screenshot)
 
+
+    def test_comparison_marker_uses_its_own_color(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            screenshot = Path(directory) / "comparison.png"
+            Image.new("RGB", (100, 100), (0, 255, 0)).save(screenshot)
+            render.verify_render(screenshot, (0, 255, 0))
+            with self.assertRaisesRegex(ValueError, "Browser paint marker missing"):
+                render.verify_render(screenshot)

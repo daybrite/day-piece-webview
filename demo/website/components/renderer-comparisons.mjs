@@ -19,7 +19,7 @@ export function rendererComparisons(gallery, locale) {
         const servoTitle = localized(servo.title);
         if (!title || !nativeTitle || !servoTitle) continue;
         pairs.push({
-          id: `${target}-${scene}-${variant}`, title,
+          id: `${target}-${scene}-${variant}`, title: `${title} · ${target}`,
           captures: [
             { ...capture, title: nativeTitle, shot: native.id },
             { ...other, title: servoTitle, shot: servo.id },

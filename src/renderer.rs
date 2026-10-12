@@ -41,12 +41,94 @@ impl std::fmt::Display for RegistrationError {
 impl std::error::Error for RegistrationError {}
 
 pub(crate) fn capabilities(renderer: WebRenderer) -> Option<Capabilities> {
+    if let Some(host) = surface::get(renderer) {
+        return Some(host.capabilities);
+    }
     #[cfg(all(feature = "appkit", target_os = "macos"))]
     return appkit::get(renderer).map(|host| host.capabilities);
     #[cfg(not(all(feature = "appkit", target_os = "macos")))]
     {
         let _ = renderer;
         None
+    }
+}
+
+/// Toolkit-independent offscreen hosts. Day supplies a canvas; the webview front end
+/// retains its command/event contract.
+pub mod surface {
+    use super::{Capabilities, RegistrationError, WebRenderer};
+    use crate::{WebPatch, WebProps};
+    use day_core::{BuildCx, RNode};
+    use std::{cell::RefCell, collections::HashSet, sync::OnceLock};
+
+    /// Offscreen engines draw into Day's canvas. Evaluation is enabled only on owned nodes.
+    pub const KIND: day_spec::PieceKind = day_spec::kinds::CANVAS;
+
+    /// UI-thread callbacks. The adapter must preserve navigation, evaluation, resource,
+    /// and session behavior when attaching a canvas node.
+    pub struct Host {
+        /// Engine storage capabilities.
+        pub capabilities: Capabilities,
+        /// Attach engine state and input handlers after the canvas node has been created.
+        pub attach: fn(&mut BuildCx, RNode, &WebProps),
+        /// Apply a command to an attached node.
+        pub update: fn(RNode, &WebPatch),
+        /// Detach engine state before the node's reactive scope is disposed.
+        pub release: fn(RNode),
+    }
+    static SERVO: OnceLock<&'static Host> = OnceLock::new();
+    thread_local! {
+        static NODES: RefCell<HashSet<RNode>> = RefCell::new(HashSet::new());
+    }
+
+    /// Register on the running Day UI thread, before building webviews. Re-registering the
+    /// same descriptor is harmless; replacing an active renderer is rejected.
+    pub fn register(renderer: WebRenderer, host: &'static Host) -> Result<(), RegistrationError> {
+        if !day_core::has_tree() {
+            return Err(RegistrationError::WrongThread);
+        }
+        if renderer == WebRenderer::WebView {
+            return Err(RegistrationError::ReservedRenderer);
+        }
+        let installed = SERVO.get_or_init(|| host);
+        if std::ptr::eq(*installed, host) {
+            Ok(())
+        } else {
+            Err(RegistrationError::AlreadyRegistered)
+        }
+    }
+
+    pub(crate) fn get(renderer: WebRenderer) -> Option<&'static Host> {
+        match renderer {
+            WebRenderer::WebView => None,
+            WebRenderer::Servo => SERVO.get().copied(),
+        }
+    }
+    pub(crate) fn attach(host: &'static Host, cx: &mut BuildCx, node: RNode, props: &WebProps) {
+        NODES.with(|nodes| nodes.borrow_mut().insert(node));
+        day_reactive::Scope::current().on_cleanup(move || {
+            NODES.with(|nodes| nodes.borrow_mut().remove(&node));
+            (host.release)(node);
+        });
+        (host.attach)(cx, node, props);
+    }
+    pub(crate) fn owns(node: RNode) -> bool {
+        NODES.with(|nodes| nodes.borrow().contains(&node))
+    }
+    pub(crate) fn send(node: RNode, patch: &WebPatch) -> bool {
+        if !owns(node) {
+            return false;
+        }
+        if let Some(host) = SERVO.get() {
+            (host.update)(node, patch);
+        }
+        true
+    }
+}
+
+pub(crate) fn send_patch(node: day_core::RNode, patch: crate::WebPatch) {
+    if !surface::send(node, &patch) {
+        day_core::with_tree(|tree| tree.patch(node, Box::new(patch), false));
     }
 }
 

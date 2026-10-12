@@ -40,6 +40,16 @@ fn make(_: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
     });
     let native = view.clone();
     anchor.add_tick_callback(move |w, _| {
+        // A retained GTK anchor can outlive its renderer. Its old tick callback must never
+        // reattach a released WKWebView above the replacement (including a Servo canvas).
+        if !VIEWS.with(|views| views.borrow().contains_key(&key(w.upcast_ref()))) {
+            native.removeFromSuperview();
+            return gtk4::glib::ControlFlow::Break;
+        }
+        if !w.is_mapped() {
+            native.removeFromSuperview();
+            return gtk4::glib::ControlFlow::Continue;
+        }
         if let Some(root) = w.root().and_then(|r| r.dynamic_cast::<gtk4::Widget>().ok())
             && let (Some(bounds), Some(surface)) = (
                 w.compute_bounds(&root),

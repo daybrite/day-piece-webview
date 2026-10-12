@@ -1,5 +1,5 @@
 # The shared dayapp workflow builds this with daybrite/daysite, like day-piece-charts.
-# Screenshots include all native targets and paired WebView/Servo captures on macOS AppKit.
+# Screenshots include all native targets and paired WebView/Servo captures on each Servo host.
 # daysite.config.mjs adds renderer comparisons to the gallery; the browser demo
 # is published under /webapp/ and the screenshot index under /gallery/gallery.json.
 host = "https://daybrite.github.io/day-piece-webview"
@@ -15,3 +15,7 @@ show-permissions = false
 show-source-link = true
 
 footer = "© {year} The Daybrite Project · MPL-2.0"
+
+[gallery]
+# These are intentional comparison hosts, not stand-ins for Linux captures.
+include-targets = ["macos-gtk", "macos-qt"]

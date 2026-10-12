@@ -74,7 +74,9 @@ under `platform/`. For additional native configuration, use
 ## Experimental Servo comparison
 
 `day launch -t macos-appkit --flavor servo` enables the optional `day-piece-webview-servo`
-adapter alongside WKWebView. The demo registers it before creating views. Settings chooses
+adapter alongside WKWebView. Substitute another target listed in
+[Servo platforms](../docs/servo.md#platforms) to compare its native webview with Servo.
+The demo registers the adapter before creating views. Settings chooses
 the default for new tabs; each tab's renderer button reloads its current URL with the other
 engine. Open the same URL in two tabs, switch one to Servo, and drag a native tab out to compare
 separate windows. The ordinary build remains native-only. See
@@ -83,7 +85,7 @@ separate windows. The ordinary build remains native-only. See
 The demo declares the adapter as an optional dependency, so Cargo resolves its engine graph
 even in a native demo build. Apps depending only on `day-piece-webview` avoid that graph.
 
-CI runs the native walkthrough across the platform matrix and a separate mixed-renderer job
-on macOS AppKit. The website gallery shows matched WebView and Servo captures of bundled and
-provider pages side-by-side. Run `experiments/renderer-comparison.yaml` with `--flavor servo`
+CI runs the native walkthrough across the platform matrix and separate mixed-renderer jobs
+for all implemented Servo hosts. The website gallery groups matched WebView and Servo captures
+by target, showing bundled and provider pages side-by-side. Run `experiments/renderer-comparison.yaml` with `--flavor servo`
 to reproduce them locally. See [CI and gallery details](../docs/testing.md#renderer-comparison-in-ci-and-on-the-website).

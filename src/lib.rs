@@ -22,7 +22,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::task::Poll;
 
-use day_core::{BuildCx, Flex, Piece, RNode, with_tree};
+use day_core::{BuildCx, Flex, Piece, RNode};
 use day_reactive::{Signal, Trigger, watch};
 use day_spec::Event;
 
@@ -697,34 +697,39 @@ fn resolve(req: u64, payload: &str) {
 /// whose arm answers `eval_support() != Native` it fails the callback immediately rather
 /// than letting the step wait out its retry window.
 fn register_script_eval() {
+    let handler: day_core::PieceOperationFn = std::rc::Rc::new(|node, script, done| {
+        if PRIVATE_BLOCKED_NODES.with(|nodes| nodes.borrow().contains(&node))
+            || (!renderer::surface::owns(node) && eval_support() != day_spec::Support::Native)
+        {
+            done(Err(EvalError::Unsupported.to_string()));
+            return;
+        }
+        let req = NEXT_REQ.with(|c| {
+            let v = c.get();
+            c.set(v + 1);
+            v
+        });
+        let wrapped = wrap_script(script);
+        REQUEST_NODES.with(|p| p.borrow_mut().insert(req, node));
+        PENDING_CB.with(|p| p.borrow_mut().insert(req, done));
+        renderer::send_patch(
+            node,
+            WebPatch::Eval {
+                req,
+                script: wrapped,
+            },
+        );
+    });
+    day_core::register_piece_operation(KIND, "day.webview.eval", handler.clone());
     day_core::register_piece_operation(
-        KIND,
+        renderer::surface::KIND,
         "day.webview.eval",
-        std::rc::Rc::new(|node, script, done| {
-            if PRIVATE_BLOCKED_NODES.with(|nodes| nodes.borrow().contains(&node))
-                || eval_support() != day_spec::Support::Native
-            {
+        Rc::new(move |node, script, done| {
+            if renderer::surface::owns(node) {
+                handler(node, script, done);
+            } else {
                 done(Err(EvalError::Unsupported.to_string()));
-                return;
             }
-            let req = NEXT_REQ.with(|c| {
-                let v = c.get();
-                c.set(v + 1);
-                v
-            });
-            let wrapped = wrap_script(script);
-            REQUEST_NODES.with(|p| p.borrow_mut().insert(req, node));
-            PENDING_CB.with(|p| p.borrow_mut().insert(req, done));
-            with_tree(|t| {
-                t.patch(
-                    node,
-                    Box::new(WebPatch::Eval {
-                        req,
-                        script: wrapped,
-                    }),
-                    false,
-                )
-            });
         }),
     );
 }
@@ -856,16 +861,16 @@ impl Future for EvalFuture {
         // Dispatch on first poll, not at construction, so an eval that is never awaited never runs.
         if !self.sent {
             self.sent = true;
-            if eval_support() != day_spec::Support::Native {
-                return Poll::Ready(Err(EvalError::Unsupported));
-            }
             let Some(node) = day_reactive::untrack(|| self.node.try_get()).flatten() else {
                 return Poll::Ready(Err(EvalError::ViewGone));
             };
+            if !renderer::surface::owns(node) && eval_support() != day_spec::Support::Native {
+                return Poll::Ready(Err(EvalError::Unsupported));
+            }
             let (req, script) = (self.req, self.script.take().unwrap_or_default());
             REQUEST_NODES.with(|p| p.borrow_mut().insert(req, node));
             PENDING.with(|p| p.borrow_mut().insert(req, self.shared.clone()));
-            with_tree(|t| t.patch(node, Box::new(WebPatch::Eval { req, script }), false));
+            renderer::send_patch(node, WebPatch::Eval { req, script });
             // An arm that fails a request without reaching the engine replies from inside that
             // patch — before this poll has a waker to wake, so `resolve` found none and left the
             // answer here. Take it now: nothing will ever wake this future on its behalf.
@@ -1282,15 +1287,25 @@ impl Piece for WebView {
             transparent,
         };
         // A web view has no intrinsic size; it fills whatever space its container offers.
-        let node = cx.leaf(
-            KIND,
-            &initial,
-            Flex {
-                grow_w: true,
-                grow_h: true,
-                ..Default::default()
-            },
-        );
+        let surface = renderer::surface::get(renderer);
+        let flex = Flex {
+            grow_w: true,
+            grow_h: true,
+            ..Default::default()
+        };
+        let node = if surface.is_some() {
+            cx.leaf(
+                renderer::surface::KIND,
+                &day_spec::props::CanvasProps::default(),
+                flex,
+            )
+        } else {
+            cx.leaf(KIND, &initial, flex)
+        };
+
+        if let Some(host) = surface {
+            renderer::surface::attach(host, cx, node, &initial);
+        }
 
         day_reactive::Scope::current().on_cleanup(move || {
             let requests = REQUEST_NODES.with(|p| {
@@ -1328,7 +1343,7 @@ impl Piece for WebView {
                 }
                 return;
             }
-            with_tree(|t| t.patch(node, Box::new(patch), false));
+            renderer::send_patch(node, patch);
         };
 
         // Each command trigger → one patch. `watch` never fires for the initial value, so wiring
@@ -1364,6 +1379,11 @@ impl Piece for WebView {
             js.renderer.set(renderer);
             js.blocked.set(blocked_private);
             js.node.set(Some(node));
+            day_reactive::Scope::current().on_cleanup(move || {
+                if js.node.try_get() == Some(Some(node)) {
+                    js.node.set(None);
+                }
+            });
         }
 
         // Two kinds of report share this node's `Event::Custom` channel, told apart by `num`:
@@ -1407,9 +1427,7 @@ impl Piece for WebView {
                     match policy {
                         LinkPolicy::OpenSystem => day_core::open_url(text),
                         LinkPolicy::InView => {
-                            with_tree(|t| {
-                                t.patch(node, Box::new(WebPatch::Load(text.clone())), false)
-                            });
+                            send(WebPatch::Load(text.clone()));
                         }
                         LinkPolicy::Ignore => {}
                     }

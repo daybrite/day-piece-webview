@@ -4,8 +4,46 @@
 //! then call [`register`] on the UI thread before constructing views. See `docs/servo.md`.
 pub use day_piece_webview::renderer::RegistrationError;
 
+#[cfg(all(feature = "servo", target_os = "windows", not(target_env = "msvc")))]
+compile_error!("The Servo adapter requires the MSVC Windows toolchain (xaml or winui).");
+
 #[cfg(all(feature = "servo", feature = "appkit", target_os = "macos"))]
 mod appkit;
+#[cfg(all(
+    feature = "servo",
+    any(
+        feature = "appkit",
+        feature = "gtk",
+        feature = "qt",
+        feature = "xaml",
+        feature = "mdc",
+        feature = "arkui"
+    ),
+    any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "android"
+    )
+))]
+mod engine;
+#[cfg(all(
+    feature = "servo",
+    any(
+        feature = "gtk",
+        feature = "qt",
+        feature = "xaml",
+        feature = "mdc",
+        feature = "arkui"
+    ),
+    any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "android"
+    )
+))]
+mod surface;
 
 /// Register the adapter without initializing Servo. Repeated calls are harmless.
 /// Returns an error on unsupported builds or if another adapter has claimed the renderer.
@@ -28,9 +66,28 @@ pub fn register() -> Result<(), RegistrationError> {
             release: appkit::release,
         };
         let mtm = objc2::MainThreadMarker::new().ok_or(RegistrationError::WrongThread)?;
-        day_piece_webview::renderer::appkit::register(mtm, WebRenderer::Servo, &HOST)
+        if day_core::toolkit_key() == Some("appkit") {
+            return day_piece_webview::renderer::appkit::register(mtm, WebRenderer::Servo, &HOST);
+        }
     }
-    #[cfg(not(all(feature = "servo", feature = "appkit", target_os = "macos")))]
+    #[cfg(all(
+        feature = "servo",
+        any(
+            feature = "gtk",
+            feature = "qt",
+            feature = "xaml",
+            feature = "mdc",
+            feature = "arkui"
+        ),
+        any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "windows",
+            target_os = "android"
+        )
+    ))]
+    return surface::register();
+    #[allow(unreachable_code)] // Feature-selected host branches return above.
     Err(RegistrationError::Unsupported)
 }
 
@@ -44,10 +101,7 @@ mod appkit_tests {
     }
 }
 
-#[cfg(all(
-    test,
-    not(all(feature = "servo", feature = "appkit", target_os = "macos"))
-))]
+#[cfg(all(test, not(feature = "servo")))]
 mod tests {
     #[test]
     fn unsupported_build_does_not_advertise_servo() {

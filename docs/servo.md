@@ -1,9 +1,9 @@
 <!-- Copyright © The Daybrite Project; SPDX-License-Identifier: CC-BY-SA-4.0 -->
 # Experimental Servo renderer
 
-The separate [`day-piece-webview-servo`](../servo/) package adds Servo 0.6 to **macos-appkit**.
+The separate [`day-piece-webview-servo`](../servo/) package adds Servo 0.6 to the hosts listed [below](#platforms).
 Its `servo` Cargo feature is disabled by default; the native piece has no dependency on it.
-WKWebView remains available in the same build. Each piece selects its renderer independently;
+The toolkit-native WebView remains available in the same build. Each piece selects its renderer independently;
 Servo and WebView pages can coexist in tabs or separate windows of one app.
 
 ## Enable it
@@ -17,8 +17,8 @@ day-piece-webview-servo = { git = "https://github.com/daybrite/day-piece-webview
 servo = ["dep:day-piece-webview-servo", "day-piece-webview-servo/servo"]
 ```
 
-Day enables the adapter's `appkit` feature for `macos-appkit`. For direct Cargo checks, enable
-`day-piece-webview-servo/appkit` as well. Register on the UI thread before constructing views,
+Day enables the adapter's toolkit feature (`appkit`, `gtk`, `qt`, `xaml`, `winui`, `mdc`, or
+`arkui`). For direct Cargo checks, enable the matching adapter feature as well. Register on the UI thread before constructing views,
 then select the engine per piece:
 
 ```rust
@@ -107,22 +107,57 @@ native window tabs enabled, drag one tab out of its tab bar to create a separate
 Each window retains its renderer selection. Compare release builds for timing measurements;
 first engine startup, disk/network caches, and debug compilation can dominate small differences.
 
+## Platforms
+
+| Day targets | Host | Requirements / validation |
+| --- | --- | --- |
+| `macos-appkit` | Native NSView / Surfman surface | arm64, macOS 15.5+, Python 3.11+, LLVM 19+; existing runtime regression |
+| `macos-gtk`, `macos-qt` | Offscreen Day Canvas | Same Apple minimum; toolkit and native browser libraries; GTK and Qt lifecycle/comparison tests passed locally |
+| `linux-gtk`, `linux-qt` | Offscreen Day Canvas | EGL/OpenGL, fontconfig, FreeType, LLVM 19+, Python 3.11+; Xvfb/Mesa for CI |
+| `windows-xaml`, `windows-winui` | Offscreen Day Canvas / ANGLE | MSVC, LLVM, Python; GNU GTK/Qt targets are not supported by this adapter |
+| `android-mdc` | Offscreen Day Canvas / EGL | NDK 28.2.13676358; matching rustls Kotlin verifier AAR; APK, lifecycle/comparison tests, and live HTTPS smoke test passed locally |
+| `harmony-arkui` | Offscreen Day Canvas / EGL | OpenHarmony 6 native SDK (API 20) or newer; ARM64 and x86_64 HAPs built locally; emulator runtime checks run in CI |
+
+The comparison CI matrix builds and runs both dayscripts for every row and publishes paired
+captures by target. Adding a matrix row is not evidence of a successful run: Windows, Linux,
+and Harmony runtime results must be checked on the first CI run of this implementation.
+Servo has no iOS or WebAssembly host here; those targets retain their native integration.
+
+Use `day launch -t <target> --flavor servo` for any listed target. Android's certificate verifier
+is initialized with Day's application context before starting Servo; its Maven contribution
+ships the matching Kotlin implementation. SpiderMonkey's pointer encoding also requires the adapter's
+feature-gated `disable-native-heap-pointer-tagging` contribution. That changes the entire
+Android process while Servo is enabled; Android warns that this compatibility escape hatch
+may not exist on future hardware ([tagged pointers](https://source.android.com/docs/security/test/tagged-pointers)).
+Native builds keep Android's default. These metadata and runtime-library packaging changes
+require the matching Day CLI update before this adapter can run on Android.
+
+Mobile bundled pages use an intercepted HTTPS
+origin because packaged assets are not ordinary files. Storage uses Day's app-writable cache.
+
+See upstream [Linux](https://book.servo.org/building/linux.html),
+[Windows](https://book.servo.org/building/windows.html),
+[Android](https://book.servo.org/building/android.html), and
+[OpenHarmony](https://book.servo.org/building/openharmony.html) requirements.
+
 ## Host and lifecycle
 
-One lazily initialized Servo engine serves all Servo views on the AppKit main thread. Each
-view has a Surfman/WebRender rendering context attached to its NSView. Day's existing piece
+One lazily initialized Servo engine serves all Servo views on the Day UI thread. AppKit
+views have a Surfman/WebRender rendering context attached to their NSView. Other toolkits
+use offscreen contexts and present decoded frames in a Day canvas. Day's existing piece
 renderer registration supplies the native view; there is no Servo dependency in day-core.
 
-`day_piece_webview_servo::register()` installs a static AppKit host descriptor through
-`day_piece_webview::renderer::appkit`. Re-registering the same descriptor is harmless; replacing
+`day_piece_webview_servo::register()` selects a static host descriptor for the active toolkit,
+using `day_piece_webview::renderer::appkit` or `renderer::surface`. Re-registering the same descriptor is harmless; replacing
 a registered host or overriding the native renderer returns an error. Registration is permanent
 for the process and does not initialize the engine. Availability and storage capabilities come
 from that descriptor. The AppKit piece dispatches creation by renderer and routes updates and
 release to the host that owns the view. The adapter uses shared helpers for events, evaluation
 replies, and resource IO rather than copying the piece's private wire format. This adapter API
-is experimental and currently has only an AppKit host.
+is experimental. The portable `renderer::surface` descriptor attaches to a canvas node and
+receives the same commands. Ordinary canvases do not gain browser evaluation operations.
 
-Servo wakes AppKit's main dispatch queue when it has work. Wakes are coalesced. Painting follows
+Servo wakes Day's main queue when it has work. Wakes are coalesced. Painting follows
 Servo's frame-ready notifications; the adapter does not subscribe to Day's frame clock or
 install an idle polling timer. AppKit forwards resizing, backing scale, focus, mouse, scroll,
 and keyboard events. Closing a non-session view releases its browsing context and rendering
@@ -134,6 +169,12 @@ lifetime. Resource providers are retained while their view or session uses them.
 
 ## Current limits
 
+- The portable canvas host reads frames back through CPU memory and encodes/decodes PNGs.
+  It currently rasterizes at one pixel per logical point (up to 8192 pixels per dimension).
+  This can look softer on high-density screens and adds latency and CPU cost. Compare layouts
+  and engine behavior, not native-versus-Servo GPU performance using this presentation path.
+  Basic taps, drag scrolling, focus, and hardware key events are forwarded. Hover, selection
+  drags, wheel routing, IME, and mobile soft-keyboard/text editing integration remain incomplete.
 - This host runs Servo **in the app process**. It does not provide content-process sandboxing or
   crash isolation. Native WKWebView uses WebKit's content processes. Servo's multiprocess mode
   needs a separate executable entry point and packaging work; it is not enabled here.
@@ -154,7 +195,7 @@ lifetime. Resource providers are retained while their view or session uses them.
 - The host does not yet forward AppKit appearance changes to Servo. Pages can report a light
   `prefers-color-scheme` while WKWebView follows the system's dark appearance. Select the same
   theme in the website when comparing layout.
-- Bundled pages use file URLs. Resource providers use an intercepted HTTPS origin scoped to
+- Desktop bundled pages use file URLs; mobile bundles use intercepted HTTPS origins. Resource providers use an intercepted HTTPS origin scoped to
   their provider ID; URL reports translate back to the piece's provider namespace. Remote sites
   use Servo's network stack and trust store, which can differ from system WebKit.
 - The Servo feature currently resolves ICU 2.1 dependencies through SpiderMonkey. Day accepts

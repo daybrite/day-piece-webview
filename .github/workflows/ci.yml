@@ -132,43 +132,149 @@ jobs:
       matrix:
         include:
           - { os: xcode-27, target: macos-appkit }
+          - { os: macos-15, target: macos-gtk }
+          - { os: macos-15, target: macos-qt }
+          - { os: ubuntu-24.04, target: linux-gtk }
+          - { os: ubuntu-24.04, target: linux-qt }
+          - { os: windows-latest, target: windows-winui }
+          - { os: windows-latest, target: windows-xaml }
+          - { os: ubuntu-24.04, target: android-mdc }
+          - { os: ubuntu-24.04, target: harmony-arkui }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    timeout-minutes: 240
     permissions:
       contents: read
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      DAY_TARGET: ${{ matrix.target }}
+      DAY_LOG: warn
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - uses: daybrite/actions/.github/actions/setup-day-cli@v1
       - uses: daybrite/actions/.github/actions/setup-day-deps@v1
         with:
           target: ${{ matrix.target }}
           pack: false
           extras: true
-          packages: python@3.12 llvm
-      - name: Configure Servo build tools
+          java: ${{ matrix.target == 'android-mdc' || matrix.target == 'harmony-arkui' }}
+          packages: ${{ runner.os == 'macOS' && 'python@3.12 llvm' || runner.os == 'Windows' && 'webview2-runtime llvm cmake ninja' || '' }}
+      - name: Configure macOS Servo tools
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           echo "DAY_BUILD_TOOL_PATH=$(brew --prefix python@3.12)/libexec/bin:$(brew --prefix llvm)/bin" >> "$GITHUB_ENV"
+          echo "$(brew --prefix python@3.12)/libexec/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           test "$(uname -m)" = arm64
+      - name: Install Linux Servo dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-19 libclang-19-dev llvm-19-dev cmake ninja-build pkg-config libudev-dev libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxrandr-dev libxcursor-dev libxi-dev xvfb
+          echo /usr/lib/llvm-19/bin >> "$GITHUB_PATH"
+          echo LIBCLANG_PATH=/usr/lib/llvm-19/lib >> "$GITHUB_ENV"
+          echo LIBGL_ALWAYS_SOFTWARE=1 >> "$GITHUB_ENV"
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Configure Windows Servo tools
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo 'C:/Program Files/LLVM/bin' >> "$GITHUB_PATH"
+          echo 'LIBCLANG_PATH=C:/Program Files/LLVM/bin' >> "$GITHUB_ENV"
+          clang --version
+      - name: Install Servo Android NDK
+        if: matrix.target == 'android-mdc'
+        shell: bash
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo DAY_ANDROID_ABI=x86_64 >> "$GITHUB_ENV"
+      - name: Install Servo OpenHarmony native SDK (API 20)
+        if: matrix.target == 'harmony-arkui'
+        id: servo-ohos
+        uses: openharmony-rs/setup-ohos-sdk@v1
+        with:
+          version: 6.0.0.1
+      - name: Select Servo OpenHarmony compiler
+        if: matrix.target == 'harmony-arkui'
+        shell: bash
+        run: |
+          {
+            echo "OHOS_SDK_NATIVE=${{ steps.servo-ohos.outputs.ohos_sdk_native }}"
+            echo "OHOS_NDK_HOME=${{ steps.servo-ohos.outputs.ohos_sdk_native }}"
+            echo DAY_OHOS_ARCH=x86_64
+            echo DAY_OHOS_SHOT_SETTLE_MS=2500
+          } >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: demo -> build/day/flavors/servo/cargo/${{ matrix.target }}/debug
           shared-key: servo-${{ matrix.target }}
-      - name: Run mixed-renderer regression and comparison scripts
+      - name: Build ARM64 mobile application
+        if: matrix.target == 'android-mdc' || matrix.target == 'harmony-arkui'
         working-directory: demo
         env:
-          DAY_LOG: warn
-          DAY_TARGET: ${{ matrix.target }}
+          DAY_ANDROID_ABI: arm64-v8a
+          DAY_OHOS_ARCH: arm64
+        shell: bash
+        run: '"$DAY_BIN" build -t "$DAY_TARGET" --flavor servo'
+      - name: Build the mixed-renderer application
+        working-directory: demo
+        shell: bash
+        run: '"$DAY_BIN" build -t "$DAY_TARGET" --flavor servo'
+      - name: Enable emulator acceleration
+        if: matrix.target == 'android-mdc' || matrix.target == 'harmony-arkui'
+        shell: bash
+        run: sudo chmod a+rw /dev/kvm
+      - name: Boot Android comparison device
+        if: matrix.target == 'android-mdc'
+        shell: bash
+        run: |
+          "$DAY_BIN" devices setup -t android-mdc --name day-servo-ci --device pixel_7 --os 36 --arch x86_64
+          SERIAL="$("$DAY_BIN" devices boot -t android-mdc --device day-servo-ci --wait --headless)"
+          echo "ANDROID_SERIAL=$SERIAL" >> "$GITHUB_ENV"
+          "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" shell settings put global hide_error_dialogs 1
+          "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" shell settings put secure immersive_mode_confirmations confirmed
+      - uses: actions/cache@v6
+        if: matrix.target == 'harmony-arkui'
+        with:
+          path: ~/.cache/ohos-qemu/v20260919
+          key: ohos-qemu-v20260919-x86_64_virt-phone
+      - name: Boot OpenHarmony comparison device
+        if: matrix.target == 'harmony-arkui'
+        shell: bash
+        run: bash scripts/boot-servo-ohos-ci.sh
+      - name: Prepare native ArkWeb for comparison
+        if: matrix.target == 'harmony-arkui'
+        uses: daybrite/actions/.github/actions/setup-harmony-webview@main
+      - name: Run mixed-renderer regression and comparison scripts
+        working-directory: demo
         shell: bash
         run: |
           set -euo pipefail
-          "$DAY_BIN" launch -t "$DAY_TARGET" --flavor servo --script experiments/servo.yaml
-          "$DAY_BIN" launch -t "$DAY_TARGET" --flavor servo --script experiments/renderer-comparison.yaml
-      - name: Verify matched captures
-        run: python3 scripts/verify-renderer-comparison.py demo/build/day/flavors/servo/screenshots --target '${{ matrix.target }}'
-      # The shared workflow consumes screenshots-* in both its website and release archive.
-      # Unique shot names avoid overwriting native screenshots at the same target/variant path.
+          run_day() {
+            if [[ "$DAY_TARGET" == linux-* ]]; then
+              xvfb-run -a -s '-screen 0 1600x1200x24' "$DAY_BIN" "$@"
+            else
+              "$DAY_BIN" "$@"
+            fi
+          }
+          run_day launch -t "$DAY_TARGET" --flavor servo --script experiments/servo.yaml
+          run_day launch -t "$DAY_TARGET" --flavor servo --script experiments/renderer-comparison.yaml
+      - name: Verify matched captures and browser pixels
+        shell: bash
+        run: |
+          python -m pip install 'Pillow==11.3.0'
+          python scripts/verify-renderer-comparison.py demo/build/day/flavors/servo/screenshots --target "$DAY_TARGET"
+          python scripts/verify-webview-render.py demo/build/day/flavors/servo/screenshots --pattern 'renderer-*-proof.png' --color 00ff00
+      # The shared website/release jobs collect screenshots-* after this matrix succeeds.
       - uses: actions/upload-artifact@v7
         with:
           name: screenshots-renderer-comparison-${{ matrix.target }}

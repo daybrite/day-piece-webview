@@ -267,6 +267,7 @@ fn canonical_tab_url(browser: Browser, url: &str) -> String {
         && (url.starts_with("file:")
             || url.starts_with("qrc:")
             || url.starts_with("resource:")
+            || url.starts_with("https://day-assets.invalid/")
             || support() == Support::Emulated)
     {
         let prefix = format!("/{}/", res::assets::site.as_str());
@@ -308,7 +309,7 @@ fn tab_widget_id(tab: u64, base: &str) -> String {
     }
 }
 pub fn root() -> impl Piece {
-    #[cfg(all(feature = "servo", feature = "appkit", target_os = "macos"))]
+    #[cfg(feature = "servo")]
     if let Err(error) = day_piece_webview_servo::register() {
         day::warn!("Servo renderer registration failed: {error}");
     }

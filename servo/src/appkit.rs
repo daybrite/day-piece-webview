@@ -1,14 +1,9 @@
 // Copyright © The Daybrite Project
 // SPDX-License-Identifier: MPL-2.0
 //! Experimental in-process Servo host. AppKit owns geometry and input; Servo owns the surface.
-use day_piece_webview::renderer::{
-    background, data_request, engine_error, external_link_event, load_event, new_tab_event,
-    reply_event, resource_response, success_json,
-};
-use day_piece_webview::{ResourceResponse, WebPatch, WebProps};
-use day_spec::Event;
+use day_piece_webview::renderer::{engine_error, new_tab_event, reply_event};
+use day_piece_webview::{WebPatch, WebProps};
 use day_spec::NodeId;
-use dispatch2::DispatchQueue;
 use dpi::PhysicalSize;
 use objc2::{
     AllocAnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
@@ -17,73 +12,16 @@ use objc2::{
 use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSTrackingArea, NSView};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use raw_window_handle::{AppKitWindowHandle, DisplayHandle, RawWindowHandle, WindowHandle};
-use servo::{EventLoopWaker, InputEvent, Servo, ServoBuilder, WebViewBuilder};
+use servo::{EventLoopWaker, InputEvent, WebViewBuilder};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use crate::engine::{self, State, Waker, engine};
 thread_local! {
-    static LOADS: RefCell<HashMap<u64, (NodeId, servo::WebResourceLoad)>> = RefCell::new(HashMap::new());
-    static NEXT_LOAD: Cell<u64> = const { Cell::new(1) };
-    static ENGINE: RefCell<Option<Engine>> = const { RefCell::new(None) };
     static HOSTS: RefCell<HashMap<usize, Retained<ServoView>>> = RefCell::new(HashMap::new());
     static SESSIONS: RefCell<HashMap<u64, Retained<ServoView>>> = RefCell::new(HashMap::new());
 }
-static WAKE_PENDING: AtomicBool = AtomicBool::new(false);
-#[derive(Clone)]
-struct Waker;
-impl EventLoopWaker for Waker {
-    fn clone_box(&self) -> Box<dyn EventLoopWaker> {
-        Box::new(self.clone())
-    }
-    fn wake(&self) {
-        if !WAKE_PENDING.swap(true, Ordering::AcqRel) {
-            DispatchQueue::main().exec_async(|| {
-                WAKE_PENDING.store(false, Ordering::Release);
-                pump();
-            });
-        }
-    }
-}
-struct Engine {
-    servo: Servo,
-    // Keep the temporary storage directory alive until the engine is dropped.
-    _storage: tempfile::TempDir,
-}
-fn engine() -> Result<Servo, String> {
-    ENGINE.with(|slot| {
-        if let Some(engine) = slot.borrow().as_ref() {
-            return Ok(engine.servo.clone());
-        }
-        // Another native browser may already have installed the process-wide provider.
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        let storage = tempfile::Builder::new()
-            .prefix("day-servo-")
-            .tempdir()
-            .map_err(|error| error.to_string())?;
-        let engine = ServoBuilder::default()
-            .opts(servo::Opts {
-                config_dir: Some(storage.path().to_owned()),
-                ..Default::default()
-            })
-            .event_loop_waker(Box::new(Waker))
-            .build();
-        *slot.borrow_mut() = Some(Engine {
-            servo: engine.clone(),
-            _storage: storage,
-        });
-        Ok(engine)
-    })
-}
-fn pump() {
-    let engine = ENGINE.with(|s| s.borrow().as_ref().map(|engine| engine.servo.clone()));
-    if let Some(engine) = engine {
-        engine.spin_event_loop();
-    }
+pub(crate) fn paint_dirty() {
     let hosts: Vec<_> = HOSTS.with(|s| s.borrow().values().cloned().collect());
     for host in hosts {
         if !host.ivars().state.dirty.replace(false) {
@@ -94,134 +32,6 @@ fn pump() {
             web.rendering_context().present();
         }
     }
-}
-struct State {
-    node: Cell<NodeId>,
-    dirty: Cell<bool>,
-    error: RefCell<Option<String>>,
-    props: WebProps,
-    allowed_url: RefCell<String>,
-}
-impl State {
-    fn report(&self, event: Event) {
-        day_appkit::emit(self.node.get(), event);
-    }
-    fn external_url(&self, url: &str) -> String {
-        if let Some(p) = &self.props.resources
-            && let Some(path) =
-                url.strip_prefix(&format!("https://day-resource.invalid/{}/", p.id()))
-        {
-            return format!("{}{path}", p.base_url());
-        }
-        url.to_owned()
-    }
-    fn internal_url(&self, url: &str) -> String {
-        if let Some(p) = &self.props.resources
-            && let Some(path) = url.strip_prefix(&p.base_url())
-        {
-            return format!("https://day-resource.invalid/{}/{path}", p.id());
-        }
-        url.to_owned()
-    }
-}
-impl servo::WebViewDelegate for State {
-    fn notify_new_frame_ready(&self, _: servo::WebView) {
-        self.dirty.set(true);
-        Waker.wake();
-    }
-    fn notify_load_status_changed(&self, web: servo::WebView, status: servo::LoadStatus) {
-        if status == servo::LoadStatus::Complete
-            && let Some(url) = web.url()
-        {
-            self.report(load_event(self.external_url(url.as_str())));
-        }
-    }
-    fn notify_crashed(&self, _: servo::WebView, reason: String, _: Option<String>) {
-        log::error!("Servo view crashed: {reason}");
-        *self.error.borrow_mut() = Some(reason);
-    }
-    fn request_navigation(&self, _: servo::WebView, request: servo::NavigationRequest) {
-        let url = request.url.as_str();
-        let permitted = self.allowed_url.borrow().as_str() == url;
-        let local =
-            self.props.resources.as_ref().is_some_and(|p| {
-                url.starts_with(&format!("https://day-resource.invalid/{}/", p.id()))
-            }) || (!self.props.inline_root.is_empty()
-                && day_spec::resolve_asset_dir(&self.props.inline_root).is_some_and(|root| {
-                    request
-                        .url
-                        .to_file_path()
-                        .ok()
-                        .and_then(|path| path.canonicalize().ok())
-                        .zip(root.canonicalize().ok())
-                        .is_some_and(|(path, root)| path.starts_with(root))
-                }));
-        if permitted
-            || local
-            || (!self.props.external_links
-                && matches!(request.url.scheme(), "http" | "https" | "about"))
-        {
-            request.allow();
-        } else {
-            self.report(external_link_event(self.external_url(url)));
-            request.deny();
-        }
-    }
-    fn load_web_resource(&self, _: servo::WebView, load: servo::WebResourceLoad) {
-        let Some(provider) = &self.props.resources else {
-            return;
-        };
-        if !load
-            .request()
-            .url
-            .as_str()
-            .starts_with(&format!("https://day-resource.invalid/{}/", provider.id()))
-        {
-            return;
-        }
-        let provider_id = provider.id();
-        let url = self.external_url(load.request().url.as_str());
-        let method = load.request().method.to_string();
-        let range = load
-            .request()
-            .headers
-            .get("range")
-            .and_then(|h| h.to_str().ok())
-            .unwrap_or("")
-            .to_owned();
-        let id = NEXT_LOAD.with(|n| {
-            let id = n.get();
-            n.set(id + 1);
-            id
-        });
-        LOADS.with(|loads| loads.borrow_mut().insert(id, (self.node.get(), load)));
-        // Providers may do archive IO. Servo responders remain on the main thread.
-        background(move || {
-            let response = resource_response(provider_id, &url, &method, &range);
-            DispatchQueue::main().exec_async(move || complete_resource(id, response));
-        });
-    }
-}
-fn complete_resource(id: u64, response: ResourceResponse) {
-    let Some((_, load)) = LOADS.with(|loads| loads.borrow_mut().remove(&id)) else {
-        return;
-    };
-    let mut reply = servo::WebResourceResponse::new(load.request().url.clone());
-    if let Ok(mime) = response.mime.parse() {
-        reply.headers.insert("content-type", mime);
-    }
-    if let Ok(status) = response.status.try_into() {
-        reply.status_code = status;
-    }
-    for (name, value) in &response.headers {
-        if let (Ok(name), Ok(value)) = (name.parse::<http::header::HeaderName>(), value.parse()) {
-            reply.headers.append(name, value);
-        }
-    }
-    let mut intercepted = load.intercept(reply);
-    intercepted.send_body_data(response.body.to_vec());
-    intercepted.finish();
-    Waker.wake();
 }
 struct Ivars {
     state: Rc<State>,
@@ -334,13 +144,7 @@ impl ServoView {
                 return;
             }
         };
-        let p = &self.ivars().state.props;
-        let url = if !p.inline_root.is_empty() {
-            day_spec::resolve_asset_dir(&p.inline_root)
-                .and_then(|dir| url::Url::from_file_path(dir.join(&p.inline_start)).ok())
-        } else {
-            url::Url::parse(&self.ivars().state.internal_url(&p.url)).ok()
-        };
+        let url = engine::initial_url(&self.ivars().state);
         let Some(url) = url else {
             return;
         };
@@ -483,13 +287,7 @@ pub(super) fn make(mtm: MainThreadMarker, p: &WebProps, node: NodeId) -> Retaine
         });
         return view.into_super();
     }
-    let state = Rc::new(State {
-        node: Cell::new(node),
-        dirty: Cell::new(false),
-        error: RefCell::new(None),
-        props: p.clone(),
-        allowed_url: RefCell::new(String::new()),
-    });
+    let state = engine::state(p, node);
     let view = ServoView::alloc(mtm).set_ivars(Ivars {
         state,
         web: RefCell::new(None),
@@ -519,39 +317,7 @@ pub(super) fn update(h: &Retained<NSView>, patch: &WebPatch) -> bool {
         state.report(reply_event(*req, engine_error("ServoError", error)));
         return true;
     }
-    host.with_web(|web| match patch {
-        WebPatch::Load(url) => {
-            if let Ok(url) = url::Url::parse(&state.internal_url(url)) {
-                *state.allowed_url.borrow_mut() = url.to_string(); web.load(url);
-            }
-        }
-        WebPatch::Back => { web.go_back(1); }
-        WebPatch::Forward => { web.go_forward(1); }
-        WebPatch::Reload | WebPatch::ForceReload => web.reload(),
-        WebPatch::Stop => { /* Servo 0.6 has no public stop-loading API. */ }
-        WebPatch::Eval { req, script } => {
-            let req = *req;
-            if let Some(request) = data_request(script) {
-                let reply = if request["operation"] == "navigation" {
-                    success_json(serde_json::json!({
-                        "url": web.url().map(|u| state.external_url(u.as_str())).unwrap_or_default(),
-                        "title": web.page_title().unwrap_or_default(), "can_go_back": web.can_go_back(),
-                        "can_go_forward": web.can_go_forward(), "loading": web.load_status() != servo::LoadStatus::Complete,
-                    }))
-                } else { engine_error("Unsupported", "Servo profile operation unavailable") };
-                state.report(reply_event(req, reply));
-            } else {
-                let state = state.clone();
-                web.evaluate_javascript(script, move |result| {
-                    let reply = match result {
-                        Ok(servo::JSValue::String(s)) => s,
-                        result => engine_error("ServoError", &format!("{result:?}")),
-                    };
-                    state.report(reply_event(req, reply));
-                });
-            }
-        }
-    });
+    host.with_web(|web| engine::update(state, web, patch));
     true
 }
 pub(super) fn release(h: &Retained<NSView>) -> bool {
@@ -560,11 +326,7 @@ pub(super) fn release(h: &Retained<NSView>) -> bool {
     };
     HOSTS.with(|s| s.borrow_mut().remove(&(host as *const ServoView as usize)));
     if host.ivars().state.props.session == 0 {
-        LOADS.with(|loads| {
-            loads
-                .borrow_mut()
-                .retain(|_, (node, _)| *node != host.ivars().state.node.get())
-        });
+        engine::cancel_loads(host.ivars().state.node.get());
         host.ivars().web.borrow_mut().take();
     }
     Waker.wake();

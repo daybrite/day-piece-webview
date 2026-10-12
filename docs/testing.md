@@ -273,13 +273,13 @@ use the assigned URL, and disposing a view removes its listener. Day-News's
 `native-reader-interactions.yaml` checks that the notification arms visibility-triggered
 reader extraction in Chromium, as well as the native toolkits.
 
-## Experimental Servo on AppKit
+## Experimental Servo
 
 The opt-in [Servo walkthrough](../demo/experiments/servo.yaml) checks a real Servo user agent,
 bundled CSS, isolated JavaScript heaps, preservation of a native tab while a Servo tab changes,
 repeated engine replacement, relative provider resources, iframe loading, reload, and close.
 It lives outside the default walkthrough directory because native-only builds exclude Servo.
-The dedicated `renderer-comparison` CI job runs it with the Servo flavor on macOS AppKit.
+The dedicated `renderer-comparison` CI job runs it with the Servo flavor on every implemented host.
 
 ```sh
 cd demo
@@ -288,14 +288,15 @@ day launch -t macos-appkit --flavor servo --script experiments/servo.yaml
 
 Supply `DAY_BUILD_TOOL_PATH` as described in [Servo setup](servo.md). These assertions test
 integration behavior; they do not establish browser conformance, sandboxing, or a performance
-comparison. Inspect the saved screenshots to verify actual painting.
+comparison. The comparison script also produces synthetic paint captures; CI checks their
+pixels to reject blank native or Servo surfaces.
 
 `experiments/servo-remote.yaml` additionally loads `https://daybrite.dev` in both engines,
 checks the saved default-renderer preference, and moves the resident pages into native document
 windows. It requires network access. The initial AppKit validation passed 36/36 local steps,
 39/39 remote steps, and the ordinary native-only walkthrough's 62 applicable steps. Both
 remote screenshots were inspected for painted page content. These debug runs are functional
-checks, not performance benchmarks; other Servo hosts have not been implemented or tested.
+checks, not performance benchmarks; portable hosts add CPU frame-copy overhead and are not equivalent performance baselines.
 The two remote tabs were also detached through AppKit's window-tab action, arranged side by
 side, and captured independently. Both retained their URL and engine, and the native page
 retained its JavaScript marker after detachment and resizing.
@@ -312,11 +313,18 @@ exercise actual mixed-engine routing and lifetime.
 
 ## Renderer comparison in CI and on the website
 
+The demo's `website/site.toml` explicitly includes `macos-gtk` and `macos-qt` in its gallery.
+Day normally excludes those development targets when merging screenshot indexes; the matching
+CLI update is required to publish their comparison pairs as well as upload their artifacts.
+
 The native demo matrix continues to run `dayscript/webview.yaml` on all primary targets.
-The `renderer-comparison` job runs on an arm64 Xcode 27 runner for `macos-appkit`, the only
-implemented Servo host. It installs Python 3.12 and LLVM, supplies `DAY_BUILD_TOOL_PATH`, and
-runs `experiments/servo.yaml` and `experiments/renderer-comparison.yaml` with the default-off
-`servo` flavor. Add matrix rows only after the corresponding Servo host and flavor target exist.
+The `renderer-comparison` matrix covers AppKit, macOS/Linux GTK and Qt, Windows XAML and
+WinUI (MSVC), Android, and OpenHarmony. It installs Servo's additional build requirements,
+builds the demo (both ARM64 and x86_64 on mobile), then runs `experiments/servo.yaml` and `experiments/renderer-comparison.yaml`
+with the default-off `servo` flavor. Linux uses Xvfb and Mesa; mobile rows boot their emulator
+and test both engines in the same application. OpenHarmony uses the shared workflow's pinned
+7.0 image and native ArkWeb setup, with the Servo-compatible API 20 native compiler. Local
+Harmony validation is compile-only; its emulator runs in CI.
 
 The comparison script checks user agents, script execution, stylesheets, and relative resource
 loading in both engines. It captures the same bundled and provider pages at the same window size,
@@ -326,14 +334,17 @@ site. The live comparison remains available through `experiments/servo-remote.ya
 `verify-renderer-comparison.py` requires complete pairs, matching dimensions/locale/theme, and
 PNG bytes that match their indexed hashes. This checks artifact integrity, not pixel similarity;
 rendering differences are the purpose of the comparison.
-The host appearance is shared, but Servo does not yet receive AppKit appearance changes, so
+The paint checks require the synthetic marker in both engines, without requiring identical
+page pixels. The host appearance is shared, but Servo does not yet receive AppKit appearance changes, so
 the bundled page can appear light in Servo and dark in WKWebView; see [current limits](servo.md#current-limits).
 
-The job uploads `screenshots-renderer-comparison-macos-appkit` with the usual
+The job uploads `screenshots-renderer-comparison-<target>` with the usual
 `<target>/<variant>/<shot>.png` layout and Day's `gallery.json`. The native demo workflow waits
 for this job before starting, so its existing website and release jobs collect the comparison
 artifact alongside native captures. Host lint and cross-check jobs run independently.
-A failed comparison blocks publication. Script reports upload even on failure.
+A failed comparison blocks publication. macOS GTK requires the matching Day native-window
+capture fix: GTK widget snapshots omit Cocoa browser children. The native piece also prevents
+a released GTK anchor from reattaching its old WKWebView over a replacement renderer. Script reports upload even on failure.
 
 The project-local Daysite gallery override displays complete WebView/Servo pairs side-by-side
 (vertically on narrow screens), with full-size image links and localized capture labels.
