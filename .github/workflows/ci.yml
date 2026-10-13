@@ -94,6 +94,8 @@ jobs:
         if: matrix.features == 'gtk'
       - run: python3 -m unittest discover -s scripts -p test_renderer_comparison.py -v
         if: matrix.features == 'gtk'
+      - run: python3 -m unittest discover -s scripts -p test_windows_angle.py -v
+        if: matrix.features == 'gtk'
       - run: python3 -m unittest discover -s scripts -p test_renderer_size.py -v
         if: matrix.features == 'gtk'
 
@@ -271,6 +273,11 @@ jobs:
         working-directory: ${{ env.DEMO_DIR }}
         shell: bash
         run: '"$DAY_BIN" build -t "$DAY_TARGET" --flavor servo'
+      - name: Stage and check Windows ANGLE runtime
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.RENDERER_ROOT }}
+        shell: bash
+        run: python scripts/stage-windows-angle.py "demo/build/day/flavors/servo/cargo/$DAY_TARGET/debug/debug"
       - name: Enable emulator acceleration
         if: matrix.target == 'android-mdc' || matrix.target == 'harmony-arkui'
         shell: bash

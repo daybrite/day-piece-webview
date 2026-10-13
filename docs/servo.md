@@ -183,6 +183,21 @@ character process limit under the default workspace path. A `subst` drive does n
 Day canonicalizes the project root back to its physical path. The cache, capture checks,
 size measurements, and artifact uploads all use the short checkout until mozangle supports
 linker response files.
+
+After building on Windows, stage ANGLE beside the executable before launching (from the
+repository root, replacing `windows-winui` with `windows-xaml` when appropriate):
+
+```sh
+python scripts/stage-windows-angle.py demo/build/day/flavors/servo/cargo/windows-winui/debug/debug
+```
+
+Use Python matching the application's architecture. The helper copies `libEGL.dll` and
+`libGLESv2.dll` from the same mozangle build and checks their native loader dependencies and
+EGL entry points. CI runs it before the comparison scripts. Day does not currently stage
+these dynamically loaded libraries; without them, Surfman panics with `egl function was not
+loaded` on the first Servo view. Repeat after rebuilding ANGLE, and ship both DLLs beside
+the executable when distributing a Windows Servo app.
+
 Harmony installs the API-20 native compiler separately from Day's API-18 packaging SDK;
 installing both SDKs into the same directory mixes incompatible component versions.
 The Linux GTK fixture job disables WebKit's sandbox only in that CI process, because hosted
