@@ -159,7 +159,8 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       DAY_TARGET: ${{ matrix.target }}
       DAY_LOG: warn
-      # Where the demo is built from; Windows remaps it to a short drive below.
+      # Windows uses a physically short checkout below (subst is undone by canonicalize).
+      RENDERER_ROOT: .
       DEMO_DIR: demo
     steps:
       - uses: actions/checkout@v7
@@ -215,12 +216,19 @@ jobs:
           # cl.exe on one command line. Under the runner's D:\a\<repo>\<repo>\demo\build\day\
           # flavors\servo\cargo\<target>\debug\debug\build\mozangle-<hash>\out prefix that is
           # ~36k characters, past Windows' 32,767 limit: CreateProcess fails with error 206 ("The
-          # filename or extension is too long") and the script panics. Building from a drive
-          # letter mapped to the workspace keeps the same files and caches and cuts ~38 characters
-          # per object. Remove once mozangle links through a response file.
-          subst W: $env:GITHUB_WORKSPACE
-          if (!(Test-Path 'W:\demo\Day.toml')) { throw 'subst W: did not map the workspace' }
-          'DEMO_DIR=W:\demo' >> $env:GITHUB_ENV
+          # filename or extension is too long") and the script panics. Day canonicalizes its
+          # project root, so subst/junction aliases resolve back to the long workspace path.
+          # Clone the checked-out commit to a physically short path on this ephemeral runner.
+          # Remove once mozangle links through a response file.
+          $shortRoot = Join-Path ([IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)) 'wv'
+          if (Test-Path $shortRoot) { throw "Short checkout already exists: $shortRoot" }
+          git clone --local --no-hardlinks $env:GITHUB_WORKSPACE $shortRoot
+          if ($LASTEXITCODE -ne 0) { throw 'Creating the short checkout failed' }
+          $revision = git -C $env:GITHUB_WORKSPACE rev-parse HEAD
+          git -C $shortRoot checkout --detach $revision
+          if ($LASTEXITCODE -ne 0) { throw 'Selecting the CI revision failed' }
+          "RENDERER_ROOT=$shortRoot" >> $env:GITHUB_ENV
+          "DEMO_DIR=$shortRoot/demo" >> $env:GITHUB_ENV
       - name: Install Servo Android NDK
         if: matrix.target == 'android-mdc'
         shell: bash
@@ -248,7 +256,7 @@ jobs:
           } >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: demo -> build/day/flavors/servo/cargo/${{ matrix.target }}/debug
+          workspaces: ${{ env.DEMO_DIR }} -> build/day/flavors/servo/cargo/${{ matrix.target }}/debug
           shared-key: servo-${{ matrix.target }}
       - name: Build ARM64 mobile application
         if: matrix.target == 'android-mdc' || matrix.target == 'harmony-arkui'
@@ -307,6 +315,7 @@ jobs:
           run_day launch -t "$DAY_TARGET" --flavor servo --script experiments/servo.yaml
           run_day launch -t "$DAY_TARGET" --flavor servo --script experiments/renderer-comparison.yaml
       - name: Verify matched captures and browser pixels
+        working-directory: ${{ env.RENDERER_ROOT }}
         shell: bash
         run: |
           python -m venv "$RUNNER_TEMP/renderer-checks"
@@ -323,18 +332,19 @@ jobs:
         if: ${{ !cancelled() && steps.mixed-build.outcome == 'success' }}
         with:
           name: screenshots-renderer-comparison-${{ matrix.target }}
-          path: demo/build/day/flavors/servo/screenshots/
+          path: ${{ env.DEMO_DIR }}/build/day/flavors/servo/screenshots/
           if-no-files-found: warn
       - name: Upload script diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: renderer-comparison-reports-${{ matrix.target }}
-          path: demo/build/day/flavors/servo/reports/dayscript/
+          path: ${{ env.DEMO_DIR }}/build/day/flavors/servo/reports/dayscript/
           if-no-files-found: warn
 
       - name: Compare native and Servo release sizes
         if: ${{ !cancelled() && inputs.measure-sizes == true && steps.mixed-build.outcome == 'success' }}
+        working-directory: ${{ env.RENDERER_ROOT }}
         env:
           # Rebuild every staged Android ABI so neither variant retains the other engine.
           DAY_ANDROID_ABI: arm64-v8a,x86_64
@@ -347,7 +357,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: renderer-sizes-${{ matrix.target }}
-          path: demo/build/renderer-sizes/
+          path: ${{ env.DEMO_DIR }}/build/renderer-sizes/
           if-no-files-found: ignore
 
   # The proof: the demo app, driven end to end by the shared Day workflow. It builds against day's

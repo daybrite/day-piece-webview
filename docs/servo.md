@@ -177,6 +177,12 @@ walkthroughs on the emulator. `scripts/install-servo-ohos-sdk.sh` and
 CI uses an isolated Python environment for screenshot checks. Untitled pixel-proof captures
 are validated alongside the published pairs but do not require gallery titles or captions.
 Windows explicitly selects the MSVC linker to avoid Git Bash's unrelated `link.exe`.
+The Windows comparison jobs build a local clone at a short physical path on the runner.
+mozangle 0.7.1 passes all ANGLE object paths on one command line, exceeding Windows' 32,767
+character process limit under the default workspace path. A `subst` drive does not help:
+Day canonicalizes the project root back to its physical path. The cache, capture checks,
+size measurements, and artifact uploads all use the short checkout until mozangle supports
+linker response files.
 Harmony installs the API-20 native compiler separately from Day's API-18 packaging SDK;
 installing both SDKs into the same directory mixes incompatible component versions.
 The Linux GTK fixture job disables WebKit's sandbox only in that CI process, because hosted
