@@ -2,6 +2,23 @@
 name: webview
 description: Check the support the piece reports, load the bundled site, run JavaScript in it, and follow the site's link back to the app.
 flow:
+  # Establish browser readiness before the first state-changing action. On a cold Android
+  # runner the tools drawer was gone immediately after its opening tap, making every control
+  # inside it unreachable. A retried read is safe while the native engine starts; a toggle is
+  # not. Wait for the bundled document and its script, then let native UI transitions settle.
+  - web_eval:
+      id: webview
+      script: "document.readyState"
+      text: "complete"
+      timeout_secs: 30
+  - web_eval:
+      id: webview
+      script: "document.getElementById('script-status').textContent"
+      text: "The bundled script ran."
+      # WebView2's first process startup on a fresh Windows runner can exceed five seconds.
+      timeout_secs: 30
+      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
+  - wait_idle: {}
   - tap: { id: webview-tools }
   - wait_for: { id: webview-support }
   - assert_visible: { id: webview-title }
@@ -14,15 +31,7 @@ flow:
   - assert_visible: { id: webview }
   - assert_text: { id: webview-link, key: link_none }
 
-  # The page rendered with its relative script and stylesheet. `web_eval` retries until the page
-  # answers, so a slow first load settles within the step's wait.
-  - web_eval:
-      id: webview
-      script: "document.getElementById('script-status').textContent"
-      text: "The bundled script ran."
-      # WebView2's first process startup on a fresh Windows runner can exceed five seconds.
-      timeout_secs: 30
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
+  # The page rendered with its relative stylesheet as well as the script checked above.
   - web_eval:
       id: webview
       script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()"

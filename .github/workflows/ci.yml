@@ -388,6 +388,23 @@ jobs:
         windows-winui: webview2-runtime
       update-day-deps: true
       scripts: dayscript/webview.yaml
+      script-setup: |
+        if [[ "$DAY_SCRIPT_TARGET" == android-mdc ]]; then
+          # The normal Day stream omits activity/configuration events. Preserve those on
+          # failure so a startup remount can be distinguished from a lost/repeated action.
+          android_script_diagnostics() {
+            local diagnostic_status=$?
+            if (( diagnostic_status != 0 )); then
+              echo '::group::Android activity and application diagnostics'
+              timeout 10s "$ANDROID_HOME/platform-tools/adb" -s "$ANDROID_SERIAL" \
+                logcat -d -v threadtime ActivityTaskManager:I ActivityManager:I \
+                WindowManager:I AndroidRuntime:V Day:V day:V '*:S' || true
+              echo '::endgroup::'
+            fi
+            return "$diagnostic_status"
+          }
+          trap android_script_diagnostics EXIT
+        fi
       preflight-checks: fmt, clippy, test
       # website/site.toml opts into daysite: landing page, gallery, and /webapp/.
       deploy-web: true
