@@ -192,11 +192,16 @@ python scripts/stage-windows-angle.py demo/build/day/flavors/servo/cargo/windows
 ```
 
 Use Python matching the application's architecture. The helper copies `libEGL.dll` and
-`libGLESv2.dll` from the same mozangle build and checks their native loader dependencies and
-EGL entry points. CI runs it before the comparison scripts. Day does not currently stage
+`libGLESv2.dll` from the newest complete mozangle build in that profile directory (a cached target
+directory can hold stale ones) and checks their native loader dependencies and EGL entry
+points. CI runs it before the comparison scripts. Day does not currently stage
 these dynamically loaded libraries; without them, Surfman panics with `egl function was not
 loaded` on the first Servo view. Repeat after rebuilding ANGLE, and ship both DLLs beside
 the executable when distributing a Windows Servo app.
+
+Selection uses the DLL modification times, keeping both DLLs from the same build. If you
+switch back to an older dependency resolution locally, clean that Cargo target directory and
+rebuild first; a reused older build may not have the newest timestamps.
 
 Harmony installs the API-20 native compiler separately from Day's API-18 packaging SDK;
 installing both SDKs into the same directory mixes incompatible component versions.
