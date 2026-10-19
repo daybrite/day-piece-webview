@@ -114,7 +114,7 @@ first engine startup, disk/network caches, and debug compilation can dominate sm
 | `macos-appkit` | Native NSView / Surfman surface | arm64, macOS 15.5+, Python 3.11+, LLVM 19+; existing runtime regression |
 | `macos-gtk`, `macos-qt` | Offscreen Day Canvas | Same Apple minimum; toolkit and native browser libraries; GTK and Qt lifecycle/comparison tests passed locally |
 | `linux-gtk`, `linux-qt` | Offscreen Day Canvas | EGL/OpenGL, fontconfig, FreeType, LLVM 19+, Python 3.11+; Xvfb/Mesa for CI |
-| `windows-xaml`, `windows-winui` | Offscreen Day Canvas / ANGLE | MSVC, LLVM, Python; GNU GTK/Qt targets are not supported by this adapter |
+| `windows-winui` | Offscreen Day Canvas / ANGLE | MSVC, LLVM, Python; GNU GTK/Qt targets are not supported by this adapter |
 | `android-mdc` | Offscreen Day Canvas / EGL | NDK 28.2.13676358; matching rustls Kotlin verifier AAR; APK, lifecycle/comparison tests, and live HTTPS smoke test passed locally |
 | `harmony-arkui` | Offscreen Day Canvas / EGL | **Paused** (see [below](#paused-openharmony)): the host code compiles and ran once on the 7.0 emulator with local workarounds, but the published SpiderMonkey archive cannot be used as shipped |
 
@@ -185,7 +185,7 @@ size measurements, and artifact uploads all use the short checkout until mozangl
 linker response files.
 
 After building on Windows, stage ANGLE beside the executable before launching (from the
-repository root, replacing `windows-winui` with `windows-xaml` when appropriate):
+repository root):
 
 ```sh
 python scripts/stage-windows-angle.py demo/build/day/flavors/servo/cargo/windows-winui/debug/debug

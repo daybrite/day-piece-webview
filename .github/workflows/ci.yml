@@ -48,7 +48,6 @@ jobs:
           - { os: macos-15, features: appkit }
           - { os: xcode-27, features: appkit }
           - { os: windows-latest, features: winui }
-          - { os: windows-latest, features: xaml }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -149,7 +148,6 @@ jobs:
           - { os: ubuntu-24.04, target: linux-gtk }
           - { os: ubuntu-24.04, target: linux-qt }
           - { os: windows-latest, target: windows-winui }
-          - { os: windows-latest, target: windows-xaml }
           - { os: ubuntu-24.04, target: android-mdc }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240

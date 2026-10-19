@@ -17,7 +17,7 @@ sources, framework dependencies, and web assets.
 | macos-qt, linux-qt | QWebEngineView | Qt 6 WebEngineWidgets at build time; otherwise a URL-label fallback |
 | windows-qt | QWebEngineView or WebView2 | WebEngine if detected; otherwise a Wry WebView2 child in a QWidget |
 | windows-gtk | WebView2 | Wry child window positioned from the GTK allocation |
-| windows-xaml | WebView2 | Composition controller attached to a XAML Border; WebView2 Runtime required |
+| windows-winui | WebView2 | WinUI 3 WebView2 control; WebView2 Runtime required |
 | android-mdc | Android WebView | System WebView; piece contributes the INTERNET permission |
 | harmony-arkui | ArkWeb | ArkTS Web component; compatible installed ArkWeb runtime; resource handler requires API 12+ |
 | web-dom | iframe | Host browser; no separate engine installation |

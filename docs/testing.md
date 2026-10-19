@@ -63,7 +63,7 @@ Earlier steps check bundled JS/CSS, Unicode evaluation, the app-link callback, r
 and absence of unsupported placeholders. Screenshots are retained for inspection. Merely
 producing a screenshot does not establish that its contents are correct.
 
-The shared demo matrix includes macos-appkit, linux-gtk, linux-qt, windows-xaml, ios-uikit,
+The shared demo matrix includes macos-appkit, linux-gtk, linux-qt, windows-winui, ios-uikit,
 android-mdc, harmony-arkui, and web-dom. Browser CI uses **Chromium**. There are no current
 matrix rows for macos-gtk, macos-qt, windows-gtk, or windows-qt, and no Firefox/WebKit browser
 rows. A shared renderer reduces duplication but does not eliminate host-integration differences.
