@@ -6,6 +6,15 @@ and a daily schedule. It tests the crate and a real Day app. The demo resolves c
 sources through the shared `daybrite/actions` workflow; a framework change can therefore break
 this repository's daily run without a new piece commit.
 
+Linux builds need Day's SVG development libraries as well as the native web engine:
+`librsvg2-dev` (librsvg 2.52+) for GTK, and `qt6-svg-dev` for Qt on Debian/Ubuntu.
+Runtime SVG libraries alone do not supply the headers and pkg-config metadata.
+`daybrite/actions/.github/actions/setup-day-deps@v1` owns installation of the toolkit and
+web engine prerequisites (`extras: true`) for both Linux host checks and renderer comparisons;
+the reusable demo workflow uses the same action. Servo-specific packages are passed through
+the action's `packages` input. This repository keeps the Servo environment configuration and
+early SVG library probes, without maintaining another copy of Day's toolkit package lists.
+
 ## Coverage by layer
 
 | Layer | What it verifies | What it does not verify |

@@ -55,12 +55,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install the toolkit and web engine libraries
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          case "${{ matrix.features }}" in
-            gtk) sudo apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev pkg-config ;;
-            qt) sudo apt-get install -y --no-install-recommends qt6-base-dev qt6-webengine-dev pkg-config ;;
-          esac
+        uses: daybrite/actions/.github/actions/setup-day-deps@v1
+        with:
+          target: linux-${{ matrix.features }}
+          pack: false
+          extras: true
+          java: false
       - run: cargo fmt --all -- --check
         if: matrix.features == 'gtk'
       - run: cargo fmt --manifest-path servo/Cargo.toml --all -- --check
@@ -177,7 +177,13 @@ jobs:
           pack: false
           extras: true
           java: ${{ matrix.target == 'android-mdc' || matrix.target == 'harmony-arkui' }}
-          packages: ${{ runner.os == 'macOS' && 'python@3.12 llvm' || runner.os == 'Windows' && 'webview2-runtime llvm cmake ninja' || '' }}
+          packages: >-
+            ${{ runner.os == 'macOS' && 'python@3.12 llvm'
+            || runner.os == 'Windows' && 'webview2-runtime llvm cmake ninja'
+            || runner.os == 'Linux' && 'clang-19 libclang-19-dev llvm-19-dev cmake ninja-build
+            pkg-config libudev-dev libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dev
+            libfontconfig1-dev libfreetype6-dev libx11-dev libxrandr-dev libxcursor-dev libxi-dev xvfb'
+            || '' }}
       - name: Configure macOS Servo tools
         if: runner.os == 'macOS'
         shell: bash
@@ -186,12 +192,20 @@ jobs:
           echo "$(brew --prefix python@3.12)/libexec/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           test "$(uname -m)" = arm64
-      - name: Install Linux Servo dependencies
+      - name: Configure Linux Servo tools
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang-19 libclang-19-dev llvm-19-dev cmake ninja-build pkg-config libudev-dev libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxrandr-dev libxcursor-dev libxi-dev xvfb
+          # setup-day-deps installs the toolkit and the extra Servo packages above.
+          # Check before compiling Servo so a missing library fails in setup.
+          case "${{ matrix.target }}" in
+            linux-gtk)
+              pkg-config --print-errors --exists 'librsvg-2.0 >= 2.52'
+              ;;
+            linux-qt)
+              pkg-config --print-errors --exists Qt6Svg
+              ;;
+          esac
           echo /usr/lib/llvm-19/bin >> "$GITHUB_PATH"
           echo LIBCLANG_PATH=/usr/lib/llvm-19/lib >> "$GITHUB_ENV"
           echo LIBGL_ALWAYS_SOFTWARE=1 >> "$GITHUB_ENV"
