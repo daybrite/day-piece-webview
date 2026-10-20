@@ -97,6 +97,19 @@ define_class!(
             let config:Retained<AnyObject>=unsafe { msg_send![objc2::class!(UIContextMenuConfiguration), configurationWithIdentifier:std::ptr::null::<AnyObject>(), previewProvider:std::ptr::null::<AnyObject>(), actionProvider:&*provider] };
             done.call((Retained::as_ptr(&config) as *mut AnyObject,));
         }
+        // UIScrollViewDelegate, as the web view's scroll view's external delegate (WebKit keeps its
+        // own and forwards to this one). The adjusted inset changes when WebKit learns whether the
+        // page covers the safe areas; see `refresh_viewport`.
+        #[unsafe(method(scrollViewDidChangeAdjustedContentInset:))]
+        fn adjusted_inset_changed(&self, scroll: &UIView) {
+            // UIScrollViewContentInsetAdjustmentNever: WebKit's choice for a page that covers.
+            let behavior: isize = unsafe { msg_send![scroll, contentInsetAdjustmentBehavior] };
+            let Some(parent) = scroll.superview() else { return };
+            if let (2, Some(web)) = (behavior, parent.downcast_ref::<WKWebView>()) {
+                refresh_viewport(web);
+            }
+        }
+
         // WKNavigationDelegate's webView:didFinishNavigation:, which WKWebView calls on the
         // object we set as its navigationDelegate; responding to the selector is all that's
         // required.
@@ -170,6 +183,27 @@ day_core::tls_group! {
     // the engine (and so the loaded page and its JavaScript context) alive until the app returns.
     static SESSIONS: RefCell<HashMap<u64, Retained<UIView>>> = RefCell::new(HashMap::new());
 
+}
+
+/// Make WebKit size the page's viewport again. WebKit first insets its scroll view by the safe
+/// areas; once it learns that the page declares `viewport-fit=cover`, it drops the inset but, on
+/// iOS 17 and 18 (iOS 27 resizes on its own), keeps the viewport it sized with it. A full-screen
+/// view on a phone with a home indicator then lays the page out 84 pt short, and anything fixed to
+/// the bottom floats above the edge.
+/// WebKit sizes the viewport again only when the view's size changes, so the view takes a point
+/// off its height and gives it back.
+fn refresh_viewport(web: &WKWebView) {
+    // The resize itself changes the adjusted inset, which calls back into here.
+    thread_local!(static REFRESHING: Cell<bool> = const { Cell::new(false) });
+    let frame = web.frame();
+    if frame.size.height < 1.0 || REFRESHING.replace(true) {
+        return;
+    }
+    let mut shorter = frame;
+    shorter.size.height -= 1.0;
+    web.setFrame(shorter);
+    web.setFrame(frame);
+    REFRESHING.set(false);
 }
 
 fn current_url(web: &WKWebView) -> Option<String> {
@@ -255,6 +289,12 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
     nav.ivars().external_links.set(p.external_links);
     *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
     let _: () = unsafe { msg_send![&web, setNavigationDelegate: &*nav] };
+    // SAFETY: main thread; the scroll view holds its delegate weakly, and DELEGATES keeps `nav`
+    // alive as long as the web view.
+    unsafe {
+        let scroll: *mut AnyObject = msg_send![&web, scrollView];
+        let _: () = msg_send![scroll, setDelegate: &*nav];
+    }
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the assets tree is loose files in the app bundle, so
         // `loadFileURL:allowingReadAccessToURL:` is the whole load path; WebKit resolves the

@@ -7,6 +7,10 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 ## Unreleased
 
+- Fixed: on iOS 17 and 18, a full-screen page that declares `viewport-fit=cover` was laid out
+  short by the top and bottom safe areas, so a toolbar fixed to the bottom of the page floated
+  above the home indicator. The web view now has WebKit size the page again once WebKit stops
+  insetting it.
 - Changed: `web_view(url)` and `.url_binding(url)` take any two-way `Binding<String>` (a
   `Signal<String>` still works; a day-model `Field` does too), and `.on_new_tab`'s two menu
   labels take any text source (`IntoText`), so a `LocalizedText` goes in without `.format()`.
