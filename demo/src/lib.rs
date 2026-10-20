@@ -296,12 +296,16 @@ fn resource_page_path(url: &str) -> Option<String> {
         .ok()
         .map(|path| path.into_owned())
 }
-fn tab_widget_id(tab: u64, base: &str) -> String {
-    if tab == 1 {
-        base.to_owned()
-    } else {
-        format!("{base}-tab-{tab}")
-    }
+/// One widget's id per tab: the first tab keeps the plain family, every other tab names
+/// the same control through its keyed sibling (`webview_settings` / `webview_settings_tab:2`).
+macro_rules! tab_widget_id {
+    ($tab:expr, $base:ident, $keyed:ident) => {
+        if $tab == 1 {
+            day::id!($base)
+        } else {
+            day::id!($keyed, $tab)
+        }
+    };
 }
 pub fn root() -> impl Piece {
     #[cfg(feature = "servo")]
@@ -365,42 +369,50 @@ fn tab_controls(tabs: BrowserTabs, tab_number: u64) -> impl Piece {
             .icon_only()
             .compact()
             .action(move || tabs.open(String::new(), true))
-            .id(tab_widget_id(tab_number, "tab-new"))
+            .id(tab_widget_id!(tab_number, tab_new, tab_new_tab))
             .width(40.0),
         button(res::str::close_tab())
             .icon(Symbol::Close)
             .icon_only()
             .compact()
             .action(move || tabs.close_selected())
-            .id(tab_widget_id(tab_number, "tab-close"))
+            .id(tab_widget_id!(tab_number, tab_close, tab_close_tab))
             .width(40.0),
         button(res::str::previous_tab())
             .icon(Symbol::Back)
             .icon_only()
             .compact()
             .action(move || tabs.tabs.select_next(true))
-            .id(tab_widget_id(tab_number, "tab-previous"))
+            .id(tab_widget_id!(tab_number, tab_previous, tab_previous_tab))
             .width(40.0),
         button(res::str::next_tab())
             .icon(Symbol::Forward)
             .icon_only()
             .compact()
             .action(move || tabs.tabs.select_next(false))
-            .id(tab_widget_id(tab_number, "tab-next"))
+            .id(tab_widget_id!(tab_number, tab_next, tab_next_tab))
             .width(40.0),
         button(res::str::move_tab_before())
             .icon(Symbol::Back)
             .icon_only()
             .compact()
             .action(move || tabs.move_selected(false))
-            .id(tab_widget_id(tab_number, "tab-move-before"))
+            .id(tab_widget_id!(
+                tab_number,
+                tab_move_before,
+                tab_move_before_tab
+            ))
             .width(40.0),
         button(res::str::move_tab_after())
             .icon(Symbol::Forward)
             .icon_only()
             .compact()
             .action(move || tabs.move_selected(true))
-            .id(tab_widget_id(tab_number, "tab-move-after"))
+            .id(tab_widget_id!(
+                tab_number,
+                tab_move_after,
+                tab_move_after_tab
+            ))
             .width(40.0),
     ))
     .spacing(6.0)
@@ -677,7 +689,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         support() == Support::Native && browser.navigation.get().can_go_back
                     })
                     .action(move || browser.back.notify())
-                    .id(tab_widget_id(tab_number, "webview-back")),
+                    .id(tab_widget_id!(tab_number, webview_back, webview_back_tab)),
                 button(res::str::forward())
                     .icon(Symbol::Forward)
                     .icon_only()
@@ -686,13 +698,21 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         support() == Support::Native && browser.navigation.get().can_go_forward
                     })
                     .action(move || browser.forward.notify())
-                    .id(tab_widget_id(tab_number, "webview-forward")),
+                    .id(tab_widget_id!(
+                        tab_number,
+                        webview_forward,
+                        webview_forward_tab
+                    )),
                 button(res::str::reload())
                     .icon(Symbol::Refresh)
                     .icon_only()
                     .compact()
                     .action(move || browser.reload.notify())
-                    .id(tab_widget_id(tab_number, "webview-reload")),
+                    .id(tab_widget_id!(
+                        tab_number,
+                        webview_reload,
+                        webview_reload_tab
+                    )),
                 button(res::str::stop())
                     .icon(Symbol::Stop)
                     .icon_only()
@@ -703,7 +723,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                             && browser.navigation.get().loading
                     })
                     .action(move || browser.stop.notify())
-                    .id(tab_widget_id(tab_number, "webview-stop")),
+                    .id(tab_widget_id!(tab_number, webview_stop, webview_stop_tab)),
                 button(res::str::home())
                     .icon(Symbol::Home)
                     .icon_only()
@@ -712,14 +732,18 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         browser.home();
                         generation.update(|n| *n = n.wrapping_add(1));
                     })
-                    .id(tab_widget_id(tab_number, "webview-home")),
+                    .id(tab_widget_id!(tab_number, webview_home, webview_home_tab)),
                 spacer().grow_w(),
                 when(
                     move || private.get(),
                     move || {
                         label(res::str::private_badge())
                             .font(Font::Caption)
-                            .id(tab_widget_id(tab_number, "browser-private"))
+                            .id(tab_widget_id!(
+                                tab_number,
+                                browser_private,
+                                browser_private_tab
+                            ))
                     },
                 ),
                 when(
@@ -743,7 +767,11 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                                     WebRenderer::Servo
                                 });
                             })
-                            .id(tab_widget_id(tab_number, "webview-renderer"))
+                            .id(tab_widget_id!(
+                                tab_number,
+                                webview_renderer,
+                                webview_renderer_tab
+                            ))
                     },
                 ),
                 button(res::str::test_tools())
@@ -751,7 +779,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     .icon_only()
                     .compact()
                     .action(move || tools.set(!tools.get_untracked()))
-                    .id(tab_widget_id(tab_number, "webview-tools")),
+                    .id(tab_widget_id!(tab_number, webview_tools, webview_tools_tab)),
                 button(res::str::browser_settings())
                     .icon(Symbol::Settings)
                     .icon_only()
@@ -759,7 +787,11 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     .action(|| {
                         day::open_preferences();
                     })
-                    .id(tab_widget_id(tab_number, "webview-settings")),
+                    .id(tab_widget_id!(
+                        tab_number,
+                        webview_settings,
+                        webview_settings_tab
+                    )),
             ))
             .spacing(4.0)
             .align(VAlign::Center),
@@ -768,14 +800,18 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     .focused(address_focus)
                     .placeholder(res::str::address_hint())
                     .on_submit(move || browser.navigate())
-                    .id(tab_widget_id(tab_number, "webview-address"))
+                    .id(tab_widget_id!(
+                        tab_number,
+                        webview_address,
+                        webview_address_tab
+                    ))
                     .grow_w(),
                 button(res::str::go())
                     .icon(Symbol::Forward)
                     .icon_only()
                     .compact()
                     .action(move || browser.navigate())
-                    .id(tab_widget_id(tab_number, "webview-go")),
+                    .id(tab_widget_id!(tab_number, webview_go, webview_go_tab)),
                 button(res::str::open_external())
                     .image(res::vectors::open_external)
                     .icon_only()
@@ -785,7 +821,11 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                             || browser.location.get().starts_with("http://")
                     })
                     .action(move || open_url(&browser.location.get_untracked()))
-                    .id(tab_widget_id(tab_number, "webview-open-external")),
+                    .id(tab_widget_id!(
+                        tab_number,
+                        webview_open_external,
+                        webview_open_external_tab
+                    )),
                 button(move || {
                     if day::share_support() == Support::Native {
                         res::str::share().format()
@@ -798,7 +838,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                 .compact()
                 .enabled(move || browser.can_share())
                 .action(move || browser.share())
-                .id(tab_widget_id(tab_number, "webview-share")),
+                .id(tab_widget_id!(tab_number, webview_share, webview_share_tab)),
             ))
             .spacing(8.0)
             .align(VAlign::Center),
@@ -811,7 +851,11 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                 let (source, private, _, _, renderer) = key.clone();
                 if private && renderer.private_browsing_support() == Support::Unsupported {
                     return label(res::str::private_hint())
-                        .id(tab_widget_id(tab_number, "webview-unsupported"))
+                        .id(tab_widget_id!(
+                            tab_number,
+                            webview_unsupported,
+                            webview_unsupported_tab
+                        ))
                         .any();
                 }
                 let view = match source {
@@ -877,7 +921,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                             });
                         }
                     })
-                    .id(tab_widget_id(tab_number, "webview"))
+                    .id(tab_widget_id!(tab_number, webview, webview_tab))
                     .any()
             },
         )
@@ -893,19 +937,25 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
             })
             .single_line()
             .grow_w()
-            .id(tab_widget_id(tab_number, "webview-title")),
+            .id(tab_widget_id!(tab_number, webview_title, webview_title_tab)),
             when(
                 move || browser.navigation.get().loading,
                 move || {
-                    spinner()
-                        .frame(16.0, 16.0)
-                        .id(tab_widget_id(tab_number, "browser-loading"))
+                    spinner().frame(16.0, 16.0).id(tab_widget_id!(
+                        tab_number,
+                        browser_loading,
+                        browser_loading_tab
+                    ))
                 },
             ),
             label(move || browser.status.get())
                 .font(Font::Caption)
                 .single_line()
-                .id(tab_widget_id(tab_number, "browser-status")),
+                .id(tab_widget_id!(
+                    tab_number,
+                    browser_status,
+                    browser_status_tab
+                )),
         ))
         .spacing(8.0)
         .padding(Insets::symmetric(10.0, 6.0)),
@@ -916,15 +966,15 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     column((
                         labeled(
                             res::str::support_remote(),
-                            support_label(support(), "webview-support"),
+                            support_label(support(), day::id!(webview_support)),
                         ),
                         labeled(
                             res::str::support_inline(),
-                            support_label(inline_support(), "webview-inline-support"),
+                            support_label(inline_support(), day::id!(webview_inline_support)),
                         ),
                         labeled(
                             res::str::support_eval(),
-                            support_label(eval_support(), "webview-eval-support"),
+                            support_label(eval_support(), day::id!(webview_eval_support)),
                         ),
                     ))
                     .spacing(4.0),
@@ -937,7 +987,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     row((
                         text_field(script)
                             .placeholder(res::str::js_hint())
-                            .id(tab_widget_id(tab_number, "webview-js"))
+                            .id(tab_widget_id!(tab_number, webview_js, webview_js_tab))
                             .grow_w(),
                         button(res::str::js_run())
                             .action(move || {
@@ -950,13 +1000,21 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                                 });
                             })
                             .enabled(|| eval_support() == Support::Native)
-                            .id(tab_widget_id(tab_number, "webview-js-run")),
+                            .id(tab_widget_id!(
+                                tab_number,
+                                webview_js_run,
+                                webview_js_run_tab
+                            )),
                     ))
                     .spacing(8.0),
                     label(move || answer.get())
                         .font(Font::Footnote)
                         .single_line()
-                        .id(tab_widget_id(tab_number, "webview-js-result")),
+                        .id(tab_widget_id!(
+                            tab_number,
+                            webview_js_result,
+                            webview_js_result_tab
+                        )),
                     label(move || {
                         let route = browser.received.get();
                         if route.is_empty() {
@@ -967,7 +1025,11 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     })
                     .font(Font::Footnote)
                     .single_line()
-                    .id(tab_widget_id(tab_number, "webview-link")),
+                    .id(tab_widget_id!(
+                        tab_number,
+                        webview_link,
+                        webview_link_tab
+                    )),
                     row((
                         button(res::str::home_next())
                             .icon(Symbol::Forward)
@@ -990,7 +1052,11 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                                     }
                                 });
                             })
-                            .id(tab_widget_id(tab_number, "webview-next-page")),
+                            .id(tab_widget_id!(
+                                tab_number,
+                                webview_next_page,
+                                webview_next_page_tab
+                            )),
                         button(res::str::resource_demo())
                             .action(move || {
                                 browser.location.set(String::new());
@@ -1002,7 +1068,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                                     },
                                 );
                             })
-                            .id(tab_widget_id(tab_number, "resource-demo")),
+                            .id(tab_widget_id!(tab_number, resource_demo, resource_demo_tab)),
                     ))
                     .spacing(8.0),
                 ))
@@ -1072,14 +1138,14 @@ fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
             res::str::support_private(),
             support_label(
                 active_renderer().private_browsing_support(),
-                "webview-private-support",
+                day::id!(webview_private_support),
             ),
         ),
         labeled(
             res::str::support_profiles(),
             support_label(
                 active_renderer().profile_support(),
-                "webview-profile-support",
+                day::id!(webview_profile_support),
             ),
         ),
         label(res::str::private_hint()).font(Font::Footnote),
@@ -1122,7 +1188,7 @@ fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
     .spacing(12.0)
     .padding(20.0)
 }
-fn support_label(answer: Support, id: &'static str) -> impl Piece {
+fn support_label(answer: Support, id: day::ElementId) -> impl Piece {
     label(match answer {
         Support::Native => res::str::support_native(),
         Support::Emulated => res::str::support_emulated(),
@@ -1189,7 +1255,7 @@ fn resource_site(
     .stop(browser.stop)
     .reload(browser.reload)
     .force_reload(browser.force_reload)
-    .id(tab_widget_id(tab_number, "webview"))
+    .id(tab_widget_id!(tab_number, webview, webview_tab))
     .any()
 }
 

@@ -4,54 +4,54 @@
 name: renderer-comparison
 description: Compare identical bundled and provider pages in WebView and Servo.
 flow:
-  - tap: { id: webview-settings }
-  - select: { id: webview-default-renderer, index: 0 }
-  - toggle: { id: webview-incognito, value: false }
-  - toggle: { id: webview-native-tabs, value: false }
-  - tap: { id: webview-settings-done }
-  - tap: { id: webview-tools }
-  - toggle: { id: tab-controls, value: true }
-  - tap: { id: tab-new }
-  - assert_text: { id: webview-renderer-tab-2, key: renderer_webview }
-  - web_eval: { id: webview-tab-2, script: "navigator.userAgent.includes('Servo')", text: "false", timeout_secs: 90 }
-  - web_eval: { id: webview-tab-2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
-  - web_eval: { id: webview-tab-2, script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()", text: "yes" }
+  - tap: { id: webview_settings }
+  - select: { id: webview_default_renderer, index: 0 }
+  - toggle: { id: webview_incognito, value: false }
+  - toggle: { id: webview_native_tabs, value: false }
+  - tap: { id: webview_settings_done }
+  - tap: { id: webview_tools }
+  - toggle: { id: tab_controls, value: true }
+  - tap: { id: tab_new }
+  - assert_text: { id: webview_renderer_tab:2, key: renderer_webview }
+  - web_eval: { id: webview_tab:2, script: "navigator.userAgent.includes('Servo')", text: "false", timeout_secs: 90 }
+  - web_eval: { id: webview_tab:2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
+  - web_eval: { id: webview_tab:2, script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()", text: "yes" }
   - screenshot:
       name: renderer-bundled-webview
       title: { en: "WebView (native)" }
       caption: { en: "Bundled page" }
-  - tap: { id: webview-renderer-tab-2 }
-  - web_eval: { id: webview-tab-2, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
-  - web_eval: { id: webview-tab-2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
-  - web_eval: { id: webview-tab-2, script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()", text: "yes" }
+  - tap: { id: webview_renderer_tab:2 }
+  - web_eval: { id: webview_tab:2, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
+  - web_eval: { id: webview_tab:2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
+  - web_eval: { id: webview_tab:2, script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()", text: "yes" }
   - screenshot:
       name: renderer-bundled-servo
       title: { en: "Servo (experimental)" }
       caption: { en: "Bundled page" }
-  - tap: { id: webview-tools-tab-2 }
-  - tap: { id: resource-demo-tab-2 }
-  - web_eval: { id: webview-tab-2, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
-  - web_eval: { id: webview-tab-2, script: "document.documentElement.dataset.resourceScript", text: "yes", timeout_secs: 30 }
-  - web_eval: { id: webview-tab-2, script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()", text: "yes" }
-  - web_eval: { id: webview-tab-2, script: "document.getElementById('resource-child').contentDocument.body.dataset.relative", text: "child" }
+  - tap: { id: webview_tools_tab:2 }
+  - tap: { id: resource_demo_tab:2 }
+  - web_eval: { id: webview_tab:2, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
+  - web_eval: { id: webview_tab:2, script: "document.documentElement.dataset.resourceScript", text: "yes", timeout_secs: 30 }
+  - web_eval: { id: webview_tab:2, script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()", text: "yes" }
+  - web_eval: { id: webview_tab:2, script: "document.getElementById('resource-child').contentDocument.body.dataset.relative", text: "child" }
   - screenshot:
       name: renderer-resources-servo
       title: { en: "Servo (experimental)" }
       caption: { en: "Resource provider page" }
-  - tap: { id: webview-renderer-tab-2 }
-  - web_eval: { id: webview-tab-2, script: "navigator.userAgent.includes('Servo')", text: "false", timeout_secs: 90 }
-  - web_eval: { id: webview-tab-2, script: "document.documentElement.dataset.resourceScript", text: "yes", timeout_secs: 30 }
-  - web_eval: { id: webview-tab-2, script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()", text: "yes" }
-  - web_eval: { id: webview-tab-2, script: "document.getElementById('resource-child').contentDocument.body.dataset.relative", text: "child" }
+  - tap: { id: webview_renderer_tab:2 }
+  - web_eval: { id: webview_tab:2, script: "navigator.userAgent.includes('Servo')", text: "false", timeout_secs: 90 }
+  - web_eval: { id: webview_tab:2, script: "document.documentElement.dataset.resourceScript", text: "yes", timeout_secs: 30 }
+  - web_eval: { id: webview_tab:2, script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()", text: "yes" }
+  - web_eval: { id: webview_tab:2, script: "document.getElementById('resource-child').contentDocument.body.dataset.relative", text: "child" }
   - screenshot:
       name: renderer-resources-webview
       title: { en: "WebView (native)" }
       caption: { en: "Resource provider page" }
   # Synthetic paint fixtures: verify pixels as well as the JavaScript engine.
-  - web_eval: { id: webview-tab-2, script: "document.body.style.background = '#00ff00'; 'painted'", text: "painted" }
+  - web_eval: { id: webview_tab:2, script: "document.body.style.background = '#00ff00'; 'painted'", text: "painted" }
   - screenshot: { name: renderer-webview-proof }
-  - tap: { id: webview-renderer-tab-2 }
-  - web_eval: { id: webview-tab-2, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
-  - web_eval: { id: webview-tab-2, script: "document.body.style.background = '#00ff00'; 'painted'", text: "painted", timeout_secs: 30 }
+  - tap: { id: webview_renderer_tab:2 }
+  - web_eval: { id: webview_tab:2, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
+  - web_eval: { id: webview_tab:2, script: "document.body.style.background = '#00ff00'; 'painted'", text: "painted", timeout_secs: 30 }
   - screenshot: { name: renderer-servo-proof }
   - assert_no_placeholders: {}

@@ -3,45 +3,45 @@
 name: servo-remote
 description: Render daybrite.dev with both engines in one process.
 flow:
-  - tap: { id: webview-settings }
-  - select: { id: webview-default-renderer, index: 0 }
-  - toggle: { id: webview-incognito, value: false }
-  - toggle: { id: webview-native-tabs, value: false }
-  - tap: { id: webview-settings-done }
-  - tap: { id: webview-tools }
-  - toggle: { id: tab-controls, value: true }
-  - tap: { id: tab-new }
+  - tap: { id: webview_settings }
+  - select: { id: webview_default_renderer, index: 0 }
+  - toggle: { id: webview_incognito, value: false }
+  - toggle: { id: webview_native_tabs, value: false }
+  - tap: { id: webview_settings_done }
+  - tap: { id: webview_tools }
+  - toggle: { id: tab_controls, value: true }
+  - tap: { id: tab_new }
   # Finish the initial bundled load before editing the address; its load event updates it.
-  - web_eval: { id: webview-tab-2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
+  - web_eval: { id: webview_tab:2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
   - wait_idle: {}
-  - input: { id: webview-address-tab-2, text: "https://daybrite.dev" }
-  - tap: { id: webview-go-tab-2 }
-  - web_eval: { id: webview-tab-2, script: "location.origin + ' ' + document.readyState", text: "https://daybrite.dev complete", timeout_secs: 90 }
-  - web_eval: { id: webview-tab-2, script: "window.rendererFixture = 'native'; navigator.userAgent.includes('Servo')", text: "false" }
+  - input: { id: webview_address_tab:2, text: "https://daybrite.dev" }
+  - tap: { id: webview_go_tab:2 }
+  - web_eval: { id: webview_tab:2, script: "location.origin + ' ' + document.readyState", text: "https://daybrite.dev complete", timeout_secs: 90 }
+  - web_eval: { id: webview_tab:2, script: "window.rendererFixture = 'native'; navigator.userAgent.includes('Servo')", text: "false" }
   - screenshot: { name: daybrite-webview, title: "daybrite.dev in WebView" }
-  - tap: { id: tab-new-tab-2 }
-  - tap: { id: webview-renderer-tab-3 }
-  - web_eval: { id: webview-tab-3, script: "document.readyState", text: "complete", timeout_secs: 30 }
-  - input: { id: webview-address-tab-3, text: "https://daybrite.dev" }
-  - tap: { id: webview-go-tab-3 }
-  - web_eval: { id: webview-tab-3, script: "location.origin + ' ' + document.readyState", text: "https://daybrite.dev complete", timeout_secs: 90 }
-  - web_eval: { id: webview-tab-3, script: "navigator.userAgent.includes('Servo') && document.body.innerText.length > 100", text: "true" }
+  - tap: { id: tab_new_tab:2 }
+  - tap: { id: webview_renderer_tab:3 }
+  - web_eval: { id: webview_tab:3, script: "document.readyState", text: "complete", timeout_secs: 30 }
+  - input: { id: webview_address_tab:3, text: "https://daybrite.dev" }
+  - tap: { id: webview_go_tab:3 }
+  - web_eval: { id: webview_tab:3, script: "location.origin + ' ' + document.readyState", text: "https://daybrite.dev complete", timeout_secs: 90 }
+  - web_eval: { id: webview_tab:3, script: "navigator.userAgent.includes('Servo') && document.body.innerText.length > 100", text: "true" }
   - screenshot: { name: daybrite-servo, title: "daybrite.dev in Servo" }
-  - tap: { id: tab-previous-tab-3 }
-  - web_eval: { id: webview-tab-2, script: "window.rendererFixture", text: "native" }
-  - tap: { id: tab-next-tab-2 }
-  - tap: { id: webview-settings-tab-3 }
-  - select: { id: webview-default-renderer, index: 1 }
-  - tap: { id: webview-settings-done }
-  - tap: { id: tab-new-tab-3 }
-  - assert_text: { id: webview-renderer-tab-4, key: renderer_servo }
-  - web_eval: { id: webview-tab-4, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 30 }
-  - tap: { id: webview-settings-tab-4 }
-  - select: { id: webview-default-renderer, index: 0 }
-  - toggle: { id: webview-native-tabs, value: true }
-  - tap: { id: webview-settings-done }
-  - tap: { id: tab-close-tab-4 }
-  - web_eval: { id: webview-tab-3, script: "location.origin + ' ' + navigator.userAgent.includes('Servo')", text: "https://daybrite.dev true" }
-  - tap: { id: tab-previous-tab-3 }
-  - web_eval: { id: webview-tab-2, script: "window.rendererFixture", text: "native" }
+  - tap: { id: tab_previous_tab:3 }
+  - web_eval: { id: webview_tab:2, script: "window.rendererFixture", text: "native" }
+  - tap: { id: tab_next_tab:2 }
+  - tap: { id: webview_settings_tab:3 }
+  - select: { id: webview_default_renderer, index: 1 }
+  - tap: { id: webview_settings_done }
+  - tap: { id: tab_new_tab:3 }
+  - assert_text: { id: webview_renderer_tab:4, key: renderer_servo }
+  - web_eval: { id: webview_tab:4, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 30 }
+  - tap: { id: webview_settings_tab:4 }
+  - select: { id: webview_default_renderer, index: 0 }
+  - toggle: { id: webview_native_tabs, value: true }
+  - tap: { id: webview_settings_done }
+  - tap: { id: tab_close_tab:4 }
+  - web_eval: { id: webview_tab:3, script: "location.origin + ' ' + navigator.userAgent.includes('Servo')", text: "https://daybrite.dev true" }
+  - tap: { id: tab_previous_tab:3 }
+  - web_eval: { id: webview_tab:2, script: "window.rendererFixture", text: "native" }
   - assert_no_placeholders: {}

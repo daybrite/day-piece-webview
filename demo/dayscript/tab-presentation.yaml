@@ -4,22 +4,22 @@ description: Preserve browser pages across native and emulated tabs and a separa
 flow:
   - web_eval: { id: webview, script: "window.tabPresentationFixture = 321", text: "321", timeout_secs: 30 }
   # The tab buttons are a testing aid, hidden until the drawer's switch shows them.
-  - tap: { id: webview-tools }
+  - tap: { id: webview_tools }
   - toggle: { id: tab_controls, value: true }
-  - tap: { id: tab-new }
-  - web_eval: { id: webview-tab-2, script: "typeof window.tabPresentationFixture", text: "undefined", timeout_secs: 30 }
-  - tap: { id: tab-move-before-tab-2 }
-  - tap: { id: tab-next-tab-2 }
+  - tap: { id: tab_new }
+  - web_eval: { id: webview_tab:2, script: "typeof window.tabPresentationFixture", text: "undefined", timeout_secs: 30 }
+  - tap: { id: tab_move_before_tab:2 }
+  - tap: { id: tab_next_tab:2 }
   - web_eval: { id: webview, script: "window.tabPresentationFixture", text: "321" }
-  - tap: { id: webview-settings }
+  - tap: { id: webview_settings }
   - wait_for: { id: webview_native_tabs }
   - toggle: { id: webview_native_tabs, value: false }
   - web_eval: { id: webview, script: "window.tabPresentationFixture", text: "321" }
   - toggle: { id: webview_native_tabs, value: true }
   - web_eval: { id: webview, script: "window.tabPresentationFixture", text: "321" }
   - tap: { id: webview_settings_done }
-  - tap: { id: tab-close }
-  - assert_visible: { id: webview-tab-2 }
-  - tap: { id: tab-close-tab-2 }
-  - wait_for: { id: webview-tab-3 }
+  - tap: { id: tab_close }
+  - assert_visible: { id: webview_tab:2 }
+  - tap: { id: tab_close_tab:2 }
+  - wait_for: { id: webview_tab:3 }
   - assert_no_placeholders: {}

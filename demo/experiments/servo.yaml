@@ -4,39 +4,39 @@
 name: servo
 description: Compare independent WebView and Servo contexts, then replace and release Servo views.
 flow:
-  - tap: { id: webview-settings }
-  - select: { id: webview-default-renderer, index: 0 }
-  - toggle: { id: webview-incognito, value: false }
-  - toggle: { id: webview-native-tabs, value: false }
-  - tap: { id: webview-settings-done }
-  - tap: { id: webview-tools }
-  - toggle: { id: tab-controls, value: true }
-  - tap: { id: tab-new }
-  - assert_text: { id: webview-renderer-tab-2, key: renderer_webview }
-  - web_eval: { id: webview-tab-2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
-  - web_eval: { id: webview-tab-2, script: "window.rendererFixture = 123", text: "123", timeout_secs: 60 }
-  - tap: { id: tab-new-tab-2 }
-  - tap: { id: webview-renderer-tab-3 }
-  - assert_text: { id: webview-renderer-tab-3, key: renderer_servo }
-  - web_eval: { id: webview-tab-3, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
-  - web_eval: { id: webview-tab-3, script: "typeof window.rendererFixture", text: "undefined" }
-  - web_eval: { id: webview-tab-3, script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()", text: "yes" }
+  - tap: { id: webview_settings }
+  - select: { id: webview_default_renderer, index: 0 }
+  - toggle: { id: webview_incognito, value: false }
+  - toggle: { id: webview_native_tabs, value: false }
+  - tap: { id: webview_settings_done }
+  - tap: { id: webview_tools }
+  - toggle: { id: tab_controls, value: true }
+  - tap: { id: tab_new }
+  - assert_text: { id: webview_renderer_tab:2, key: renderer_webview }
+  - web_eval: { id: webview_tab:2, script: "document.title", text: "Bundled site", timeout_secs: 30 }
+  - web_eval: { id: webview_tab:2, script: "window.rendererFixture = 123", text: "123", timeout_secs: 60 }
+  - tap: { id: tab_new_tab:2 }
+  - tap: { id: webview_renderer_tab:3 }
+  - assert_text: { id: webview_renderer_tab:3, key: renderer_servo }
+  - web_eval: { id: webview_tab:3, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
+  - web_eval: { id: webview_tab:3, script: "typeof window.rendererFixture", text: "undefined" }
+  - web_eval: { id: webview_tab:3, script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()", text: "yes" }
   - screenshot: { name: servo-bundled, title: "Servo bundled page" }
-  - tap: { id: tab-previous-tab-3 }
-  - web_eval: { id: webview-tab-2, script: "window.rendererFixture", text: "123" }
-  - tap: { id: tab-next-tab-2 }
-  - tap: { id: webview-renderer-tab-3 }
-  - web_eval: { id: webview-tab-3, script: "navigator.userAgent.includes('Servo')", text: "false", timeout_secs: 60 }
-  - tap: { id: webview-renderer-tab-3 }
-  - web_eval: { id: webview-tab-3, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 60 }
-  - tap: { id: webview-tools-tab-3 }
-  - tap: { id: resource-demo-tab-3 }
-  - web_eval: { id: webview-tab-3, script: "document.documentElement.dataset.resourceScript", text: "yes", timeout_secs: 60 }
-  - web_eval: { id: webview-tab-3, script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()", text: "yes" }
-  - web_eval: { id: webview-tab-3, script: "document.getElementById('resource-child').contentDocument.body.dataset.relative", text: "child" }
-  - tap: { id: webview-reload-tab-3 }
-  - web_eval: { id: webview-tab-3, script: "document.documentElement.dataset.resourceScript", text: "yes", timeout_secs: 30 }
+  - tap: { id: tab_previous_tab:3 }
+  - web_eval: { id: webview_tab:2, script: "window.rendererFixture", text: "123" }
+  - tap: { id: tab_next_tab:2 }
+  - tap: { id: webview_renderer_tab:3 }
+  - web_eval: { id: webview_tab:3, script: "navigator.userAgent.includes('Servo')", text: "false", timeout_secs: 60 }
+  - tap: { id: webview_renderer_tab:3 }
+  - web_eval: { id: webview_tab:3, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 60 }
+  - tap: { id: webview_tools_tab:3 }
+  - tap: { id: resource_demo_tab:3 }
+  - web_eval: { id: webview_tab:3, script: "document.documentElement.dataset.resourceScript", text: "yes", timeout_secs: 60 }
+  - web_eval: { id: webview_tab:3, script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()", text: "yes" }
+  - web_eval: { id: webview_tab:3, script: "document.getElementById('resource-child').contentDocument.body.dataset.relative", text: "child" }
+  - tap: { id: webview_reload_tab:3 }
+  - web_eval: { id: webview_tab:3, script: "document.documentElement.dataset.resourceScript", text: "yes", timeout_secs: 30 }
   - screenshot: { name: servo-resources, title: "Servo resource provider" }
-  - tap: { id: tab-close-tab-3 }
-  - web_eval: { id: webview-tab-2, script: "window.rendererFixture", text: "123" }
+  - tap: { id: tab_close_tab:3 }
+  - web_eval: { id: webview_tab:2, script: "window.rendererFixture", text: "123" }
   - assert_no_placeholders: {}
