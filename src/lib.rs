@@ -40,6 +40,9 @@ mod resources_apple;
 #[cfg(all(feature = "arkui", target_env = "ohos"))]
 mod resources_arkui;
 
+#[cfg(any(test, all(feature = "arkui", target_env = "ohos")))]
+mod resource_content_type;
+
 /// Ordinary documents opt in through `on_external_link`. Loading a document, reloading,
 /// fragment navigation, and embedded frames must not be mistaken for an outbound click.
 #[cfg(any(

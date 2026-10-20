@@ -1145,14 +1145,16 @@ fn resource_site(
     let title = res::str::resource_demo().format();
     let caption = res::str::resource_caption().format();
     let html = format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><title>{title}</title><link rel="stylesheet" href="../styles/main.css"></head><body><h1>{title}</h1><p>{caption}</p><img id="resource-image" src="../images/orb.svg"><iframe id="resource-child" src="child.html"></iframe><script src="../scripts/main.js"></script></body></html>"#
+        r#"<!doctype html><html><head><meta charset="utf-8"><title>{title}</title><link rel="stylesheet" href="../styles/main.css"></head><body><h1>{title}</h1><p>{caption}</p><img id="resource-image" src="../images/orb.svg"><iframe id="resource-child" src="child.html"></iframe><iframe id="resource-charset" src="charset.html" hidden></iframe><script src="../scripts/main.js"></script></body></html>"#
     );
     let provider = ResourceProvider::with_site(res::assets::site, move |request| {
         match request.path.as_str() {
-        // Android must split an HTTP-style content type before calling WebResourceResponse.
+        // Native resource APIs must split HTTP-style content types into MIME and charset.
         // This exercises the same spelling as Day-News' generated reader document.
-        "pages/index.html" => ResourceResponse::new(if cfg!(feature = "mdc") { "text/html; charset=utf-8" } else { "text/html" },html.clone().into_bytes()),
+        "pages/index.html" => ResourceResponse::new(if cfg!(any(feature = "mdc", feature = "arkui")) { "text/html; charset=utf-8" } else { "text/html" },html.clone().into_bytes()),
         "pages/child.html" => ResourceResponse::new("text/html",b"<!doctype html><html><head><link rel=stylesheet href=../styles/main.css></head><body data-relative=child></body></html>".to_vec()),
+        // No meta charset: decoding must use the response's declared encoding.
+        "pages/charset.html" => ResourceResponse::new("text/html; charset=\"windows-1252\"", b"<!doctype html><html><body>Caf\xe9 r\xe9sum\xe9 \x80</body></html>".to_vec()),
         "styles/main.css" => ResourceResponse::new("text/css",b"@import '../__day_assets/css/style.css';@import './colors.css';body{font:18px system-ui;padding:24px;background:#182236;color:white}img{width:120px;height:120px}iframe{border:0;width:120px;height:120px}".to_vec()),
         "styles/colors.css" => ResourceResponse::new("text/css",b":root{--resource-loaded:yes}body{background-image:url('../images/orb.svg');background-repeat:no-repeat;background-position:right bottom}".to_vec()),
         "images/orb.svg" => ResourceResponse::new("image/svg+xml",br##"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><defs><radialGradient id="g" cx="30%" cy="25%"><stop stop-color="#fff"/><stop offset=".4" stop-color="#30dcc5"/><stop offset="1" stop-color="#176caa"/></radialGradient></defs><circle cx="60" cy="60" r="55" fill="url(#g)"/></svg>"##.to_vec()),

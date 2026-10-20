@@ -28,6 +28,12 @@ fn report_view(html: String) -> WebView {
 }
 ```
 
+`ResourceResponse::mime` also accepts a Content-Type with parameters, such as
+`text/html; charset=utf-8`. Android and HarmonyOS pass the MIME type and charset to separate
+native fields; the response body stays byte-for-byte unchanged. An explicit charset is
+required when the document's encoding cannot be inferred from its own metadata. The demo's
+resource tests cover HTML parsing and a Windows-1252 child document without a meta charset.
+
 Generate app-owned text from `res::str` accessors on the UI thread before calling the helper.
 Use an HTML template engine that escapes text and attribute values. Publication text and
 user-entered content are data; neither should be interpreted as markup without validation.

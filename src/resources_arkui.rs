@@ -40,6 +40,7 @@ unsafe extern "C" {
     fn OH_ArkWeb_DestroyResponse(p: P);
     fn OH_ArkWebResponse_SetStatus(p: P, status: i32) -> i32;
     fn OH_ArkWebResponse_SetMimeType(p: P, s: *const c_char) -> i32;
+    fn OH_ArkWebResponse_SetCharset(p: P, s: *const c_char) -> i32;
     fn OH_ArkWebResponse_SetHeaderByName(
         p: P,
         k: *const c_char,
@@ -123,7 +124,19 @@ unsafe extern "C" fn start(scheme: P, request: P, handler: P, intercept: *mut bo
             let mut response = std::ptr::null_mut();
             OH_ArkWeb_CreateResponse(&mut response);
             OH_ArkWebResponse_SetStatus(response, r.status as i32);
-            OH_ArkWebResponse_SetMimeType(response, CString::new(r.mime).unwrap().as_ptr());
+            // ArkWeb expects a bare MIME type, not an HTTP Content-Type value. Passing
+            // "text/html; charset=utf-8" here makes the reader display literal HTML.
+            let (mime, charset) = super::resource_content_type::parse(&r.mime);
+            OH_ArkWebResponse_SetMimeType(response, CString::new(mime).unwrap().as_ptr());
+            if let Some(charset) = charset {
+                OH_ArkWebResponse_SetCharset(response, CString::new(charset).unwrap().as_ptr());
+            }
+            OH_ArkWebResponse_SetHeaderByName(
+                response,
+                c"Content-Type".as_ptr(),
+                CString::new(r.mime).unwrap().as_ptr(),
+                true,
+            );
             for (k, v) in r.headers {
                 OH_ArkWebResponse_SetHeaderByName(
                     response,

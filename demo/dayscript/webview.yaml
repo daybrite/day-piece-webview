@@ -95,13 +95,23 @@ flow:
       text: "painted"
   - screenshot: { name: webview-render-proof, title: "Browser paint verification" }
 
-  # Dynamic resources: relative HTML, CSS imports, JavaScript, images and a nested document.
+  # Dynamic resources: HTTP-style content types, relative assets, and nested documents.
   - tap: { id: resource-demo }
   - web_eval:
       id: webview
       script: "document.documentElement.dataset.resourceScript"
       text: "yes"
       timeout_secs: 30
+  # HTML must be parsed, and declared legacy encodings must decode the original bytes.
+  - web_eval:
+      id: webview
+      script: "document.contentType"
+      text: "text/html"
+  - web_eval:
+      id: webview
+      script: "document.getElementById('resource-charset').contentDocument.body.textContent"
+      text: "Café résumé €"
+      only_on: [mdc, arkui]
   - web_eval:
       id: webview
       script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()"
