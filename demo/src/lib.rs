@@ -355,7 +355,7 @@ pub fn root() -> impl Piece {
     .native(move || native_tabs.get())
     .on_new(move || tabs.open(String::new(), true))
     .on_close(move |key| tabs.close(&key))
-    .id("browser-tabs")
+    .id(day::id!(browser_tabs))
     .grow(),))
 }
 fn tab_controls(tabs: BrowserTabs, tab_number: u64) -> impl Piece {
@@ -421,11 +421,11 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
             vec![
                 menu_item(res::str::new_tab())
                     .key("t")
-                    .id("browser-new-tab")
+                    .id(day::id!(browser_new_tab))
                     .action(move || tabs.open(String::new(), true)),
                 menu_item(res::str::close_tab())
                     .key("w")
-                    .id("browser-close-tab")
+                    .id(day::id!(browser_close_tab))
                     .action(move || tabs.close_selected()),
                 menu_item(res::str::reopen_tab())
                     .shortcut(Shortcut::primary("t").shift())
@@ -437,7 +437,7 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
                 } else {
                     res::str::copy_link()
                 })
-                .id("browser-share")
+                .id(day::id!(browser_share))
                 .enabled(browser.can_share())
                 .action(move || browser.share()),
             ],
@@ -458,7 +458,7 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
                 menu_item(res::str::duplicate_tab()).action(move || tabs.duplicate()),
                 menu_separator(),
                 menu_item(res::str::show_tab_controls())
-                    .id("browser-tab-controls")
+                    .id(day::id!(browser_tab_controls))
                     .checked(tabs.controls.get())
                     .action(move || tabs.controls.set(!tabs.controls.get_untracked())),
             ],
@@ -467,12 +467,12 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
             res::str::menu_go().format(),
             vec![
                 menu_item(res::str::back())
-                    .id("browser-back")
+                    .id(day::id!(browser_back))
                     .key("[")
                     .enabled(support() == Support::Native && browser.navigation.get().can_go_back)
                     .action(move || browser.back.notify()),
                 menu_item(res::str::forward())
-                    .id("browser-forward")
+                    .id(day::id!(browser_forward))
                     .key("]")
                     .enabled(
                         support() == Support::Native && browser.navigation.get().can_go_forward,
@@ -480,7 +480,7 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
                     .action(move || browser.forward.notify()),
                 menu_separator(),
                 menu_item(res::str::home())
-                    .id("browser-home")
+                    .id(day::id!(browser_home))
                     .shortcut(Shortcut::plain("Home").alt())
                     .action(move || {
                         browser.home();
@@ -492,20 +492,20 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
             res::str::menu_browser().format(),
             vec![
                 menu_item(res::str::open_location())
-                    .id("browser-open-location")
+                    .id(day::id!(browser_open_location))
                     .key("l")
                     .action(move || address_focus.set(true)),
                 menu_item(res::str::reload())
-                    .id("browser-reload")
+                    .id(day::id!(browser_reload))
                     .key("r")
                     .action(move || browser.reload.notify()),
                 menu_item(res::str::force_reload())
-                    .id("browser-force-reload")
+                    .id(day::id!(browser_force_reload))
                     .shortcut(Shortcut::primary("r").shift())
                     .enabled(day_piece_webview::force_reload_support() == Support::Native)
                     .action(move || browser.force_reload.notify()),
                 menu_item(res::str::stop())
-                    .id("browser-stop")
+                    .id(day::id!(browser_stop))
                     .shortcut(Shortcut::plain("Escape"))
                     .enabled(
                         renderer.get() == WebRenderer::WebView
@@ -515,11 +515,11 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
                     .action(move || browser.stop.notify()),
                 menu_separator(),
                 menu_item(res::str::test_tools())
-                    .id("browser-tools")
+                    .id(day::id!(browser_tools))
                     .checked(tools.get())
                     .action(move || tools.set(!tools.get_untracked())),
                 menu_item(res::str::browser_settings())
-                    .id("browser-settings")
+                    .id(day::id!(browser_settings))
                     .key(",")
                     .action(|| {
                         day::open_preferences();
@@ -932,7 +932,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     // walkthroughs have no menu bar to reach it through.
                     labeled(
                         res::str::show_tab_controls(),
-                        toggle(tabs.controls).id("tab-controls"),
+                        toggle(tabs.controls).id(day::id!(tab_controls)),
                     ),
                     row((
                         text_field(script)
@@ -1054,19 +1054,19 @@ fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
                 ],
             )
             .enabled(WebRenderer::Servo.available())
-            .id("webview-default-renderer"),
+            .id(day::id!(webview_default_renderer)),
         ),
         label(res::str::renderer_hint()).font(Font::Footnote),
         labeled(
             res::str::native_tabs(),
-            toggle(native_tabs).id("webview-native-tabs"),
+            toggle(native_tabs).id(day::id!(webview_native_tabs)),
         ),
         label(res::str::native_tabs_hint()).font(Font::Footnote),
         labeled(
             res::str::incognito_mode(),
             toggle(private)
                 .enabled(move || private.get() || active_renderer() == WebRenderer::WebView)
-                .id("webview-incognito"),
+                .id(day::id!(webview_incognito)),
         ),
         labeled(
             res::str::support_private(),
@@ -1107,17 +1107,17 @@ fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
                     && tabs.active().is_some()
                     && active_renderer().clear_data_support() == Support::Native
             })
-            .id("webview-clear-data"),
+            .id(day::id!(webview_clear_data)),
         label(move || result.get())
             .font(Font::Footnote)
-            .id("webview-data-result"),
+            .id(day::id!(webview_data_result)),
         button(res::str::settings_done())
             .action(move || {
                 if let Some(window) = &window {
                     window.close();
                 }
             })
-            .id("webview-settings-done"),
+            .id(day::id!(webview_settings_done)),
     ))
     .spacing(12.0)
     .padding(20.0)

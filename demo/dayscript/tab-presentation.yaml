@@ -5,19 +5,19 @@ flow:
   - web_eval: { id: webview, script: "window.tabPresentationFixture = 321", text: "321", timeout_secs: 30 }
   # The tab buttons are a testing aid, hidden until the drawer's switch shows them.
   - tap: { id: webview-tools }
-  - toggle: { id: tab-controls, value: true }
+  - toggle: { id: tab_controls, value: true }
   - tap: { id: tab-new }
   - web_eval: { id: webview-tab-2, script: "typeof window.tabPresentationFixture", text: "undefined", timeout_secs: 30 }
   - tap: { id: tab-move-before-tab-2 }
   - tap: { id: tab-next-tab-2 }
   - web_eval: { id: webview, script: "window.tabPresentationFixture", text: "321" }
   - tap: { id: webview-settings }
-  - wait_for: { id: webview-native-tabs }
-  - toggle: { id: webview-native-tabs, value: false }
+  - wait_for: { id: webview_native_tabs }
+  - toggle: { id: webview_native_tabs, value: false }
   - web_eval: { id: webview, script: "window.tabPresentationFixture", text: "321" }
-  - toggle: { id: webview-native-tabs, value: true }
+  - toggle: { id: webview_native_tabs, value: true }
   - web_eval: { id: webview, script: "window.tabPresentationFixture", text: "321" }
-  - tap: { id: webview-settings-done }
+  - tap: { id: webview_settings_done }
   - tap: { id: tab-close }
   - assert_visible: { id: webview-tab-2 }
   - tap: { id: tab-close-tab-2 }

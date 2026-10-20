@@ -21,7 +21,7 @@ flow:
   - wait_idle: {}
   - tap: { id: webview-tools }
   - wait_for: { id: webview-support }
-  - assert_visible: { id: webview-title }
+  - assert_visible: { id: webview_title }
   # The support rows are the piece's own answers for this target. Remote browsing on web-dom is
   # an <iframe>, which the browser keeps from reporting history or its URL, so it reads Emulated.
   - assert_text: { id: webview-support, key: support_native, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
@@ -51,17 +51,17 @@ flow:
   # through a synthetic JS click without user activation, so that is not a browser-history test.
   - tap: { id: webview-next-page, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
   - web_eval: { id: webview, script: "document.title", text: "A second local page", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
-  - tap: { id: webview-back, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - tap: { id: webview_back, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
   - web_eval: { id: webview, script: "document.title", text: "Bundled site", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
-  - tap: { id: webview-forward, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - tap: { id: webview_forward, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
   - web_eval: { id: webview, script: "document.title", text: "A second local page", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
-  - tap: { id: webview-back, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - tap: { id: webview_back, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
   - web_eval: { id: webview, script: "document.title", text: "Bundled site", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
 
   # The console: the page's answer comes back as JSON, so a string arrives quoted.
-  - input: { id: webview-js, text: "document.title", only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
-  - tap: { id: webview-js-run, only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
-  - assert_text: { id: webview-js-result, text: '"Bundled site"', only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
+  - input: { id: webview_js, text: "document.title", only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
+  - tap: { id: webview_js_run, only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
+  - assert_text: { id: webview_js_result, text: '"Bundled site"', only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
 
   # A webviewdemo:// link leaves the site, so the view cancels it and the link policy hands the
   # route to the app, which records it and keeps the system browser closed.
@@ -79,7 +79,7 @@ flow:
       script: "window.dayDemoMarker = 1"
       text: "1"
       only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
-  - tap: { id: webview-reload }
+  - tap: { id: webview_reload }
   - web_eval:
       id: webview
       script: "typeof window.dayDemoMarker + ':' + document.getElementById('script-status').textContent"
@@ -119,7 +119,7 @@ flow:
       script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()"
       text: "yes"
   - screenshot: { name: resource-provider, title: "Resources served by the application" }
-  - tap: { id: webview-reload }
+  - tap: { id: webview_reload }
   - web_eval:
       id: webview
       script: "document.documentElement.dataset.resourceScript"
@@ -132,10 +132,10 @@ flow:
 
   # Address submission and the Home affordance work without an external network.
   - input: { id: webview-address, text: 'about:blank' }
-  - tap: { id: webview-go }
+  - tap: { id: webview_go }
   - web_eval: { id: webview, script: 'location.href', text: 'about:blank' }
   - input: { id: webview-address, text: 'javascript:alert(1)' }
-  - tap: { id: webview-go }
+  - tap: { id: webview_go }
   - assert_text: { id: browser-status, key: address_invalid }
   - tap: { id: webview-home }
   - web_eval: { id: webview, script: "document.getElementById('script-status').textContent", text: 'The bundled script ran.' }
@@ -143,10 +143,10 @@ flow:
   - screenshot: browser-home
 
   # Desktop commands exercise the same browser operations through the installed menu.
-  - menu: { id: browser-open-location, only_on: [appkit, gtk, qt, xaml, dom] }
+  - menu: { id: browser_open_location, only_on: [appkit, gtk, qt, xaml, dom] }
   - web_eval: { id: webview, script: 'window.dayDemoMenuMarker = 1', text: '1', only_on: [appkit, gtk, qt, xaml, dom] }
-  - menu: { id: browser-reload, only_on: [appkit, gtk, qt, xaml, dom] }
+  - menu: { id: browser_reload, only_on: [appkit, gtk, qt, xaml, dom] }
   - web_eval: { id: webview, script: 'typeof window.dayDemoMenuMarker', text: 'undefined', only_on: [appkit, gtk, qt, xaml, dom] }
   - web_eval: { id: webview, script: 'window.dayDemoForceMarker = 1', text: '1', only_on: [appkit, gtk, qt, xaml] }
-  - menu: { id: browser-force-reload, only_on: [appkit, gtk, qt, xaml] }
+  - menu: { id: browser_force_reload, only_on: [appkit, gtk, qt, xaml] }
   - web_eval: { id: webview, script: 'typeof window.dayDemoForceMarker', text: 'undefined', only_on: [appkit, gtk, qt, xaml] }
