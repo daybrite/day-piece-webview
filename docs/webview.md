@@ -248,7 +248,9 @@ profile choice to newly opened tabs and are excluded from Reopen Closed Tab.
 
 `WebView::on_new_tab(foreground_label, background_label, callback)` installs an
 application callback receiving `NewTabRequest { url, background }`. Both menu
-labels come from the application's generated localization accessors. This event
+labels take what `label` takes (a string, a `LocalizedText` from the application's
+generated accessors, a signal or a closure) and are resolved when the piece is
+built. This event
 is separate from `on_external_link`: a new-tab request must not replace the
 originating document. The app owns creating and selecting the new tab.
 

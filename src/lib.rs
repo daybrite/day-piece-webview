@@ -23,7 +23,8 @@ use std::rc::Rc;
 use std::task::Poll;
 
 use day_core::{BuildCx, Flex, Piece, RNode};
-use day_reactive::{Signal, Trigger, watch};
+use day_pieces::{Decorated, IntoText};
+use day_reactive::{AnyBinding, Binding, Signal, Trigger, watch};
 use day_spec::Event;
 
 pub mod renderer;
@@ -974,7 +975,7 @@ pub struct WebView {
     renderer: WebRenderer,
     profile: WebProfile,
     resources: Option<ResourceProvider>,
-    url: Signal<String>,
+    url: AnyBinding<String>,
     go: Option<Trigger>,
     back: Option<Trigger>,
     forward: Option<Trigger>,
@@ -994,7 +995,7 @@ pub struct WebView {
 
 /// `web_view(url)`: a native web view showing `url`. The initial value loads on creation; call
 /// `.go(trigger)` and fire the trigger to (re)load whatever `url` currently holds.
-pub fn web_view(url: Signal<String>) -> WebView {
+pub fn web_view(url: impl Binding<String>) -> WebView {
     // Self-register the web renderer. wasm has no link-time renderer slice, and a constructor is
     // the earliest point the piece is known to be in play, always before its node is realized.
     #[cfg(all(feature = "dom", target_arch = "wasm32"))]
@@ -1005,7 +1006,7 @@ pub fn web_view(url: Signal<String>) -> WebView {
     WebView {
         renderer: WebRenderer::default(),
         profile: WebProfile::default(),
-        url,
+        url: AnyBinding::new(url),
         go: None,
         back: None,
         forward: None,
@@ -1047,6 +1048,7 @@ pub fn web_view_resources(provider: ResourceProvider, page: &str) -> WebView {
     view
 }
 
+#[day_pieces::builder(WebViewBuilder)]
 impl WebView {
     /// Select an engine for this context, failing instead of falling back silently.
     /// Rebuild the piece at its current URL to switch an existing page's renderer.
@@ -1064,7 +1066,8 @@ impl WebView {
     }
     /// Bind the actual page URL, including native navigation reports, to application state.
     /// Useful for an address bar on bundled/resource views. Notify `.go()` to load the value.
-    pub fn url_binding(mut self, url: Signal<String>) -> Self {
+    pub fn url_binding(mut self, url: impl Binding<String>) -> Self {
+        let url = AnyBinding::new(url);
         if url.get_untracked().is_empty() {
             url.set(self.url.get_untracked());
         }
@@ -1155,16 +1158,16 @@ impl WebView {
     /// app, log) and return [`LinkPolicy::Ignore`].
     /// Handle a request for a separate tab without replacing the source document.
     /// Labels must be localized by the application. Background requests preserve focus.
-    pub fn on_new_tab(
+    pub fn on_new_tab<M1, M2>(
         mut self,
-        foreground_label: impl Into<String>,
-        background_label: impl Into<String>,
+        foreground_label: impl IntoText<M1>,
+        background_label: impl IntoText<M2>,
         f: impl Fn(&NewTabRequest) + 'static,
     ) -> Self {
         self.tabs = Some((
             TabLinkLabels {
-                foreground: foreground_label.into(),
-                background: background_label.into(),
+                foreground: foreground_label.into_text().initial(),
+                background: background_label.into_text().initial(),
             },
             Rc::new(f),
         ));
@@ -1472,127 +1475,6 @@ mod xaml_path;
 #[cfg(all(feature = "gtk", not(target_os = "macos"), not(windows)))]
 #[path = "lib-gtk.rs"]
 mod gtk_impl;
-
-// --- Typed builders, forwarded through `Decorated` (docs/api-style.md) ---
-
-/// [`WebView`]'s own builders, reachable through a decoration (§5.2): `day_pieces::Decorated` forwards them
-/// to the piece it wraps, so generic modifiers and typed ones chain in any order.
-pub trait WebViewBuilder: Sized {
-    fn url_binding(self, url: Signal<String>) -> Self;
-    fn profile(self, profile: WebProfile) -> Self;
-    fn go(self, trigger: Trigger) -> Self;
-    fn back(self, trigger: Trigger) -> Self;
-    fn forward(self, trigger: Trigger) -> Self;
-    fn stop(self, trigger: Trigger) -> Self;
-    fn reload(self, trigger: Trigger) -> Self;
-    fn force_reload(self, trigger: Trigger) -> Self;
-    fn js(self, handle: JsHandle) -> Self;
-    fn session(self, session: WebSession) -> Self;
-    fn start_page(self, page: impl Into<String>) -> Self;
-    fn on_external_link(self, f: impl Fn(&str) -> LinkPolicy + 'static) -> Self;
-    fn on_new_tab(
-        self,
-        foreground: impl Into<String>,
-        background: impl Into<String>,
-        f: impl Fn(&NewTabRequest) + 'static,
-    ) -> Self;
-}
-
-impl WebViewBuilder for WebView {
-    fn on_new_tab(
-        self,
-        foreground: impl Into<String>,
-        background: impl Into<String>,
-        f: impl Fn(&NewTabRequest) + 'static,
-    ) -> Self {
-        WebView::on_new_tab(self, foreground, background, f)
-    }
-    fn url_binding(self, url: Signal<String>) -> Self {
-        WebView::url_binding(self, url)
-    }
-    fn profile(self, profile: WebProfile) -> Self {
-        WebView::profile(self, profile)
-    }
-    fn go(self, trigger: Trigger) -> Self {
-        WebView::go(self, trigger)
-    }
-    fn back(self, trigger: Trigger) -> Self {
-        WebView::back(self, trigger)
-    }
-    fn forward(self, trigger: Trigger) -> Self {
-        WebView::forward(self, trigger)
-    }
-    fn stop(self, trigger: Trigger) -> Self {
-        WebView::stop(self, trigger)
-    }
-    fn reload(self, trigger: Trigger) -> Self {
-        WebView::reload(self, trigger)
-    }
-    fn force_reload(self, trigger: Trigger) -> Self {
-        WebView::force_reload(self, trigger)
-    }
-    fn js(self, handle: JsHandle) -> Self {
-        WebView::js(self, handle)
-    }
-    fn session(self, session: WebSession) -> Self {
-        WebView::session(self, session)
-    }
-    fn start_page(self, page: impl Into<String>) -> Self {
-        WebView::start_page(self, page)
-    }
-    fn on_external_link(self, f: impl Fn(&str) -> LinkPolicy + 'static) -> Self {
-        WebView::on_external_link(self, f)
-    }
-}
-
-impl<Inner: WebViewBuilder + day_pieces::prelude::Piece> WebViewBuilder
-    for day_pieces::Decorated<Inner>
-{
-    fn on_new_tab(
-        self,
-        foreground: impl Into<String>,
-        background: impl Into<String>,
-        f: impl Fn(&NewTabRequest) + 'static,
-    ) -> Self {
-        self.map_inner(|inner| inner.on_new_tab(foreground, background, f))
-    }
-    fn url_binding(self, url: Signal<String>) -> Self {
-        self.map_inner(|inner| inner.url_binding(url))
-    }
-    fn profile(self, profile: WebProfile) -> Self {
-        self.map_inner(|inner| inner.profile(profile))
-    }
-    fn go(self, trigger: Trigger) -> Self {
-        self.map_inner(|inner_piece| inner_piece.go(trigger))
-    }
-    fn back(self, trigger: Trigger) -> Self {
-        self.map_inner(|inner_piece| inner_piece.back(trigger))
-    }
-    fn forward(self, trigger: Trigger) -> Self {
-        self.map_inner(|inner_piece| inner_piece.forward(trigger))
-    }
-    fn stop(self, trigger: Trigger) -> Self {
-        self.map_inner(|inner_piece| inner_piece.stop(trigger))
-    }
-    fn reload(self, trigger: Trigger) -> Self {
-        self.map_inner(|inner_piece| inner_piece.reload(trigger))
-    }
-    fn force_reload(self, trigger: Trigger) -> Self {
-        self.map_inner(|inner| inner.force_reload(trigger))
-    }
-    fn js(self, handle: JsHandle) -> Self {
-        self.map_inner(|inner_piece| inner_piece.js(handle))
-    }
-    fn session(self, session: WebSession) -> Self {
-        self.map_inner(|inner_piece| inner_piece.session(session))
-    }
-    fn start_page(self, page: impl Into<String>) -> Self {
-        self.map_inner(|inner_piece| inner_piece.start_page(page))
-    }
-    fn on_external_link(self, f: impl Fn(&str) -> LinkPolicy + 'static) -> Self {
-        self.map_inner(|inner_piece| inner_piece.on_external_link(f))
-    }
-}
 
 /// Rendering engine selected independently for each view.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

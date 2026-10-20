@@ -25,12 +25,7 @@ const APP_SCHEME: &str = "webviewdemo://";
 
 /// The window every entry point opens.
 pub fn window() -> day::WindowOptions {
-    day::WindowOptions {
-        locales: Some((res::locales::DEFAULT, res::locales::CATALOG)),
-        title_fn: Some(|| res::str::app_title().format()),
-        size: day::prelude::Size::new(800.0, 680.0),
-        ..Default::default()
-    }
+    res::window_options().size(800.0, 680.0)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -332,15 +327,13 @@ pub fn root() -> impl Piece {
         },
     );
     day::register_preferences_with(
-        day::WindowOptions {
-            title: res::str::browser_settings().format(),
-            size: Size::new(520.0, 480.0),
-            ..Default::default()
-        },
+        day::WindowOptions::default()
+            .title(res::str::browser_settings().format())
+            .size(520.0, 480.0),
         move || preferences(tabs, native_tabs),
     );
     tabs.open(String::new(), true);
-    app_menu_reactive(move || {
+    app_menu(move || {
         tabs.active()
             .map(|commands| browser_menus(tabs, commands))
             .unwrap_or_default()
@@ -426,23 +419,23 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
         sub_menu(
             res::str::menu_file().format(),
             vec![
-                menu_item(res::str::new_tab().format())
+                menu_item(res::str::new_tab())
                     .key("t")
                     .id("browser-new-tab")
                     .action(move || tabs.open(String::new(), true)),
-                menu_item(res::str::close_tab().format())
+                menu_item(res::str::close_tab())
                     .key("w")
                     .id("browser-close-tab")
                     .action(move || tabs.close_selected()),
-                menu_item(res::str::reopen_tab().format())
-                    .shortcut(Shortcut::new("t").shift())
+                menu_item(res::str::reopen_tab())
+                    .shortcut(Shortcut::primary("t").shift())
                     .enabled(!tabs.closed.get().is_empty())
                     .action(move || tabs.reopen()),
                 menu_separator(),
                 menu_item(if day::share_support() == Support::Native {
-                    res::str::share().format()
+                    res::str::share()
                 } else {
-                    res::str::copy_link().format()
+                    res::str::copy_link()
                 })
                 .id("browser-share")
                 .enabled(browser.can_share())
@@ -453,20 +446,18 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
         sub_menu(
             res::str::menu_tabs().format(),
             vec![
-                menu_item(res::str::next_tab().format())
+                menu_item(res::str::next_tab())
                     .shortcut(Shortcut::plain("Tab").control())
                     .action(move || tabs.tabs.select_next(false)),
-                menu_item(res::str::previous_tab().format())
+                menu_item(res::str::previous_tab())
                     .shortcut(Shortcut::plain("Tab").control().shift())
                     .action(move || tabs.tabs.select_next(true)),
                 menu_separator(),
-                menu_item(res::str::move_tab_before().format())
-                    .action(move || tabs.move_selected(false)),
-                menu_item(res::str::move_tab_after().format())
-                    .action(move || tabs.move_selected(true)),
-                menu_item(res::str::duplicate_tab().format()).action(move || tabs.duplicate()),
+                menu_item(res::str::move_tab_before()).action(move || tabs.move_selected(false)),
+                menu_item(res::str::move_tab_after()).action(move || tabs.move_selected(true)),
+                menu_item(res::str::duplicate_tab()).action(move || tabs.duplicate()),
                 menu_separator(),
-                menu_item(res::str::show_tab_controls().format())
+                menu_item(res::str::show_tab_controls())
                     .id("browser-tab-controls")
                     .checked(tabs.controls.get())
                     .action(move || tabs.controls.set(!tabs.controls.get_untracked())),
@@ -475,12 +466,12 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
         sub_menu(
             res::str::menu_go().format(),
             vec![
-                menu_item(res::str::back().format())
+                menu_item(res::str::back())
                     .id("browser-back")
                     .key("[")
                     .enabled(support() == Support::Native && browser.navigation.get().can_go_back)
                     .action(move || browser.back.notify()),
-                menu_item(res::str::forward().format())
+                menu_item(res::str::forward())
                     .id("browser-forward")
                     .key("]")
                     .enabled(
@@ -488,7 +479,7 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
                     )
                     .action(move || browser.forward.notify()),
                 menu_separator(),
-                menu_item(res::str::home().format())
+                menu_item(res::str::home())
                     .id("browser-home")
                     .shortcut(Shortcut::plain("Home").alt())
                     .action(move || {
@@ -500,20 +491,20 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
         sub_menu(
             res::str::menu_browser().format(),
             vec![
-                menu_item(res::str::open_location().format())
+                menu_item(res::str::open_location())
                     .id("browser-open-location")
                     .key("l")
                     .action(move || address_focus.set(true)),
-                menu_item(res::str::reload().format())
+                menu_item(res::str::reload())
                     .id("browser-reload")
                     .key("r")
                     .action(move || browser.reload.notify()),
-                menu_item(res::str::force_reload().format())
+                menu_item(res::str::force_reload())
                     .id("browser-force-reload")
-                    .shortcut(Shortcut::new("r").shift())
+                    .shortcut(Shortcut::primary("r").shift())
                     .enabled(day_piece_webview::force_reload_support() == Support::Native)
                     .action(move || browser.force_reload.notify()),
-                menu_item(res::str::stop().format())
+                menu_item(res::str::stop())
                     .id("browser-stop")
                     .shortcut(Shortcut::plain("Escape"))
                     .enabled(
@@ -523,11 +514,11 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
                     )
                     .action(move || browser.stop.notify()),
                 menu_separator(),
-                menu_item(res::str::test_tools().format())
+                menu_item(res::str::test_tools())
                     .id("browser-tools")
                     .checked(tools.get())
                     .action(move || tools.set(!tools.get_untracked())),
-                menu_item(res::str::browser_settings().format())
+                menu_item(res::str::browser_settings())
                     .id("browser-settings")
                     .key(",")
                     .action(|| {
@@ -814,79 +805,82 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
         ))
         .spacing(6.0)
         .padding(10.0),
-        each(items(move || vec![key()], |key| key.clone()), move |slot| {
-            let (source, private, _, _, renderer) = slot.get();
-            if private && renderer.private_browsing_support() == Support::Unsupported {
-                return label(res::str::private_hint())
-                    .id(tab_widget_id(tab_number, "webview-unsupported"))
-                    .any();
-            }
-            let view = match source {
-                Source::Home => {
-                    let view = web_view_inline(res::assets::site).url_binding(browser.location);
-                    if let Some(path) = home_start.get_untracked() {
-                        view.start_page(path)
-                    } else {
-                        view
-                    }
+        keyed(
+            move || Some(key()),
+            move |key| {
+                let (source, private, _, _, renderer) = key.clone();
+                if private && renderer.private_browsing_support() == Support::Unsupported {
+                    return label(res::str::private_hint())
+                        .id(tab_widget_id(tab_number, "webview-unsupported"))
+                        .any();
                 }
-                Source::Resources => {
-                    return resource_site(
-                        browser,
-                        private,
-                        tabs,
-                        tab_number,
-                        resource_start.get_untracked(),
-                        renderer,
-                    );
-                }
-                Source::Remote => web_view(browser.location),
-            };
-            let Ok(view) = view.renderer(renderer) else {
-                return label(res::str::renderer_unavailable()).any();
-            };
-            view.profile(renderer_profile(renderer, private))
-                .on_new_tab(
-                    res::str::open_link_new_tab().format(),
-                    res::str::open_link_background_tab().format(),
-                    move |request| {
-                        tabs.open_profile(
-                            canonical_tab_url(browser, &request.url),
-                            !request.background,
-                            private,
-                        )
-                    },
-                )
-                .js(browser.js)
-                .go(browser.go)
-                .back(browser.back)
-                .forward(browser.forward)
-                .stop(browser.stop)
-                .reload(browser.reload)
-                .force_reload(browser.force_reload)
-                .on_external_link(move |url| {
-                    if browser.source.get_untracked() == Source::Remote {
-                        if let Some(route) = url.strip_prefix(APP_SCHEME) {
-                            browser.received.set(route.trim_matches('/').into());
-                            LinkPolicy::Ignore
+                let view = match source {
+                    Source::Home => {
+                        let view = web_view_inline(res::assets::site).url_binding(browser.location);
+                        if let Some(path) = home_start.get_untracked() {
+                            view.start_page(path)
                         } else {
-                            LinkPolicy::InView
+                            view
                         }
-                    } else {
-                        browser.link(url)
                     }
-                })
-                .on_load(move || {
-                    if source == Source::Home {
-                        let script = home_localization();
-                        day::task(async move {
-                            let _ = browser.js.eval(script).await;
-                        });
+                    Source::Resources => {
+                        return resource_site(
+                            browser,
+                            private,
+                            tabs,
+                            tab_number,
+                            resource_start.get_untracked(),
+                            renderer,
+                        );
                     }
-                })
-                .id(tab_widget_id(tab_number, "webview"))
-                .any()
-        })
+                    Source::Remote => web_view(browser.location),
+                };
+                let Ok(view) = view.renderer(renderer) else {
+                    return label(res::str::renderer_unavailable()).any();
+                };
+                view.profile(renderer_profile(renderer, private))
+                    .on_new_tab(
+                        res::str::open_link_new_tab(),
+                        res::str::open_link_background_tab(),
+                        move |request| {
+                            tabs.open_profile(
+                                canonical_tab_url(browser, &request.url),
+                                !request.background,
+                                private,
+                            )
+                        },
+                    )
+                    .js(browser.js)
+                    .go(browser.go)
+                    .back(browser.back)
+                    .forward(browser.forward)
+                    .stop(browser.stop)
+                    .reload(browser.reload)
+                    .force_reload(browser.force_reload)
+                    .on_external_link(move |url| {
+                        if browser.source.get_untracked() == Source::Remote {
+                            if let Some(route) = url.strip_prefix(APP_SCHEME) {
+                                browser.received.set(route.trim_matches('/').into());
+                                LinkPolicy::Ignore
+                            } else {
+                                LinkPolicy::InView
+                            }
+                        } else {
+                            browser.link(url)
+                        }
+                    })
+                    .on_load(move || {
+                        if source == Source::Home {
+                            let script = home_localization();
+                            day::task(async move {
+                                let _ = browser.js.eval(script).await;
+                            });
+                        }
+                    })
+                    .id(tab_widget_id(tab_number, "webview"))
+                    .any()
+            },
+        )
         .grow(),
         row((
             label(move || {
@@ -1022,13 +1016,17 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
 fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
     let window = day::current_window();
     let private = Signal::new(day::prefs::get("demo.web.incognito").as_deref() == Some("true"));
-    let renderer_choice = Signal::new(usize::from(default_renderer() == WebRenderer::Servo));
+    let renderer_choice = Signal::new(default_renderer());
     watch(
         move || renderer_choice.get(),
         move |choice, _| {
             day::prefs::set(
                 "demo.web.renderer",
-                if *choice == 1 { "servo" } else { "webview" },
+                if *choice == WebRenderer::Servo {
+                    "servo"
+                } else {
+                    "webview"
+                },
             );
         },
     );
@@ -1049,11 +1047,11 @@ fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
         labeled(
             res::str::default_renderer(),
             picker(
-                [
-                    res::str::renderer_webview().format(),
-                    res::str::renderer_servo().format(),
-                ],
                 renderer_choice,
+                [
+                    (WebRenderer::WebView, res::str::renderer_webview()),
+                    (WebRenderer::Servo, res::str::renderer_servo()),
+                ],
             )
             .enabled(WebRenderer::Servo.available())
             .id("webview-default-renderer"),
@@ -1170,8 +1168,8 @@ fn resource_site(
         return label(res::str::renderer_unavailable()).any();
     };
     view.on_new_tab(
-        res::str::open_link_new_tab().format(),
-        res::str::open_link_background_tab().format(),
+        res::str::open_link_new_tab(),
+        res::str::open_link_background_tab(),
         move |request| {
             tabs.open_profile(
                 canonical_tab_url(browser, &request.url),
