@@ -48,10 +48,52 @@ flow:
       title: { en: "WebView (native)" }
       caption: { en: "Resource provider page" }
   # Synthetic paint fixtures: verify pixels as well as the JavaScript engine.
-  - web_eval: { id: webview_tab:2, script: "document.body.style.background = '#00ff00'; 'painted'", text: "painted" }
+  - web_eval:
+      id: webview_tab:2
+      # UA/evaluation can work before navigation and external styles finish. Poll the
+      # intended document, then allow a rendering opportunity after the mutation.
+      script: |
+        (() => {
+          if (document.readyState !== 'complete' ||
+              document.documentElement.dataset.resourceScript !== 'yes' ||
+              getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim() !== 'yes') {
+            return 'loading';
+          }
+          if (!window.dayPaintProof) {
+            window.dayPaintProof = 'pending';
+            document.body.style.background = '#00ff00';
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+              window.dayPaintProof = 'painted';
+            }));
+          }
+          return window.dayPaintProof;
+        })()
+      text: "painted"
+      timeout_secs: 30
   - screenshot: { name: renderer-webview-proof }
   - tap: { id: webview_renderer_tab:2 }
   - web_eval: { id: webview_tab:2, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
-  - web_eval: { id: webview_tab:2, script: "document.body.style.background = '#00ff00'; 'painted'", text: "painted", timeout_secs: 30 }
+  - web_eval:
+      id: webview_tab:2
+      # UA/evaluation can work before navigation and external styles finish. Poll the
+      # intended document, then allow a rendering opportunity after the mutation.
+      script: |
+        (() => {
+          if (document.readyState !== 'complete' ||
+              document.documentElement.dataset.resourceScript !== 'yes' ||
+              getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim() !== 'yes') {
+            return 'loading';
+          }
+          if (!window.dayPaintProof) {
+            window.dayPaintProof = 'pending';
+            document.body.style.background = '#00ff00';
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+              window.dayPaintProof = 'painted';
+            }));
+          }
+          return window.dayPaintProof;
+        })()
+      text: "painted"
+      timeout_secs: 30
   - screenshot: { name: renderer-servo-proof }
   - assert_no_placeholders: {}

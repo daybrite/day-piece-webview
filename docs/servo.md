@@ -176,6 +176,15 @@ walkthroughs on the emulator. `scripts/install-servo-ohos-sdk.sh` and
 
 CI uses an isolated Python environment for screenshot checks. Untitled pixel-proof captures
 are validated alongside the published pairs but do not require gallery titles or captions.
+The paint proofs poll for the resource document to finish loading, including its script and
+stylesheet markers, before changing the background. They then wait through two animation-frame
+callbacks before capturing. An engine/user-agent reply alone is not a page-readiness signal:
+Android [comparison job 119242971635](https://github.com/daybrite/day-piece-webview/actions/runs/39477891745/job/119242971635)
+accepted the screenshot checkpoint roughly 250 ms before the resource page finished loading.
+Servo logged "Suppressing pre-load-event reflow"; its capture was white even though every
+JavaScript assertion passed. These checks
+apply to both renderers on every comparison target; the pixel verifier still rejects blank
+or stale captures.
 Windows explicitly selects the MSVC linker to avoid Git Bash's unrelated `link.exe`.
 The Windows comparison jobs build a local clone at a short physical path on the runner.
 mozangle 0.7.1 passes all ANGLE object paths on one command line, exceeding Windows' 32,767
@@ -254,6 +263,9 @@ install an idle polling timer. The canvas host registers a screenshot hold
 (`day_spec::capture::register_hold`, Day's docs/window-image.md): a dayscript `screenshot` or
 `sample_pixel` waits until every attached Servo view has presented its latest frame, since the
 toolkit's own render checkpoint cannot see a frame that is still being read back or decoded.
+This hold drains frames already announced by Servo; it does not establish document readiness
+or wait for future JavaScript/layout work. Walkthroughs must assert their page-specific readiness
+conditions before capturing.
 A page that animates continuously keeps a capture waiting until the step times out. AppKit forwards resizing, backing scale, focus, mouse, scroll,
 and keyboard events. Closing a non-session view releases its browsing context and rendering
 surface. The shared engine stays available for the next view.
