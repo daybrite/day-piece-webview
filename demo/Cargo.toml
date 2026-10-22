@@ -8,7 +8,7 @@ publish = false
 
 [features]
 # `mock` keeps bare cargo and rust-analyzer compiling; `day build` overrides it with
-# `--no-default-features --features <backend>` (https://daybrite.dev/docs/project-structure).
+# `--no-default-features --features <backend>` (https://daybrite.dev/docs/reference/project-structure).
 default = ["mock"]
 servo = ["dep:day-piece-webview-servo", "day-piece-webview-servo/servo"]
 appkit = ["day/appkit", "day-piece-webview-servo?/appkit"]

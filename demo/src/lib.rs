@@ -17,7 +17,7 @@ use std::collections::HashMap;
 // The mobile entry point; a plain cargo desktop build enters through src/main.rs.
 day::day_start!(options: window(), root);
 
-// Typed constants for everything under `resource/` (https://daybrite.dev/docs/resources).
+// Typed constants for everything under `resource/` (https://daybrite.dev/docs/how-to/resources).
 day::resources!();
 
 /// The scheme of the links the bundled site addresses to this app rather than to a browser.

@@ -1,4 +1,4 @@
-# Web View Demo: UI strings (https://daybrite.dev/docs/localization). Add a locale by dropping a
+# Web View Demo: UI strings (https://daybrite.dev/docs/how-to/localization). Add a locale by dropping a
 # sibling folder (for example locales/fr/app.ftl) and translating.
 
 app_title = Web View Demo
