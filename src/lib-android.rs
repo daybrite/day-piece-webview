@@ -11,13 +11,13 @@
 // ---------------------------------------------------------------------------
 
 use super::*;
-use day_android::jni::Env;
-use day_android::jni::objects::{JClass, JObject, JString};
-use day_android::{AHandle, Android, java, string_of};
+use day_mdc::jni::Env;
+use day_mdc::jni::objects::{JClass, JObject, JString};
+use day_mdc::{AHandle, Android, java, string_of};
 use day_spec::NodeId;
 
 // This piece's Java class (src/DayWebView.java, on the app classpath at build).
-day_android::java_class! {
+day_mdc::java_class! {
     DayWebView => dev.daybrite.day.piece.webview.DayWebView,
     methods {
         static fn supportsProfiles() -> jboolean,
@@ -39,7 +39,7 @@ day_android::java_class! {
         static fn resource {
             sig = (provider: jlong, url: JString, method: JString, range: JString)
                 -> android.webkit.WebResourceResponse,
-            error_policy = day_android::jni::errors::ThrowRuntimeExAndDefault,
+            error_policy = day_mdc::jni::errors::ThrowRuntimeExAndDefault,
         },
     },
 }
@@ -60,8 +60,8 @@ pub(crate) fn capability(method: &str) -> day_spec::Support {
 
 fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
     if p.profile.private {
-        return AHandle(day_android::with_env(|env| {
-            day_android::placeholder_view(env, "web_view")
+        return AHandle(day_mdc::with_env(|env| {
+            day_mdc::placeholder_view(env, "web_view")
         }));
     }
     // Inline mode (docs/webview.md): the assets tree is the APK `assets/` root, and WebView
@@ -90,7 +90,7 @@ fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
     };
     // A Java throw (e.g. the staged DayWebView class missing) must not panic inside realize:
     // the panic unwinds the JNI up-call and aborts. Placeholder instead.
-    let view = day_android::realize("web_view", |env| {
+    let view = day_mdc::realize("web_view", |env| {
         let url = JString::from_str(env, &url)?;
         let prefix = JString::from_str(env, &prefix)?;
         let profile = JString::from_str(env, &profile)?;
@@ -140,12 +140,12 @@ fn release(_backend: &mut Android, handle: &AHandle) {
     java(|env| DayWebView::release(env, handle.0.as_obj()));
 }
 
-day_pieces::renderer!(day_android::RENDERERS, Android,
+day_pieces::renderer!(day_mdc::RENDERERS, Android,
     kind: KIND, props: WebProps, patch: WebPatch,
     make: make, update: update, measure: day_pieces::fill_measure, release: release);
 
 impl DayWebViewNativeInterface for DayWebViewAPI {
-    type Error = day_android::jni::errors::Error;
+    type Error = day_mdc::jni::errors::Error;
 
     fn resource<'l>(
         env: &mut Env<'l>,

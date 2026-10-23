@@ -13,7 +13,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 
 use day_spec::NodeId;
-use day_xaml::{WinHandle, Xaml};
+use day_winui::{WinHandle, Xaml};
 
 unsafe extern "C" {
     fn day_webview_xaml_new(
@@ -57,7 +57,7 @@ extern "C" fn on_eval(id: u64, req: u64, payload: *const c_char) {
             .to_string_lossy()
             .into_owned()
     };
-    day_xaml::emit(
+    day_winui::emit(
         NodeId(id),
         Event::Custom {
             tag: "webview:eval",
@@ -76,7 +76,7 @@ extern "C" fn on_url(id: u64, url: *const c_char) {
     let s = unsafe { CStr::from_ptr(url) }
         .to_string_lossy()
         .into_owned();
-    day_xaml::emit(NodeId(id), Event::custom("webview:url", s));
+    day_winui::emit(NodeId(id), Event::custom("webview:url", s));
 }
 
 /// An inline site's navigation left the site: the shim CANCELLED it (NavigationStarting /
@@ -88,7 +88,7 @@ extern "C" fn on_link(id: u64, url: *const c_char) {
     let s = unsafe { CStr::from_ptr(url) }
         .to_string_lossy()
         .into_owned();
-    day_xaml::emit(
+    day_winui::emit(
         NodeId(id),
         Event::Custom {
             tag: "webview:link",
@@ -100,7 +100,7 @@ extern "C" fn on_link(id: u64, url: *const c_char) {
 
 extern "C" fn on_tab(id: u64, url: *const c_char, background: bool) {
     if !url.is_null() {
-        day_xaml::emit(
+        day_winui::emit(
             NodeId(id),
             new_tab_event(
                 unsafe { CStr::from_ptr(url) }
@@ -214,6 +214,6 @@ fn release(_backend: &mut Xaml, h: &WinHandle) {
     unsafe { day_webview_xaml_release(h.0) };
 }
 
-day_pieces::renderer!(day_xaml::RENDERERS, Xaml,
+day_pieces::renderer!(day_winui::RENDERERS, Xaml,
     kind: KIND, props: WebProps, patch: WebPatch,
     make: make, update: update, measure: day_pieces::fill_measure, release: release);

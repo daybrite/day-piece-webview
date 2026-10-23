@@ -3,7 +3,7 @@
 
 // The web-view piece's C++/WinRT shim, parallel to src/lib-qt-shim.cpp.
 //
-// day-xaml hosts UWP system XAML (DAY_XAML_NS, base Windows SDK, no WinAppSDK) inside a
+// day-winui hosts UWP system XAML (DAY_XAML_NS, base Windows SDK, no WinAppSDK) inside a
 // Win32 window via XAML Islands. The system-XAML web view, Windows.UI.Xaml.Controls.WebView (EdgeHTML),
 // is unsupported in that host: it renders blank, never raises NavigationCompleted, and crashes on
 // navigation. The supported engine is WebView2, hosted here in windowless / visual-hosting mode,

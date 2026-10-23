@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // The day-piece-webview crate's Android backend, bundled here and folded into the app's Gradle
-// build via [package.metadata.day.android], with no edits to day-android. It uses only
-// day-android's public Java surface: DayBridge.ctx (the Context) and DayBridge.nativeOnEvent (the
+// build via [package.metadata.day.android], with no edits to day-mdc. It uses only
+// day-mdc's public Java surface: DayBridge.ctx (the Context) and DayBridge.nativeOnEvent (the
 // event trampoline). The piece also declares its INTERNET permission in Cargo.toml, which
 // `day build` merges into the app manifest, so a WebView-using app needs no manual manifest edit.
 // See docs/extending.md.

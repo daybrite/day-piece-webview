@@ -17,7 +17,7 @@ gtk = ["day-piece-webview/gtk"]
 qt = ["day-piece-webview/qt"]
 xaml = ["day-piece-webview/xaml"]
 winui = ["xaml", "day-piece-webview/winui"]
-mdc = ["day-piece-webview/mdc", "dep:day-android"]
+mdc = ["day-piece-webview/mdc", "dep:day-mdc", "dep:day-android-runtime"]
 arkui = ["day-piece-webview/arkui"]
 appkit = ["day-piece-webview/appkit", "dep:day-appkit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
 
@@ -75,7 +75,8 @@ servo = { version = "=0.6.0", optional = true, default-features = false, feature
 servo-default-resources = { version = "=0.6.0", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
-day-android = { git = "https://github.com/daybrite/day.git", optional = true }
+day-mdc = { git = "https://github.com/daybrite/day.git", optional = true }
+day-android-runtime = { git = "https://github.com/daybrite/day.git", optional = true }
 rustls-platform-verifier = { version = "=0.7.1", optional = true }
 # Keep the Kotlin AAR and Rust package on the same ABI version.
 rustls-platform-verifier-android = { version = "=0.2.0", optional = true }

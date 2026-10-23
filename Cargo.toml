@@ -27,11 +27,11 @@ build = "build.rs"
 appkit = ["dep:day-appkit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
 # GTK uses WebKitGTK on Linux, WKWebView on macOS, and WebView2 through Wry on Windows.
 gtk = ["dep:objc2-core-graphics", "objc2-app-kit/objc2-core-graphics", "dep:wry", "dep:day-gtk", "dep:gtk4", "dep:webkit6", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
-qt = ["dep:day-qt", "dep:wry", ]                 # + build.rs compiles src/lib-qt-shim.cpp, linking Qt6WebEngineWidgets when present (else a URL-label fallback)
+qt = ["dep:day-qt", "dep:wry"]                 # + build.rs compiles src/lib-qt-shim.cpp, linking Qt6WebEngineWidgets when present (else a URL-label fallback)
 # objc2-web-kit 0.3 binds WKWebView for macOS only, so UIKit hand-rolls it via extern_class!/msg_send!.
 uikit = ["dep:day-uikit", "dep:objc2", "dep:objc2-ui-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:block2"]
-mdc = ["dep:day-android"]        # + [package.metadata.day.android]
-xaml = ["dep:day-xaml", "dep:day-xaml-sys"]     # + build.rs compiles src/lib-xaml-shim.cpp
+mdc = ["dep:day-mdc", "dep:day-android-runtime"]        # + [package.metadata.day.android]
+xaml = ["dep:day-winui", "dep:day-xaml-sys"]     # + build.rs compiles src/lib-xaml-shim.cpp
 # WinUI 3 (windows-winui, docs/winui.md): the xaml half, built against Microsoft.UI.Xaml.
 winui = ["xaml", "day-xaml-sys/winui"]
 # The ArkUI C node API has no Web node, so this backend is the crate's ArkTS half
@@ -72,8 +72,9 @@ day-appkit = { git = "https://github.com/daybrite/day.git", optional = true }
 day-gtk = { git = "https://github.com/daybrite/day.git", optional = true }
 day-qt = { git = "https://github.com/daybrite/day.git", optional = true }
 day-uikit = { git = "https://github.com/daybrite/day.git", optional = true }
-day-android = { git = "https://github.com/daybrite/day.git", optional = true }
-day-xaml = { git = "https://github.com/daybrite/day.git", optional = true }
+day-mdc = { git = "https://github.com/daybrite/day.git", optional = true }
+day-android-runtime = { git = "https://github.com/daybrite/day.git", optional = true }
+day-winui = { git = "https://github.com/daybrite/day.git", optional = true }
 day-xaml-sys = { git = "https://github.com/daybrite/day.git", optional = true }
 day-arkui = { git = "https://github.com/daybrite/day.git", optional = true }
 day-dom = { git = "https://github.com/daybrite/day.git", optional = true }
@@ -94,7 +95,7 @@ day-mock = { git = "https://github.com/daybrite/day.git" }
 
 # Standalone-piece Android contribution (https://daybrite.dev/contributing/extending). The day CLI reads
 # this from `cargo metadata` and folds it into the app's Gradle build: the piece carries its
-# backend Java and declares the Android permissions it needs, without touching day-android or the
+# backend Java and declares the Android permissions it needs, without touching day-mdc or the
 # scaffold.
 [package.metadata.day.android]
 # Java/Kotlin sources, relative to this crate root: dirs, or single files linked in by package.

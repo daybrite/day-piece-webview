@@ -70,9 +70,9 @@ pub(crate) fn engine() -> Result<Servo, String> {
         #[cfg(target_os = "android")]
         {
             // The verifier reaches the system trust store through the app Context, which the
-            // Java host keeps on `DayBridge.ctx` (day-android's generated binding).
-            day_android::with_env(|env| {
-                let context = day_android::DayBridge::ctx(env)?;
+            // Java host keeps on `DayBridge.ctx` (day-mdc's generated binding).
+            day_mdc::with_env(|env| {
+                let context = day_mdc::DayBridge::ctx(env)?;
                 rustls_platform_verifier::android::init_with_env(env, context)
             })
             .map_err(|error| format!("Android certificate verifier: {error}"))?;
