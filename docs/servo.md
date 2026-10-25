@@ -218,7 +218,8 @@ The Linux GTK fixture job disables WebKit's sandbox only in that CI process, bec
 runner restrictions prevent its bubblewrap network namespace from starting.
 
 Use `day launch -t <target> --flavor servo` for any listed target. Android's certificate verifier
-is initialized with Day's application context before starting Servo; its Maven contribution
+is initialized with the application context from `day-platform-android`'s `DayRuntime` before
+starting Servo; it does not read context from the Material widget bridge. Its Maven contribution
 ships the matching Kotlin implementation. SpiderMonkey's pointer encoding also requires the adapter's
 feature-gated `disable-native-heap-pointer-tagging` contribution. That changes the entire
 Android process while Servo is enabled; Android warns that this compatibility escape hatch
