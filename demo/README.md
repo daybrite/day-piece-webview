@@ -15,7 +15,7 @@ From this directory:
 day doctor
 day launch -p macos-appkit --script dayscript/webview.yaml
 day launch -p ios-uikit --script dayscript/webview.yaml
-day launch -p android-mdc --script dayscript/webview.yaml
+day launch -p android-material --script dayscript/webview.yaml
 day launch -p web-dom --script dayscript/webview.yaml
 ```
 

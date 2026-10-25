@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::windows_web::Host;
 use super::*;
-use day_gtk::Gtk;
 use day_spec::NodeId;
+use day_toolkit_gtk::Gtk;
 use gtk4::{glib::translate::ToGlibPtr, prelude::*};
 unsafe extern "C" {
     fn gdk_win32_surface_get_handle(surface: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
@@ -57,7 +57,7 @@ fn make(_: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                     url.clone(),
                     prefix.clone(),
                     id,
-                    day_gtk::emit,
+                    day_toolkit_gtk::emit,
                     profile.clone(),
                     tabs,
                 ) {
@@ -99,7 +99,7 @@ fn update(_: &mut Gtk, w: &gtk4::Widget, p: &WebPatch) {
             .strip_prefix("day-webview-")
             .and_then(|s| s.parse().ok())
         {
-            day_gtk::emit(
+            day_toolkit_gtk::emit(
                 NodeId(id),
                 Event::Custom {
                     tag: "webview:eval",
@@ -118,4 +118,4 @@ fn release(_: &mut Gtk, w: &gtk4::Widget) {
         live.borrow_mut().take();
     }
 }
-day_pieces::renderer!(day_gtk::RENDERERS,Gtk,kind:KIND,props:WebProps,patch:WebPatch,make:make,update:update,measure:day_pieces::fill_measure,release:release);
+day_pieces::renderer!(day_toolkit_gtk::RENDERERS,Gtk,kind:KIND,props:WebProps,patch:WebPatch,make:make,update:update,measure:day_pieces::fill_measure,release:release);

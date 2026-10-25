@@ -3,8 +3,8 @@
 //! WKWebView hosted in the GTK window's Cocoa content view. A GTK allocation anchor owns
 //! its lifetime; frame-clock ticks align the native child with that anchor, and unmap detaches it.
 use super::*;
-use day_gtk::Gtk;
 use day_spec::NodeId;
+use day_toolkit_gtk::Gtk;
 use gtk4::{glib::translate::ToGlibPtr, prelude::*};
 use objc2::{MainThreadMarker, rc::Retained};
 use objc2_app_kit::{NSEvent, NSScreen, NSView, NSWindow};
@@ -31,7 +31,7 @@ fn make(_: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
         MainThreadMarker::new().expect("GTK main thread"),
         p,
         id,
-        day_gtk::emit,
+        day_toolkit_gtk::emit,
         assets,
     );
     VIEWS.with(|m| {
@@ -232,4 +232,4 @@ fn release(_: &mut Gtk, w: &gtk4::Widget) {
         super::macos_web::release(&v)
     }
 }
-day_pieces::renderer!(day_gtk::RENDERERS,Gtk,kind:KIND,props:WebProps,patch:WebPatch,make:make,update:update,measure:day_pieces::fill_measure,release:release);
+day_pieces::renderer!(day_toolkit_gtk::RENDERERS,Gtk,kind:KIND,props:WebProps,patch:WebPatch,make:make,update:update,measure:day_pieces::fill_measure,release:release);

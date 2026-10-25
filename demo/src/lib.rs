@@ -1217,7 +1217,7 @@ fn resource_site(
         match request.path.as_str() {
         // Native resource APIs must split HTTP-style content types into MIME and charset.
         // This exercises the same spelling as Day-News' generated reader document.
-        "pages/index.html" => ResourceResponse::new(if cfg!(any(feature = "mdc", feature = "arkui")) { "text/html; charset=utf-8" } else { "text/html" },html.clone().into_bytes()),
+        "pages/index.html" => ResourceResponse::new(if cfg!(any(feature = "material", feature = "arkui")) { "text/html; charset=utf-8" } else { "text/html" },html.clone().into_bytes()),
         "pages/child.html" => ResourceResponse::new("text/html",b"<!doctype html><html><head><link rel=stylesheet href=../styles/main.css></head><body data-relative=child></body></html>".to_vec()),
         // No meta charset: decoding must use the response's declared encoding.
         "pages/charset.html" => ResourceResponse::new("text/html; charset=\"windows-1252\"", b"<!doctype html><html><body>Caf\xe9 r\xe9sum\xe9 \x80</body></html>".to_vec()),

@@ -11,13 +11,13 @@
 // ---------------------------------------------------------------------------
 
 use super::*;
-use day_mdc::jni::Env;
-use day_mdc::jni::objects::{JClass, JObject, JString};
-use day_mdc::{AHandle, Android, java, string_of};
+use day_toolkit_material::jni::Env;
+use day_toolkit_material::jni::objects::{JClass, JObject, JString};
+use day_toolkit_material::{AHandle, Material, java, string_of};
 use day_spec::NodeId;
 
 // This piece's Java class (src/DayWebView.java, on the app classpath at build).
-day_mdc::java_class! {
+day_toolkit_material::java_class! {
     DayWebView => dev.daybrite.day.piece.webview.DayWebView,
     methods {
         static fn supportsProfiles() -> jboolean,
@@ -39,7 +39,7 @@ day_mdc::java_class! {
         static fn resource {
             sig = (provider: jlong, url: JString, method: JString, range: JString)
                 -> android.webkit.WebResourceResponse,
-            error_policy = day_mdc::jni::errors::ThrowRuntimeExAndDefault,
+            error_policy = day_toolkit_material::jni::errors::ThrowRuntimeExAndDefault,
         },
     },
 }
@@ -58,10 +58,10 @@ pub(crate) fn capability(method: &str) -> day_spec::Support {
     }
 }
 
-fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
+fn make(_backend: &mut Material, p: &WebProps, id: NodeId) -> AHandle {
     if p.profile.private {
-        return AHandle(day_mdc::with_env(|env| {
-            day_mdc::placeholder_view(env, "web_view")
+        return AHandle(day_toolkit_material::with_env(|env| {
+            day_toolkit_material::placeholder_view(env, "web_view")
         }));
     }
     // Inline mode (docs/webview.md): the assets tree is the APK `assets/` root, and WebView
@@ -90,7 +90,7 @@ fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
     };
     // A Java throw (e.g. the staged DayWebView class missing) must not panic inside realize:
     // the panic unwinds the JNI up-call and aborts. Placeholder instead.
-    let view = day_mdc::realize("web_view", |env| {
+    let view = day_toolkit_material::realize("web_view", |env| {
         let url = JString::from_str(env, &url)?;
         let prefix = JString::from_str(env, &prefix)?;
         let profile = JString::from_str(env, &profile)?;
@@ -109,7 +109,7 @@ fn make(_backend: &mut Android, p: &WebProps, id: NodeId) -> AHandle {
     view
 }
 
-fn update(_backend: &mut Android, h: &AHandle, patch: &WebPatch) {
+fn update(_backend: &mut Material, h: &AHandle, patch: &WebPatch) {
     // Evaluation (docs/webview-eval.md): `evaluateJavascript` plus the outer-JSON unquote and
     // the null/empty→engine-error mapping live in DayWebView.evalJs; the reply rides the
     // kind-12 channel keyed by `req`, like every other backend.
@@ -136,16 +136,16 @@ fn update(_backend: &mut Android, h: &AHandle, patch: &WebPatch) {
     });
 }
 
-fn release(_backend: &mut Android, handle: &AHandle) {
+fn release(_backend: &mut Material, handle: &AHandle) {
     java(|env| DayWebView::release(env, handle.0.as_obj()));
 }
 
-day_pieces::renderer!(day_mdc::RENDERERS, Android,
+day_pieces::renderer!(day_toolkit_material::RENDERERS, Material,
     kind: KIND, props: WebProps, patch: WebPatch,
     make: make, update: update, measure: day_pieces::fill_measure, release: release);
 
 impl DayWebViewNativeInterface for DayWebViewAPI {
-    type Error = day_mdc::jni::errors::Error;
+    type Error = day_toolkit_material::jni::errors::Error;
 
     fn resource<'l>(
         env: &mut Env<'l>,

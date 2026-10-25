@@ -3,8 +3,8 @@
 
 //! Compiles this piece's native shims per feature: a standalone Day Piece carrying native C++
 //! without touching Day's toolkit crates (like day-piece-picker). Qt uses `cc` + pkg-config, and
-//! (unlike the picker) links Qt6WebEngineWidgets, which day-qt-sys does not link. XAML uses `cc`
-//! (MSVC) + the Windows SDK cppwinrt projection, mirroring day-xaml-sys.
+//! (unlike the picker) links Qt6WebEngineWidgets, which day-toolkit-qt-sys does not link. XAML uses `cc`
+//! (MSVC) + the Windows SDK cppwinrt projection, mirroring day-toolkit-xaml-sys.
 
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(day_qt_webengine)");
@@ -33,7 +33,7 @@ fn build_qt() {
     // QWebEngineView lives in Qt6WebEngineWidgets, which not every Qt host ships: MSYS2/MINGW64
     // (windows-qt) has no Qt6 WebEngine at all (Chromium won't build with MinGW GCC). When it's
     // absent the shim degrades to a QtWidgets URL label (see lib-qt-shim.cpp's #else), so build
-    // against Qt6Widgets (which day-qt-sys already links) instead of failing the build.
+    // against Qt6Widgets (which day-toolkit-qt-sys already links) instead of failing the build.
     let has_webengine = pkg_config_exists("Qt6WebEngineWidgets");
     let cflags_pkg = if has_webengine {
         "Qt6WebEngineWidgets" // --cflags pull in Qt6Core/Gui/Widgets too
@@ -57,8 +57,8 @@ fn build_qt() {
     build.flag_if_supported("-Wno-unused-parameter");
     build.compile("daywebviewqtshim");
 
-    // day-qt-sys already links Qt6Core/Qt6Widgets, but not the WebEngine modules, so emit those.
-    // Duplicates with day-qt-sys's flags are harmless (the linker dedups). The label fallback needs
+    // day-toolkit-qt-sys already links Qt6Core/Qt6Widgets, but not the WebEngine modules, so emit those.
+    // Duplicates with day-toolkit-qt-sys's flags are harmless (the linker dedups). The label fallback needs
     // nothing beyond Qt6Widgets (already linked), so emit no extra libs there.
     if has_webengine {
         let libs = pkg_config(&["--libs", "Qt6WebEngineWidgets"]);
@@ -67,7 +67,7 @@ fn build_qt() {
 }
 
 fn build_xaml() {
-    // Same recipe as day-xaml-sys / the picker's XAML shim: the cppwinrt projection headers live
+    // Same recipe as day-toolkit-xaml-sys / the picker's XAML shim: the cppwinrt projection headers live
     // under the SDK's Include\<ver>\cppwinrt (not on the default INCLUDE path); C++20 + /bigobj + /EHsc.
     let cppwinrt = day_toolchain::cppwinrt_include_for_build_script().expect(
         "Windows 10/11 SDK cppwinrt headers not found. Install the Windows SDK \
@@ -133,7 +133,7 @@ fn build_xaml() {
     }
     build.compile("daywebviewxamlshim");
     // WindowsApp.lib (WinRT umbrella) and the day_xaml_box/unbox functions are already linked by
-    // day-xaml-sys. Add the statically-linked WebView2 loader (pulls in the runtime at first use).
+    // day-toolkit-xaml-sys. Add the statically-linked WebView2 loader (pulls in the runtime at first use).
     println!(
         "cargo:rustc-link-search=native={}",
         webview2.join(format!("build/native/{arch}")).display()

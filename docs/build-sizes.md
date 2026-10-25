@@ -25,7 +25,7 @@ The Cargo lockfile checksum matched within each pair. One MiB is 1,048,576 bytes
 | Target / artifact | Native only (MiB) | Native + Servo (MiB) | Added (MiB) | Size ratio |
 | --- | ---: | ---: | ---: | ---: |
 | macOS AppKit `.app` | 38.31 | 200.77 | 162.46 | 5.24× |
-| Android MDC APK | 8.67 | 115.36 | 106.69 | 13.30× |
+| Android Material Components APK | 8.67 | 115.36 | 106.69 | 13.30× |
 | Harmony ArkUI HAP | 7.30 | 111.04 | 103.74 | 15.21× |
 
 The Android APKs are unsigned release outputs; the Harmony HAPs use the local development

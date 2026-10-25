@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use block2::RcBlock;
 use day_spec::NodeId;
-use day_uikit::Uikit;
+use day_toolkit_uikit::Uikit;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, extern_class, msg_send};
@@ -67,7 +67,7 @@ define_class!(
             if self.ivars().tabs.borrow().is_some() {
                 let req: Retained<NSURLRequest> = unsafe { msg_send![action, request] };
                 if let Some(url)=req.URL().and_then(|url|url.absoluteString()) {
-                    day_uikit::emit(self.ivars().node.get(),new_tab_event(url.to_string(),false));
+                    day_toolkit_uikit::emit(self.ivars().node.get(),new_tab_event(url.to_string(),false));
                 }
             }
             std::ptr::null_mut()
@@ -82,7 +82,7 @@ define_class!(
                 let mut actions:Vec<Retained<AnyObject>>=Vec::new();
                 for (label,background) in [(&labels.foreground,false),(&labels.background,true)] {
                     let target=url.clone();
-                    let handler=RcBlock::new(move |_action:*mut AnyObject| { day_uikit::emit(id,new_tab_event(target.clone(),background)); });
+                    let handler=RcBlock::new(move |_action:*mut AnyObject| { day_toolkit_uikit::emit(id,new_tab_event(target.clone(),background)); });
                     let action: Retained<AnyObject> = unsafe { msg_send![objc2::class!(UIAction), actionWithTitle: &*NSString::from_str(label), image: std::ptr::null::<AnyObject>(), identifier: std::ptr::null::<AnyObject>(), handler: &*handler] };
                     actions.push(action);
                 }
@@ -116,7 +116,7 @@ define_class!(
         #[unsafe(method(webView:didFinishNavigation:))]
         fn did_finish(&self, web_view: &WKWebView, _navigation: *mut AnyObject) {
             if let Some(url) = current_url(web_view) {
-                day_uikit::emit(self.ivars().node.get(), Event::custom("webview:url", url));
+                day_toolkit_uikit::emit(self.ivars().node.get(), Event::custom("webview:url", url));
             }
         }
 
@@ -136,13 +136,13 @@ define_class!(
             let req: Retained<NSURLRequest> = unsafe { msg_send![action, request] };
             let url = req.URL().and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default();
             if self.ivars().tabs.borrow().is_some() && let Some(request)=tab_scheme_request(&url) {
-                day_uikit::emit(self.ivars().node.get(), new_tab_event(request.url,request.background));
+                day_toolkit_uikit::emit(self.ivars().node.get(), new_tab_event(request.url,request.background));
                 handler.call((POLICY_CANCEL,)); return;
             }
             let kind: isize = unsafe { msg_send![action, navigationType] };
             let activated = kind == 0; // WKNavigationTypeLinkActivated
             if self.ivars().tabs.borrow().is_some() && frame.is_null() {
-                day_uikit::emit(self.ivars().node.get(),new_tab_event(url,false));
+                day_toolkit_uikit::emit(self.ivars().node.get(),new_tab_event(url,false));
                 handler.call((POLICY_CANCEL,)); return;
             }
             let external = match &*self.ivars().inline_base.borrow() {
@@ -151,7 +151,7 @@ define_class!(
                     current_url(web_view).as_deref(), &url, activated, frame.is_null(), subframe),
             };
             let policy = if external {
-                day_uikit::emit(self.ivars().node.get(), Event::Custom {
+                day_toolkit_uikit::emit(self.ivars().node.get(), Event::Custom {
                     tag: "webview:link", num: super::LINK_REPORT, text: url,
                 });
                 POLICY_CANCEL
@@ -353,7 +353,7 @@ fn node_of(view: &Retained<UIView>) -> Option<NodeId> {
 /// always a JS string, so the completion's `id` is an `NSString` and no JSON walk is needed.
 fn eval(web: &WKWebView, node: NodeId, req: u64, script: &str) {
     if super::storage_apple::request(web, script, move |text| {
-        day_uikit::emit(
+        day_toolkit_uikit::emit(
             node,
             Event::Custom {
                 tag: "webview:eval",
@@ -381,7 +381,7 @@ fn eval(web: &WKWebView, node: NodeId, req: u64, script: &str) {
         } else {
             engine_error("WebKitError", "no result")
         };
-        day_uikit::emit(
+        day_toolkit_uikit::emit(
             node,
             Event::Custom {
                 tag: "webview:eval",
@@ -448,6 +448,6 @@ fn release(_backend: &mut Uikit, h: &Retained<UIView>) {
     });
 }
 
-day_pieces::renderer!(day_uikit::RENDERERS, Uikit,
+day_pieces::renderer!(day_toolkit_uikit::RENDERERS, Uikit,
     kind: KIND, props: WebProps, patch: WebPatch,
     make: make, update: update, measure: day_pieces::fill_measure, release: release);

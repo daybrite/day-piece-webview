@@ -6,14 +6,14 @@
 // to construct (the ArkUI C node API has no Web node kind), so this crate ships its ArkTS
 // (platform/harmony/ets/Index.ets) that `day build` stages into the app's hvigor project via
 // `[package.metadata.day.ohos]`, the HarmonyOS counterpart of the android `java` contribution.
-// day-arkui's generic piece bridge builds it and returns its FrameNode as an ordinary handle
+// day-toolkit-arkui's generic piece bridge builds it and returns its FrameNode as an ordinary handle
 // (docs/extending.md); commands cross as this piece's own (cmd, arg) strings, and each committed
-// navigation comes back through day-arkui's `pieceEvent` export as the Custom event kind (12): §8.2's
+// navigation comes back through day-toolkit-arkui's `pieceEvent` export as the Custom event kind (12): §8.2's
 // piece-defined channel, the same one the Android renderer uses.
 // ---------------------------------------------------------------------------
 
 use super::*;
-use day_arkui::{AHandle, ArkUi, piece};
+use day_toolkit_arkui::{AHandle, ArkUi, piece};
 use day_spec::NodeId;
 
 fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
@@ -81,6 +81,6 @@ fn update(_backend: &mut ArkUi, h: &AHandle, patch: &WebPatch) {
     piece::update(h, cmd, arg);
 }
 
-day_pieces::renderer!(day_arkui::RENDERERS, ArkUi,
+day_pieces::renderer!(day_toolkit_arkui::RENDERERS, ArkUi,
     kind: KIND, props: WebProps, patch: WebPatch,
     make: make, update: update, measure: day_pieces::fill_measure);

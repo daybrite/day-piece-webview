@@ -107,7 +107,7 @@ jobs:
       matrix:
         include:
           - { os: macos-15, target: aarch64-apple-ios-sim, features: uikit }
-          - { os: ubuntu-latest, target: aarch64-linux-android, features: mdc }
+          - { os: ubuntu-latest, target: aarch64-linux-android, features: material }
           # The getrandom backend cfg is what `day build` sets for every web app; without it
           # getrandom refuses to compile for wasm32-unknown-unknown.
           - { os: ubuntu-latest, target: wasm32-unknown-unknown, features: dom, rustflags: '--cfg getrandom_backend="custom"' }
@@ -120,12 +120,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: actions/setup-java@v5
-        if: matrix.features == 'mdc'
+        if: matrix.features == 'material'
         with:
           distribution: temurin
           java-version: '17'
       - name: Test Android resource content-type handling
-        if: matrix.features == 'mdc'
+        if: matrix.features == 'material'
         run: |
           javac -d target/android-resource-tests src/DayWebContentType.java tests/android/ContentTypeTest.java
           java -cp target/android-resource-tests dev.daybrite.day.piece.webview.ContentTypeTest
@@ -148,7 +148,7 @@ jobs:
           - { os: ubuntu-24.04, target: linux-gtk }
           - { os: ubuntu-24.04, target: linux-qt }
           - { os: windows-latest, target: windows-winui }
-          - { os: ubuntu-24.04, target: android-mdc }
+          - { os: ubuntu-24.04, target: android-material }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
     permissions:
@@ -174,7 +174,7 @@ jobs:
           target: ${{ matrix.target }}
           pack: false
           extras: true
-          java: ${{ matrix.target == 'android-mdc' || matrix.target == 'harmony-arkui' }}
+          java: ${{ matrix.target == 'android-material' || matrix.target == 'harmony-arkui' }}
           packages: >-
             ${{ runner.os == 'macOS' && 'python@3.12 llvm'
             || runner.os == 'Windows' && 'webview2-runtime llvm cmake ninja'
@@ -244,7 +244,7 @@ jobs:
           "RENDERER_ROOT=$shortRoot" >> $env:GITHUB_ENV
           "DEMO_DIR=$shortRoot/demo" >> $env:GITHUB_ENV
       - name: Install Servo Android NDK
-        if: matrix.target == 'android-mdc'
+        if: matrix.target == 'android-material'
         shell: bash
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358'
@@ -273,7 +273,7 @@ jobs:
           workspaces: ${{ env.DEMO_DIR }} -> build/day/flavors/servo/cargo/${{ matrix.target }}/debug
           shared-key: servo-${{ matrix.target }}
       - name: Build ARM64 mobile application
-        if: matrix.target == 'android-mdc' || matrix.target == 'harmony-arkui'
+        if: matrix.target == 'android-material' || matrix.target == 'harmony-arkui'
         working-directory: ${{ env.DEMO_DIR }}
         env:
           DAY_ANDROID_ABI: arm64-v8a
@@ -291,15 +291,15 @@ jobs:
         shell: bash
         run: python scripts/stage-windows-angle.py "demo/build/day/flavors/servo/cargo/$DAY_TARGET/debug/debug"
       - name: Enable emulator acceleration
-        if: matrix.target == 'android-mdc' || matrix.target == 'harmony-arkui'
+        if: matrix.target == 'android-material' || matrix.target == 'harmony-arkui'
         shell: bash
         run: sudo chmod a+rw /dev/kvm
       - name: Boot Android comparison device
-        if: matrix.target == 'android-mdc'
+        if: matrix.target == 'android-material'
         shell: bash
         run: |
-          "$DAY_BIN" devices setup -t android-mdc --name day-servo-ci --device pixel_7 --os 36 --arch x86_64
-          SERIAL="$("$DAY_BIN" devices boot -t android-mdc --device day-servo-ci --wait --headless)"
+          "$DAY_BIN" devices setup -t android-material --name day-servo-ci --device pixel_7 --os 36 --arch x86_64
+          SERIAL="$("$DAY_BIN" devices boot -t android-material --device day-servo-ci --wait --headless)"
           echo "ANDROID_SERIAL=$SERIAL" >> "$GITHUB_ENV"
           "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" shell settings put global hide_error_dialogs 1
           "$ANDROID_HOME/platform-tools/adb" -s "$SERIAL" shell settings put secure immersive_mode_confirmations confirmed
@@ -394,14 +394,14 @@ jobs:
     secrets: inherit
     with:
       project-path: demo
-      targets: macos-appkit, linux-gtk, linux-qt, windows-winui, ios-uikit, android-mdc,
+      targets: macos-appkit, linux-gtk, linux-qt, windows-winui, ios-uikit, android-material,
         harmony-arkui, web-dom
       target-packages: |
         windows-winui: webview2-runtime
       update-day-deps: true
       scripts: dayscript/webview.yaml
       script-setup: |
-        if [[ "$DAY_SCRIPT_TARGET" == android-mdc ]]; then
+        if [[ "$DAY_SCRIPT_TARGET" == android-material ]]; then
           # The normal Day stream omits activity/configuration events. Preserve those on
           # failure so a startup remount can be distinguished from a lost/repeated action.
           android_script_diagnostics() {

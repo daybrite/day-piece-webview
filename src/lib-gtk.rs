@@ -9,8 +9,8 @@
 // ---------------------------------------------------------------------------
 
 use super::*;
-use day_gtk::Gtk;
 use day_spec::NodeId;
+use day_toolkit_gtk::Gtk;
 use gtk4::prelude::*;
 use webkit6::prelude::*;
 
@@ -185,7 +185,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
         if event == webkit6::LoadEvent::Finished
             && let Some(uri) = wv.uri()
         {
-            day_gtk::emit(id, Event::custom("webview:url", uri.to_string()));
+            day_toolkit_gtk::emit(id, Event::custom("webview:url", uri.to_string()));
         }
     });
     // Spelled out because `gtk4::prelude::WidgetExt` has a `settings()` of its own (the widget's
@@ -220,7 +220,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                 return false;
             };
             decision.ignore();
-            day_gtk::emit(
+            day_toolkit_gtk::emit(
                 id,
                 new_tab_event(
                     uri.to_string(),
@@ -239,7 +239,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                     let action = gtk4::gio::SimpleAction::new(name, None);
                     let url = url.to_string();
                     action.connect_activate(move |_, _| {
-                        day_gtk::emit(id, new_tab_event(url.clone(), background))
+                        day_toolkit_gtk::emit(id, new_tab_event(url.clone(), background))
                     });
                     menu.prepend(&webkit6::ContextMenuItem::from_gaction(
                         &action, label, None,
@@ -293,7 +293,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                         return false; // let WebKit proceed
                     }
                     decision.ignore();
-                    day_gtk::emit(
+                    day_toolkit_gtk::emit(
                         id,
                         Event::Custom {
                             tag: "webview:link",
@@ -324,7 +324,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                     return false;
                 }
                 decision.ignore();
-                day_gtk::emit(
+                day_toolkit_gtk::emit(
                     id,
                     Event::Custom {
                         tag: "webview:link",
@@ -435,7 +435,7 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
                             Ok(json) => format!("1{SEP}{json}"),
                             Err(error) => engine_error("StorageError", &error),
                         };
-                        day_gtk::emit(
+                        day_toolkit_gtk::emit(
                             id,
                             Event::Custom {
                                 tag: "webview:eval",
@@ -458,7 +458,7 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
                         Ok(value) => value.to_str().to_string(),
                         Err(error) => super::engine_error("WebKitError", &error.to_string()),
                     };
-                    day_gtk::emit(
+                    day_toolkit_gtk::emit(
                         id,
                         Event::Custom {
                             tag: "webview:eval",
@@ -476,6 +476,6 @@ fn release(_backend: &mut Gtk, h: &gtk4::Widget) {
     NODE_IDS.with(|ids| ids.borrow_mut().remove(&(h.as_ptr() as usize)));
 }
 
-day_pieces::renderer!(day_gtk::RENDERERS, Gtk,
+day_pieces::renderer!(day_toolkit_gtk::RENDERERS, Gtk,
     kind: KIND, props: WebProps, patch: WebPatch,
     make: make, update: update, measure: day_pieces::fill_measure, release: release);

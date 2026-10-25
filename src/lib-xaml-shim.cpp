@@ -3,7 +3,7 @@
 
 // The web-view piece's C++/WinRT shim, parallel to src/lib-qt-shim.cpp.
 //
-// day-winui hosts UWP system XAML (DAY_XAML_NS, base Windows SDK, no WinAppSDK) inside a
+// day-toolkit-winui hosts UWP system XAML (DAY_XAML_NS, base Windows SDK, no WinAppSDK) inside a
 // Win32 window via XAML Islands. The system-XAML web view, Windows.UI.Xaml.Controls.WebView (EdgeHTML),
 // is unsupported in that host: it renders blank, never raises NavigationCompleted, and crashes on
 // navigation. The supported engine is WebView2, hosted here in windowless / visual-hosting mode,
@@ -112,7 +112,7 @@ namespace WUXI = DAY_XAML_NS::Input;
 namespace WUXM = DAY_XAML_NS::Media;
 namespace wrl = ::Microsoft::WRL;
 
-// Exported by day-xaml-sys (already linked into the app). The host HWND is the composition
+// Exported by day-toolkit-xaml-sys (already linked into the app). The host HWND is the composition
 // controller's parentWindow (for DPI / IME / input association); the page still renders windowless.
 extern "C" void *day_xaml_box(void *iinspectable_abi);
 extern "C" void *day_xaml_unbox(void *handle);

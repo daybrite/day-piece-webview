@@ -17,17 +17,17 @@ flow:
       text: "The bundled script ran."
       # WebView2's first process startup on a fresh Windows runner can exceed five seconds.
       timeout_secs: 30
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
+      only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui]
   - wait_idle: {}
   - tap: { id: webview_tools }
   - wait_for: { id: webview_support }
   - assert_visible: { id: webview_title }
   # The support rows are the piece's own answers for this target. Remote browsing on web-dom is
   # an <iframe>, which the browser keeps from reporting history or its URL, so it reads Emulated.
-  - assert_text: { id: webview_support, key: support_native, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - assert_text: { id: webview_support, key: support_native, only_on: [appkit, uikit, material, xaml, qt, gtk, arkui] }
   - assert_text: { id: webview_support, key: support_emulated, only_on: [dom] }
-  - assert_text: { id: webview_inline_support, key: support_native, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui, dom] }
-  - assert_text: { id: webview_eval_support, key: support_native, only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
+  - assert_text: { id: webview_inline_support, key: support_native, only_on: [appkit, uikit, material, xaml, qt, gtk, arkui, dom] }
+  - assert_text: { id: webview_eval_support, key: support_native, only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui] }
   - assert_visible: { id: webview }
   - assert_text: { id: webview_link, key: link_none }
 
@@ -36,32 +36,32 @@ flow:
       id: webview
       script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()"
       text: "yes"
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
+      only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui]
   # Exercise both ASCII protocol separators and a UTF-16 surrogate pair on Windows.
   - web_eval:
       id: webview
       script: "'caf\\u00e9 \\uD83C\\uDF05'"
       text: "café 🌅"
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
+      only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui]
   - assert_no_placeholders: {}
   - screenshot: { name: webview, title: "Bundled site" }
 
   # Native history reports come from the engine, not a guessed application stack.
   # Navigate with an application command. Chromium intentionally skips pages that navigate
   # through a synthetic JS click without user activation, so that is not a browser-history test.
-  - tap: { id: webview_next_page, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
-  - web_eval: { id: webview, script: "document.title", text: "A second local page", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
-  - tap: { id: webview_back, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
-  - web_eval: { id: webview, script: "document.title", text: "Bundled site", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
-  - tap: { id: webview_forward, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
-  - web_eval: { id: webview, script: "document.title", text: "A second local page", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
-  - tap: { id: webview_back, only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
-  - web_eval: { id: webview, script: "document.title", text: "Bundled site", only_on: [appkit, uikit, mdc, xaml, qt, gtk, arkui] }
+  - tap: { id: webview_next_page, only_on: [appkit, uikit, material, xaml, qt, gtk, arkui] }
+  - web_eval: { id: webview, script: "document.title", text: "A second local page", only_on: [appkit, uikit, material, xaml, qt, gtk, arkui] }
+  - tap: { id: webview_back, only_on: [appkit, uikit, material, xaml, qt, gtk, arkui] }
+  - web_eval: { id: webview, script: "document.title", text: "Bundled site", only_on: [appkit, uikit, material, xaml, qt, gtk, arkui] }
+  - tap: { id: webview_forward, only_on: [appkit, uikit, material, xaml, qt, gtk, arkui] }
+  - web_eval: { id: webview, script: "document.title", text: "A second local page", only_on: [appkit, uikit, material, xaml, qt, gtk, arkui] }
+  - tap: { id: webview_back, only_on: [appkit, uikit, material, xaml, qt, gtk, arkui] }
+  - web_eval: { id: webview, script: "document.title", text: "Bundled site", only_on: [appkit, uikit, material, xaml, qt, gtk, arkui] }
 
   # The console: the page's answer comes back as JSON, so a string arrives quoted.
-  - input: { id: webview_js, text: "document.title", only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
-  - tap: { id: webview_js_run, only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
-  - assert_text: { id: webview_js_result, text: '"Bundled site"', only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
+  - input: { id: webview_js, text: "document.title", only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui] }
+  - tap: { id: webview_js_run, only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui] }
+  - assert_text: { id: webview_js_result, text: '"Bundled site"', only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui] }
 
   # A webviewdemo:// link leaves the site, so the view cancels it and the link policy hands the
   # route to the app, which records it and keeps the system browser closed.
@@ -69,22 +69,22 @@ flow:
       id: webview
       script: "document.getElementById('app-link').click(); 'clicked'"
       text: "clicked"
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
-  - assert_text: { id: webview_link, key: link_received, args: { route: "greeting" }, only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
-  - screenshot: { name: webview-link, title: "A link from the page", only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui] }
+      only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui]
+  - assert_text: { id: webview_link, key: link_received, args: { route: "greeting" }, only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui] }
+  - screenshot: { name: webview-link, title: "A link from the page", only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui] }
 
   # Reload is supported even where eval is not. Where it is, prove this is a fresh document.
   - web_eval:
       id: webview
       script: "window.dayDemoMarker = 1"
       text: "1"
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
+      only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui]
   - tap: { id: webview_reload }
   - web_eval:
       id: webview
       script: "typeof window.dayDemoMarker + ':' + document.getElementById('script-status').textContent"
       text: "undefined:The bundled script ran."
-      only_on: [appkit, uikit, mdc, xaml, qt, gtk, dom, arkui]
+      only_on: [appkit, uikit, material, xaml, qt, gtk, dom, arkui]
   - assert_visible: { id: webview }
   - screenshot: { name: webview-reloaded, title: "Reloading the bundled site" }
 
@@ -111,7 +111,7 @@ flow:
       id: webview
       script: "document.getElementById('resource-charset').contentDocument.body.textContent"
       text: "Café résumé €"
-      only_on: [mdc, arkui]
+      only_on: [material, arkui]
   - web_eval:
       id: webview
       script: "getComputedStyle(document.documentElement).getPropertyValue('--resource-loaded').trim()"

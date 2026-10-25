@@ -108,7 +108,7 @@ impl WebProfile {
 /// requests are blocked before loading anything; deleting data afterward is not private mode.
 pub fn private_browsing_support() -> day_spec::Support {
     if cfg!(any(
-        all(feature = "mdc", target_os = "android"),
+        all(feature = "material", target_os = "android"),
         all(feature = "dom", target_arch = "wasm32")
     )) {
         day_spec::Support::Unsupported
@@ -197,9 +197,9 @@ mod storage_apple;
 /// Named profile isolation. ArkWeb exposes app-wide stores only; its default and private
 /// contexts share data by origin, but do not implement independent named profiles.
 pub fn profile_support() -> day_spec::Support {
-    #[cfg(all(feature = "mdc", target_os = "android"))]
+    #[cfg(all(feature = "material", target_os = "android"))]
     let result = android_impl::capability("supportsProfiles");
-    #[cfg(not(all(feature = "mdc", target_os = "android")))]
+    #[cfg(not(all(feature = "material", target_os = "android")))]
     let result = {
         #[cfg(any(
             all(any(feature = "appkit", feature = "gtk"), target_os = "macos"),
@@ -220,9 +220,9 @@ pub fn profile_support() -> day_spec::Support {
 }
 /// Complete deletion of a profile's cookie, cache and persistent site data.
 pub fn clear_data_support() -> day_spec::Support {
-    #[cfg(all(feature = "mdc", target_os = "android"))]
+    #[cfg(all(feature = "material", target_os = "android"))]
     let result = android_impl::capability("supportsDataClearing");
-    #[cfg(not(all(feature = "mdc", target_os = "android")))]
+    #[cfg(not(all(feature = "material", target_os = "android")))]
     let result = if cfg!(any(
         all(feature = "arkui", target_env = "ohos"),
         all(feature = "dom", target_arch = "wasm32")
@@ -485,7 +485,7 @@ pub fn inline_support() -> day_spec::Support {
             target_os = "macos"
         ),
         all(feature = "uikit", target_os = "ios"),
-        all(feature = "mdc", target_os = "android"),
+        all(feature = "material", target_os = "android"),
         // QWebEngine reads qrc assets; Windows without that engine uses a WebView2 child.
         feature = "qt",
         // WebView2 browses the exe-relative assets tree through a virtual-host mapping
@@ -910,7 +910,7 @@ pub fn eval_support() -> day_spec::Support {
         all(feature = "xaml", target_os = "windows"),
         // `evaluateJavascript` in DayWebView.evalJs, with the outer-JSON unquote and the
         // null/empty→engine-error mapping (docs/webview-eval.md).
-        all(feature = "mdc", target_os = "android"),
+        all(feature = "material", target_os = "android"),
         // `runJavaScript` in the ArkTS component, replying on `pieceEvent`'s num slot.
         all(feature = "arkui", target_env = "ohos"),
     )) {
@@ -1198,7 +1198,7 @@ pub fn support() -> day_spec::Support {
             target_os = "macos"
         ),
         all(feature = "uikit", target_os = "ios"),
-        all(feature = "mdc", target_os = "android"),
+        all(feature = "material", target_os = "android"),
         all(feature = "gtk", not(target_os = "macos")),
         feature = "qt",
         all(feature = "xaml", windows),
@@ -1469,7 +1469,7 @@ mod macos_web;
 #[cfg(all(windows, any(feature = "gtk", feature = "qt")))]
 mod windows_web;
 
-day_pieces::glue_modules!(appkit, qt, uikit, mdc, xaml, arkui, dom);
+day_pieces::glue_modules!(appkit, qt, uikit, material, xaml, arkui, dom);
 
 #[cfg(any(test, all(feature = "xaml", windows)))]
 mod xaml_path;

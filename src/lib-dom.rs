@@ -30,13 +30,13 @@
 // ---------------------------------------------------------------------------
 
 use super::*;
-use day_dom::{Dom, DomHandle};
+use day_toolkit_dom::{Dom, DomHandle};
 use day_spec::{NodeId, Proposal, Size};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 day_core::tls_group! {
-    /// The last URL day assigned per frame, so `Reload` has something to re-assign. day-dom is
+    /// The last URL day assigned per frame, so `Reload` has something to re-assign. day-toolkit-dom is
     /// write-only (`set_attr` with no getter) and `WebPatch::Reload` carries no URL, so without
     /// this the command would have nothing to act on. Keyed by the shim element id; web-dom is
     /// single-threaded and handles are never reused, so a plain map is enough.
@@ -129,6 +129,6 @@ fn release(_backend: &mut Dom, h: &DomHandle) {
 
 // Defines `register()`, which `web_view()` calls: web-dom's registry is populated at runtime,
 // unlike the link-time `renderer!` the native arms use (wasm has no `linkme` slice).
-day_pieces::dom_renderer!(day_dom::register_renderer, Dom,
+day_pieces::dom_renderer!(day_toolkit_dom::register_renderer, Dom,
     kind: KIND, props: WebProps, patch: WebPatch,
     make: make, update: update, measure: measure, release: release);

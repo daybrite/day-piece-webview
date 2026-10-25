@@ -92,12 +92,12 @@ piece exposes it on every host.
 | Target | Component and hosting | Notes and compatibility |
 |---|---|---|
 | `macos-appkit` (optional Servo adapter) | [Servo 0.6](https://docs.rs/servo/0.6.0/servo/), Surfman/WebRender in an AppKit view | Experimental, disabled by default. Runs in-process; shared engine storage, incomplete native input/UI integration, and reduced media/GPU web features. See [limits](docs/servo.md#current-limits). |
-| Linux GTK/Qt, macOS GTK/Qt, Windows XAML/WinUI, Android MDC (optional Servo adapter; the Harmony ArkUI host is [paused](docs/servo.md#paused-openharmony)) | [Servo 0.6 embedding](https://book.servo.org/embedding/overview.html), offscreen Surfman/WebRender frames presented through Day Canvas | Experimental CPU frame copies, 1× raster scale, basic input only; no IME or soft-keyboard integration. Windows requires MSVC. See [platform requirements and validation](docs/servo.md#platforms). |
+| Linux GTK/Qt, macOS GTK/Qt, Windows XAML/WinUI, Android Material Components (optional Servo adapter; the Harmony ArkUI host is [paused](docs/servo.md#paused-openharmony)) | [Servo 0.6 embedding](https://book.servo.org/embedding/overview.html), offscreen Surfman/WebRender frames presented through Day Canvas | Experimental CPU frame copies, 1× raster scale, basic input only; no IME or soft-keyboard integration. Windows requires MSVC. See [platform requirements and validation](docs/servo.md#platforms). |
 | `macos-appkit` | [WKWebView][wkwebview], a native AppKit view using system WebKit | Web features depend on the installed OS. Named persistent profiles require macOS 14+; older systems use isolated memory storage for explicit profiles. |
 | `macos-gtk` | [WKWebView][wkwebview], a Cocoa child positioned from a GTK allocation anchor | Separate native child: check clipping, overlays, focus, and scrolling. Requires Day’s native-window capture path on macOS; widget-only snapshots omit it. Apple profile limits also apply. |
 | `macos-qt` | [QWebEngineView][qt-webview], a Qt widget using Chromium | Requires Qt 6 WebEngineWidgets at build time; otherwise only a URL label is shown. Package the engine helpers and resources. See Qt resource limits below. |
 | `ios-uikit` | [WKWebView][wkwebview], a native UIKit view using system WebKit | Named persistent profiles require iOS 17+; older systems use isolated memory storage for explicit profiles. File content is restricted to the configured read-access root. |
-| `android-mdc` | [android.webkit.WebView][android-webview], hosted as an Android view | Capabilities depend on the installed WebView provider. Named profiles and complete data clearing require AndroidX feature support. Private browsing is unsupported by this adapter. |
+| `android-material` | [android.webkit.WebView][android-webview], hosted as an Android view | Capabilities depend on the installed WebView provider. Named profiles and complete data clearing require AndroidX feature support. Private browsing is unsupported by this adapter. |
 | `linux-gtk` | [WebKitWebView][webkitgtk], a GTK 4 widget using WebKitGTK's 6.0 API | Needs WebKitGTK development/runtime libraries. Bundled sites are extracted to a cache. The AppImage sandbox exception below reduces isolation. |
 | `linux-qt` | [QWebEngineView][qt-webview], a Qt widget using Chromium | Requires Qt 6 WebEngineWidgets; otherwise only a URL label is shown. Flatpak packaging needs the matching WebEngine BaseApp. See Qt resource limits below. |
 | `windows-winui` | [Microsoft.UI.Xaml.Controls.WebView2][winui-webview], the WinUI 3 control using Edge Chromium | Requires the WebView2 Runtime plus compatible app-local WebView2 loader and Core DLLs. The control handles input, focus, DPI, and composition. |
@@ -154,7 +154,7 @@ cd demo
 day launch -t macos-appkit --script dayscript/webview.yaml
 ```
 
-Choose another target with `-t`, for example `ios-uikit`, `android-mdc`, or `web-dom`.
+Choose another target with `-t`, for example `ios-uikit`, `android-material`, or `web-dom`.
 The [demo browser](demo/src/lib.rs) has an editable URL bar, Back/Forward, Reload/Stop,
 Home, an external-browser button, and private browsing settings. The Code button opens
 a testing drawer with a JavaScript console, support information and a resource-provider demo.

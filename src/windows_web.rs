@@ -306,7 +306,7 @@ mod qt_bridge {
             unsafe { string(url) },
             unsafe { string(prefix) },
             NodeId(id),
-            day_qt::emit,
+            day_toolkit_qt::emit,
             WebProfile {
                 name: unsafe { string(profile) },
                 directory: Some(unsafe { string(directory) }).filter(|s| !s.is_empty()),
@@ -351,7 +351,7 @@ mod qt_bridge {
         if let Some(host) = HOSTS.with(|m| m.borrow().get(&id).cloned()) {
             host.patch(&p)
         } else if op == 5 {
-            day_qt::emit(
+            day_toolkit_qt::emit(
                 NodeId(id),
                 Event::Custom {
                     tag: "webview:eval",

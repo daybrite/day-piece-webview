@@ -17,7 +17,7 @@ day-piece-webview-servo = { git = "https://github.com/daybrite/day-piece-webview
 servo = ["dep:day-piece-webview-servo", "day-piece-webview-servo/servo"]
 ```
 
-Day enables the adapter's toolkit feature (`appkit`, `gtk`, `qt`, `xaml`, `winui`, `mdc`, or
+Day enables the adapter's toolkit feature (`appkit`, `gtk`, `qt`, `xaml`, `winui`, `material`, or
 `arkui`). For direct Cargo checks, enable the matching adapter feature as well. Register on the UI thread before constructing views,
 then select the engine per piece:
 
@@ -115,7 +115,7 @@ first engine startup, disk/network caches, and debug compilation can dominate sm
 | `macos-gtk`, `macos-qt` | Offscreen Day Canvas | Same Apple minimum; toolkit and native browser libraries; GTK and Qt lifecycle/comparison tests passed locally |
 | `linux-gtk`, `linux-qt` | Offscreen Day Canvas | EGL/OpenGL, fontconfig, FreeType, LLVM 19+, Python 3.11+; Xvfb/Mesa for CI |
 | `windows-winui` | Offscreen Day Canvas / ANGLE | MSVC, LLVM, Python; GNU GTK/Qt targets are not supported by this adapter |
-| `android-mdc` | Offscreen Day Canvas / EGL | NDK 28.2.13676358; matching rustls Kotlin verifier AAR; APK, lifecycle/comparison tests, and live HTTPS smoke test passed locally |
+| `android-material` | Offscreen Day Canvas / EGL | NDK 28.2.13676358; matching rustls Kotlin verifier AAR; APK, lifecycle/comparison tests, and live HTTPS smoke test passed locally |
 | `harmony-arkui` | Offscreen Day Canvas / EGL | **Paused** (see [below](#paused-openharmony)): the host code compiles and ran once on the 7.0 emulator with local workarounds, but the published SpiderMonkey archive cannot be used as shipped |
 
 The comparison CI matrix builds and runs both dayscripts for every row and publishes paired

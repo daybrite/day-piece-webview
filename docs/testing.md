@@ -64,7 +64,7 @@ and absence of unsupported placeholders. Screenshots are retained for inspection
 producing a screenshot does not establish that its contents are correct.
 
 The shared demo matrix includes macos-appkit, linux-gtk, linux-qt, windows-winui, ios-uikit,
-android-mdc, harmony-arkui, and web-dom. Browser CI uses **Chromium**. There are no current
+android-material, harmony-arkui, and web-dom. Browser CI uses **Chromium**. There are no current
 matrix rows for macos-gtk, macos-qt, windows-gtk, or windows-qt, and no Firefox/WebKit browser
 rows. A shared renderer reduces duplication but does not eliminate host-integration differences.
 
@@ -78,7 +78,7 @@ These are observed walkthrough results, not a promise about subsequent revisions
 |---|---|
 | macos-appkit | 37/37 |
 | ios-uikit, iPhone simulator | 37/37 |
-| android-mdc, Pixel 7 / API 36 | 37/37 |
+| android-material, Pixel 7 / API 36 | 37/37 |
 | linux-qt | 37/37 |
 | windows-xaml | 37/37 |
 | harmony-arkui, phone and tablet emulators | 37/37 on each |
@@ -132,7 +132,7 @@ In `demo/`, choose a target with the required tools installed:
 ```sh
 day launch -p macos-appkit --script dayscript/webview.yaml
 day launch -p ios-uikit --script dayscript/webview.yaml
-day launch -p android-mdc --script dayscript/webview.yaml
+day launch -p android-material --script dayscript/webview.yaml
 day launch -p web-dom --script dayscript/webview.yaml
 ```
 

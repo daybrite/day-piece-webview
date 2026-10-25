@@ -94,7 +94,7 @@ def main():
                         help='Day executable; for local development use a wrapper around the checkout CLI')
     parser.add_argument('--out', type=Path)
     args = parser.parse_args()
-    if args.target == 'android-mdc':
+    if args.target == 'android-material':
         requested = set(filter(None, re.split(r'[,\s]+', os.environ.get('DAY_ANDROID_ABI', ''))))
         if not requested:
             raise ValueError('Set DAY_ANDROID_ABI explicitly for a reproducible Android comparison')
@@ -128,7 +128,7 @@ def main():
                                      args.target, ROOT / 'demo')
         # Measure immediately: generated mobile hosts can reuse one package path across flavors.
         row = measure(artifact)
-        if args.target == 'android-mdc' and set(row['abis']) != requested:
+        if args.target == 'android-material' and set(row['abis']) != requested:
             raise ValueError(f"APK ABIs {row['abis']} differ from DAY_ANDROID_ABI")
         lock = ROOT / 'demo/Cargo.lock'
         row['lock_sha256'] = hashlib.sha256(lock.read_bytes()).hexdigest()

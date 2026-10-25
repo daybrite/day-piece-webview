@@ -24,7 +24,7 @@ mod appkit;
         feature = "gtk",
         feature = "qt",
         feature = "xaml",
-        feature = "mdc",
+        feature = "material",
         feature = "arkui"
     ),
     any(
@@ -41,7 +41,7 @@ mod engine;
         feature = "gtk",
         feature = "qt",
         feature = "xaml",
-        feature = "mdc",
+        feature = "material",
         feature = "arkui"
     ),
     any(
@@ -84,7 +84,7 @@ pub fn register() -> Result<(), RegistrationError> {
             feature = "gtk",
             feature = "qt",
             feature = "xaml",
-            feature = "mdc",
+            feature = "material",
             feature = "arkui"
         ),
         any(

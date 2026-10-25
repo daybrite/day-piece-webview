@@ -32,10 +32,10 @@ test('missing engines, different targets, and different variants never form a pa
 test('complete platform pairs remain distinct and name the target', () => {
   const native = shot('webview');
   const servo = shot('servo');
-  Object.assign(native.byPlatform, shot('webview', 'android-mdc').byPlatform);
-  Object.assign(servo.byPlatform, shot('servo', 'android-mdc').byPlatform);
+  Object.assign(native.byPlatform, shot('webview', 'android-material').byPlatform);
+  Object.assign(servo.byPlatform, shot('servo', 'android-material').byPlatform);
   const pairs = rendererComparisons({ shots: [native, servo] }, 'en');
   assert.equal(pairs.length, 2);
-  assert.deepEqual(pairs.map(pair => pair.title), ['fixture page · macos-appkit', 'fixture page · android-mdc']);
+  assert.deepEqual(pairs.map(pair => pair.title), ['fixture page · macos-appkit', 'fixture page · android-material']);
   for (const pair of pairs) assert.ok(pair.captures.every(capture => capture.src.includes(pair.id.split('-bundled-')[0])));
 });

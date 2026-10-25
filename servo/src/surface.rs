@@ -39,7 +39,7 @@ pub(crate) fn register() -> Result<(), renderer::RegistrationError> {
         Some("gtk") => cfg!(feature = "gtk"),
         Some("qt") => cfg!(feature = "qt"),
         Some("xaml" | "winui") => cfg!(feature = "xaml"),
-        Some("mdc") => cfg!(feature = "mdc"),
+        Some("material") => cfg!(feature = "material"),
         Some("arkui") => cfg!(feature = "arkui"),
         _ => false,
     };

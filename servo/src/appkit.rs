@@ -207,7 +207,7 @@ impl ServoView {
                         if let Ok(servo::JSValue::String(url)) = reply
                             && !url.is_empty()
                         {
-                            day_appkit::emit(
+                            day_toolkit_appkit::emit(
                                 state.node.get(),
                                 new_tab_event(state.external_url(&url), background),
                             );

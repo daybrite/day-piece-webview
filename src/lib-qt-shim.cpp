@@ -473,7 +473,7 @@ void day_webview_set_transparent(void *w) {
 
 #elif defined(_WIN32)
 #include "lib-qt-windows.inc"
-#else // no Qt6WebEngineWidgets: degrade to a URL label (QtWidgets only, already linked by day-qt-sys)
+#else // no Qt6WebEngineWidgets: degrade to a URL label (QtWidgets only, already linked by day-toolkit-qt-sys)
 
 #include <QLabel>
 
