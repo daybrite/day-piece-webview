@@ -4,8 +4,7 @@
 // The web-view piece's own Qt shim behind a flat C ABI. When Qt6WebEngineWidgets is available
 // (build.rs probes pkg-config and defines DAY_WEBVIEW_QT_ENGINE) this wraps a real QWebEngineView
 // and forwards `loadFinished` to a C callback so a bound text field follows navigation. When it is
-// not (e.g. MSYS2/MINGW64, which does not package Qt6 WebEngine because Chromium won't build with
-// MinGW GCC), it degrades to a QLabel showing the URL, so windows-qt still builds, launches and
+// not, it degrades to a QLabel showing the URL, so the app still builds, launches and
 // screenshots (mirrors day-piece-webview's xaml EdgeHTML degrade). The C ABI is identical either
 // way, so lib-qt.rs is unchanged. The callback's `const char*` is only valid for the call (Rust
 // copies it).
@@ -471,8 +470,6 @@ void day_webview_set_transparent(void *w) {
 
 } // extern "C"
 
-#elif defined(_WIN32)
-#include "lib-qt-windows.inc"
 #else // no Qt6WebEngineWidgets: degrade to a URL label (QtWidgets only, already linked by day-toolkit-qt-sys)
 
 #include <QLabel>
@@ -526,7 +523,7 @@ void day_webview_tabs(void *, const char *, const char *, void (*)(uint64_t,cons
 void day_webview_set_eval_cb(void (*cb)(uint64_t, uint64_t, const char *)) { g_eval_cb = cb; }
 
 // No engine to evaluate in, but the reply is still mandatory: the Rust future is only resolved by a
-// callback, so staying silent here would hang the caller forever on windows-qt.
+// callback, so staying silent here would hang the caller forever.
 void day_webview_eval(void *w, uint64_t req, const char *script) {
     (void)script;
     if (g_eval_cb) {

@@ -47,8 +47,7 @@ an installed engine version supporting the requested operation. Apple and Androi
 support at runtime; Android also probes complete deletion support. On older Apple systems explicit named profiles use isolated memory rather
 than falling back to the global persistent jar. ArkWeb's default and private stores share by
 origin but cannot provide independent named account profiles. Clearing is explicitly rejected
-there rather than deleting unrelated sites. Windows Wry's incognito context is engine-managed;
-it does not guarantee independent named private accounts.
+there rather than deleting unrelated sites.
 
 Private requests on unsupported engines are blocked before resource registration/navigation;
 JavaScript/data operations fail instead of falling back to persistent storage. Private browsing

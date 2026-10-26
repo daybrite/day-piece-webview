@@ -7,6 +7,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 ## Unreleased
 
+- Removed: the WebView2 hosts (through Wry) for `windows-gtk` and `windows-qt`, which Day no
+  longer builds, along with the crate's `wry` and `windows` dependencies.
 - Fixed: on iOS 17 and 18, a full-screen page that declares `viewport-fit=cover` was laid out
   short by the top and bottom safe areas, so a toolbar fixed to the bottom of the page floated
   above the home indicator. The web view now has WebKit size the page again once WebKit stops

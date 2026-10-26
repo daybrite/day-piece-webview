@@ -65,7 +65,7 @@ producing a screenshot does not establish that its contents are correct.
 
 The shared demo matrix includes macos-appkit, linux-gtk, linux-qt, windows-winui, ios-uikit,
 android-material, harmony-arkui, and web-dom. Browser CI uses **Chromium**. There are no current
-matrix rows for macos-gtk, macos-qt, windows-gtk, or windows-qt, and no Firefox/WebKit browser
+matrix rows for macos-gtk or macos-qt, and no Firefox/WebKit browser
 rows. A shared renderer reduces duplication but does not eliminate host-integration differences.
 
 ## Observed results
@@ -179,8 +179,7 @@ These observations cover macOS GTK; they do not add Linux or Windows runtime cov
 ## Document readiness and same-URL reloads
 
 `on_load` is a completed-document notification. Linux GTK now reports WebKitGTK's
-`LoadEvent::Finished`; Qt reports successful `loadFinished`; Windows Wry filters its
-page-load callback to `PageLoadEvent::Finished`. This permits apps to start JavaScript
+`LoadEvent::Finished`; Qt reports successful `loadFinished`. This permits apps to start JavaScript
 work after each reload of a stable application resource URL. URI-change/start events
 are too early and may not occur on a same-URL reload. Day-News's
 `dayscript/inline-reader.yaml` exercises automatic extraction across repeated resource

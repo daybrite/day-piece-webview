@@ -10,7 +10,6 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(day_qt_webengine)");
     day_build::bridge::generate().expect("webview browser bridge");
     println!("cargo:rerun-if-changed=src/lib-qt-shim.cpp");
-    println!("cargo:rerun-if-changed=src/lib-qt-windows.inc");
     println!("cargo:rerun-if-changed=src/lib-xaml-shim.cpp");
     println!("cargo:rerun-if-changed=src/xaml-strings.h");
     println!("cargo:rerun-if-changed=src/resources.h");
@@ -30,8 +29,7 @@ fn main() {
 }
 
 fn build_qt() {
-    // QWebEngineView lives in Qt6WebEngineWidgets, which not every Qt host ships: MSYS2/MINGW64
-    // (windows-qt) has no Qt6 WebEngine at all (Chromium won't build with MinGW GCC). When it's
+    // QWebEngineView lives in Qt6WebEngineWidgets, which not every Qt install ships. When it's
     // absent the shim degrades to a QtWidgets URL label (see lib-qt-shim.cpp's #else), so build
     // against Qt6Widgets (which day-toolkit-qt-sys already links) instead of failing the build.
     let has_webengine = pkg_config_exists("Qt6WebEngineWidgets");
@@ -39,8 +37,7 @@ fn build_qt() {
         "Qt6WebEngineWidgets" // --cflags pull in Qt6Core/Gui/Widgets too
     } else {
         println!(
-            "cargo:warning=Qt6WebEngineWidgets not found; day-piece-webview uses WebView2 on Windows, otherwise a URL \
-             label (no native browser)."
+            "cargo:warning=Qt6WebEngineWidgets not found; day-piece-webview shows a URL label (no native browser)."
         );
         "Qt6Widgets"
     };

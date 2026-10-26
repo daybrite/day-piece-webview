@@ -15,26 +15,20 @@ sources, framework dependencies, and web assets.
 | macos-gtk | WKWebView | Cocoa child positioned from a GTK allocation anchor |
 | linux-gtk | WebKitGTK 6 | GTK 4, libadwaita, WebKitGTK 6 development/runtime libraries |
 | macos-qt, linux-qt | QWebEngineView | Qt 6 WebEngineWidgets at build time; otherwise a URL-label fallback |
-| windows-qt | QWebEngineView or WebView2 | WebEngine if detected; otherwise a Wry WebView2 child in a QWidget |
-| windows-gtk | WebView2 | Wry child window positioned from the GTK allocation |
 | windows-winui | WebView2 | WinUI 3 WebView2 control; WebView2 Runtime required |
 | android-material | Android WebView | System WebView; piece contributes the INTERNET permission |
 | harmony-arkui | ArkWeb | ArkTS Web component; compatible installed ArkWeb runtime; resource handler requires API 12+ |
 | web-dom | iframe | Host browser; no separate engine installation |
 
 Windows XAML uses WebView2, **not** the older EdgeHTML XAML WebView. The composition controller
-places its visual in the XAML tree and forwards pointer events. It is distinct from the child
-HWND used by Wry on Windows GTK/Qt. The WebView2 SDK used to compile the shim does not replace
+places its visual in the XAML tree and forwards pointer events. The WebView2 SDK used to compile the shim does not replace
 the installed WebView2 Runtime.
 
 The XAML browser is closed by Day's piece-release hook. Temporary removal from the visual tree
 (XAML `Unloaded`, including reparenting during cover layout) does not destroy it. Asynchronous
-startup callbacks ignore a released view. On Windows Qt, Wry initialization is queued after
-`showEvent` returns because Wry pumps Win32 messages while creating WebView2; starting it during
-Day's tree construction can re-enter an unfinished layout. Closing the widget cancels queued
-startup, and a close delivered during initialization releases the newly created browser.
+startup callbacks ignore a released view.
 
-Native child hosts, particularly macOS GTK and Windows GTK/Qt, have clipping/overlap constraints.
+Native child hosts, particularly macOS GTK, have clipping/overlap constraints.
 Test nested scrolling, popovers, keyboard focus, resizing, and visibility in the actual host.
 On macOS GTK, a widget-only GTK screenshot omits the Cocoa child; capture the native window.
 
@@ -54,7 +48,6 @@ remote embedding failures still need error handling.
 | Qt WebEngine | `qrc:/day/assets/…` |
 | Android WebView | `file:///android_asset/…` |
 | WebView2 on XAML | Virtual host `day-assets.example` mapped to a local asset directory |
-| Wry WebView2 hosts | Local asset files, including extraction where needed |
 | ArkWeb | `resource://rawfile/day/…` |
 | web-dom | Deployed same-origin `assets/data/…` paths |
 
@@ -75,7 +68,6 @@ binary responses. No loopback listener is used.
 | Qt WebEngine | QWebEngineUrlSchemeHandler, `day-resource://p…/` | Scheme registered before Qt startup; resource views get their own profile |
 | Android | `shouldInterceptRequest`, reserved `https://day-resource.invalid/…` | WebResourceResponse on WebView's I/O thread |
 | Windows XAML | WebView2 WebResourceRequested at reserved HTTPS origin | Iframe-aware filter, deferrals for worker reads, desktop DispatcherQueue completion |
-| Windows Wry hosts | Asynchronous custom protocol, synthetic `http://day-resource.p…/` | WebView2 mapping; not a network HTTP endpoint |
 | Harmony | ArkWeb NDK scheme handler at reserved HTTPS origin | Registered per web tag after controller attachment, before navigation; binary data bypasses ArkTS |
 | web-dom | Scoped service worker and message channels | HTTPS/localhost, owning tab alive, synchronous Rust callback on app thread |
 

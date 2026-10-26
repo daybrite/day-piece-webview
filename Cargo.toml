@@ -22,9 +22,9 @@ build = "build.rs"
 
 [features]
 appkit = ["dep:day-toolkit-appkit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
-# GTK uses WebKitGTK on Linux, WKWebView on macOS, and WebView2 through Wry on Windows.
-gtk = ["dep:objc2-core-graphics", "objc2-app-kit/objc2-core-graphics", "dep:wry", "dep:day-toolkit-gtk", "dep:gtk4", "dep:webkit6", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
-qt = ["dep:day-toolkit-qt", "dep:wry"]                 # + build.rs compiles src/lib-qt-shim.cpp, linking Qt6WebEngineWidgets when present (else a URL-label fallback)
+# GTK uses WebKitGTK on Linux and WKWebView on macOS.
+gtk = ["dep:objc2-core-graphics", "objc2-app-kit/objc2-core-graphics", "dep:day-toolkit-gtk", "dep:gtk4", "dep:webkit6", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
+qt = ["dep:day-toolkit-qt"]                 # + build.rs compiles src/lib-qt-shim.cpp, linking Qt6WebEngineWidgets when present (else a URL-label fallback)
 # objc2-web-kit 0.3 binds WKWebView for macOS only, so UIKit hand-rolls it via extern_class!/msg_send!.
 uikit = ["dep:day-toolkit-uikit", "dep:objc2", "dep:objc2-ui-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:block2"]
 material = ["dep:day-toolkit-material", "dep:day-platform-android"]        # + [package.metadata.day.android]
@@ -78,7 +78,7 @@ day-toolkit-dom = { version = "0.6", optional = true }
 # Apple completion handlers for evaluateJavaScript (docs/webview-eval.md).
 gtk4 = { version = "0.11", optional = true }
 
-# WebKitGTK is only built on Linux. macOS/Windows have their own native hosts.
+# WebKitGTK is only built on Linux. macOS has its own native host.
 [target.'cfg(all(not(target_os = "macos"), not(target_os = "windows")))'.dependencies]
 webkit6 = { version = "0.6", optional = true }
 
@@ -162,6 +162,3 @@ objc2-core-graphics = { version = "0.3", optional = true, features = ["CGEvent",
 objc2-core-foundation = { version = "0.3", optional = true, features = ["CFCGTypes"] }
 objc2-web-kit = { version = "0.3", optional = true, features = ["WKWebView", "WKWebViewConfiguration", "WKNavigationDelegate", "WKNavigation", "WKNavigationAction", "WKFrameInfo", "WKError", "block2"] }
 
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = [] }
-wry = { version = "0.57", default-features = false, optional = true }

@@ -101,8 +101,6 @@ piece exposes it on every host.
 | `linux-gtk` | [WebKitWebView][webkitgtk], a GTK 4 widget using WebKitGTK's 6.0 API | Needs WebKitGTK development/runtime libraries. Bundled sites are extracted to a cache. The AppImage sandbox exception below reduces isolation. |
 | `linux-qt` | [QWebEngineView][qt-webview], a Qt widget using Chromium | Requires Qt 6 WebEngineWidgets; otherwise only a URL label is shown. Flatpak packaging needs the matching WebEngine BaseApp. See Qt resource limits below. |
 | `windows-winui` | [Microsoft.UI.Xaml.Controls.WebView2][winui-webview], the WinUI 3 control using Edge Chromium | Requires the WebView2 Runtime plus compatible app-local WebView2 loader and Core DLLs. The control handles input, focus, DPI, and composition. |
-| `windows-gtk` | [WebView2][webview2] through [Wry][wry], in a child HWND positioned from GTK | Requires the WebView2 Runtime. The child window has clipping/overlap constraints; test popovers, focus, resizing, and visibility. |
-| `windows-qt` | [QWebEngineView][qt-webview] when detected; otherwise [WebView2][webview2] through [Wry][wry] in a QWidget | Selection happens at build time. The Wry path needs the WebView2 Runtime and has child-window constraints; Qt WebEngine's resource limits apply to the other path. |
 | `harmony-arkui` | ArkWeb through the ArkTS [Web component][arkweb] | Resource interception needs API 12+. The installed engine must match the device/emulator ABI. Named profiles are emulated; complete per-profile clearing is unsupported. |
 | `web-dom` | An HTML [iframe][iframe] rendered by the host browser | Sites can block embedding. Evaluation needs same-origin content; URL/history readback and Back/Forward/Stop are unavailable. The adapter cannot provide isolated browser profiles or private mode. |
 
@@ -142,8 +140,6 @@ GTK/Qt are not part of the demo matrix.
 [qt-webview]: https://doc.qt.io/qt-6/qwebengineview.html
 [winui-webview]: https://learn.microsoft.com/en-us/windows/windows-app-sdk/api/winrt/microsoft.ui.xaml.controls.webview2
 [webview2-composition]: https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2compositioncontroller
-[webview2]: https://learn.microsoft.com/en-us/microsoft-edge/webview2/
-[wry]: https://docs.rs/wry/latest/wry/
 [arkweb]: https://github.com/openharmony/docs/blob/master/en/application-dev/reference/apis-arkweb/arkts-basic-components-web.md
 [iframe]: https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-iframe-element
 

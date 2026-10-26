@@ -486,7 +486,7 @@ pub fn inline_support() -> day_spec::Support {
         ),
         all(feature = "uikit", target_os = "ios"),
         all(feature = "material", target_os = "android"),
-        // QWebEngine reads qrc assets; Windows without that engine uses a WebView2 child.
+        // QWebEngine reads qrc assets.
         feature = "qt",
         // WebView2 browses the exe-relative assets tree through a virtual-host mapping
         // (degrades to the URL label when the WebView2 Runtime is absent, like `support()`).
@@ -1456,18 +1456,13 @@ impl Piece for WebView {
 // files grouped next to lib.rs.
 // ---------------------------------------------------------------------------
 
-#[cfg(all(any(target_os = "macos", windows), feature = "gtk"))]
+#[cfg(all(target_os = "macos", feature = "gtk"))]
 mod gtk_assets;
 #[cfg(all(target_os = "macos", feature = "gtk"))]
 #[path = "lib-gtk-macos.rs"]
 mod gtk_macos;
-#[cfg(all(windows, feature = "gtk"))]
-#[path = "lib-gtk-windows.rs"]
-mod gtk_windows;
 #[cfg(all(target_os = "macos", any(feature = "appkit", feature = "gtk")))]
 mod macos_web;
-#[cfg(all(windows, any(feature = "gtk", feature = "qt")))]
-mod windows_web;
 
 day_pieces::glue_modules!(appkit, qt, uikit, material, xaml, arkui, dom);
 
