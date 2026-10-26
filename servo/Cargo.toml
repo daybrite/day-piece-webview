@@ -8,7 +8,6 @@ rust-version = "1.89"
 description = "Experimental Servo renderer for day-piece-webview"
 repository = "https://github.com/daybrite/day-piece-webview"
 license = "MPL-2.0"
-publish = false
 
 [features]
 default = []
@@ -22,10 +21,10 @@ arkui = ["day-piece-webview/arkui"]
 appkit = ["day-piece-webview/appkit", "dep:day-toolkit-appkit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
 
 [dependencies]
-day-piece-webview = { path = ".." }
-day-spec = { git = "https://github.com/daybrite/day.git" }
-day-core = { git = "https://github.com/daybrite/day.git" }
-day-reactive = { git = "https://github.com/daybrite/day.git" }
+day-piece-webview = { path = "..", version = "0.4" }
+day-spec = "0.6"
+day-core = "0.6"
+day-reactive = "0.6"
 serde_json = "1"
 url = "2"
 log = "0.4"
@@ -58,7 +57,7 @@ rustls = { version = "0.23", optional = true, default-features = false, features
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-day-toolkit-appkit = { git = "https://github.com/daybrite/day.git", optional = true }
+day-toolkit-appkit = { version = "0.6", optional = true }
 objc2 = { version = "0.6", optional = true }
 objc2-app-kit = { version = "0.3", optional = true, features = ["NSView", "NSResponder"] }
 objc2-foundation = { version = "0.3", optional = true, features = ["NSString", "NSURL", "NSURLRequest", "NSError"] }
@@ -75,8 +74,8 @@ servo = { version = "=0.6.0", optional = true, default-features = false, feature
 servo-default-resources = { version = "=0.6.0", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
-day-toolkit-material = { git = "https://github.com/daybrite/day.git", optional = true }
-day-platform-android = { git = "https://github.com/daybrite/day.git", optional = true }
+day-toolkit-material = { version = "0.6", optional = true }
+day-platform-android = { version = "0.6", optional = true }
 rustls-platform-verifier = { version = "=0.7.1", optional = true }
 # Keep the Kotlin AAR and Rust package on the same ABI version.
 rustls-platform-verifier-android = { version = "=0.2.0", optional = true }

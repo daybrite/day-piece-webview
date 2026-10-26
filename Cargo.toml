@@ -6,9 +6,6 @@ rust-version = "1.89"
 description = "An embedded native web view for Day apps: remote pages and bundled sites"
 repository = "https://github.com/daybrite/day-piece-webview"
 license = "MPL-2.0"
-# The day framework crates are not on crates.io yet; neither is this one. Apps depend on it
-# from git, exactly as they depend on day.
-publish = false
 build = "build.rs"
 
 # An external Day Piece (https://daybrite.dev/contributing/extending) wrapping each toolkit's native web
@@ -57,27 +54,27 @@ assets = ["web"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 psl = "2.1"
-day-async = { git = "https://github.com/daybrite/day.git" }
+day-async = "0.6"
 url = "2"
 percent-encoding = "2"
 serde_json = "1"
-day-bridge = { git = "https://github.com/daybrite/day.git" }
+day-bridge = "0.6"
 log = "0.4"
-day-spec = { git = "https://github.com/daybrite/day.git" }
-day-core = { git = "https://github.com/daybrite/day.git" }
-day-pieces = { git = "https://github.com/daybrite/day.git" }
-day-reactive = { git = "https://github.com/daybrite/day.git" }
+day-spec = "0.6"
+day-core = "0.6"
+day-pieces = "0.6"
+day-reactive = "0.6"
 linkme = "0.3"
-day-toolkit-appkit = { git = "https://github.com/daybrite/day.git", optional = true }
-day-toolkit-gtk = { git = "https://github.com/daybrite/day.git", optional = true }
-day-toolkit-qt = { git = "https://github.com/daybrite/day.git", optional = true }
-day-toolkit-uikit = { git = "https://github.com/daybrite/day.git", optional = true }
-day-toolkit-material = { git = "https://github.com/daybrite/day.git", optional = true }
-day-platform-android = { git = "https://github.com/daybrite/day.git", optional = true }
-day-toolkit-winui = { git = "https://github.com/daybrite/day.git", optional = true }
-day-toolkit-xaml-sys = { git = "https://github.com/daybrite/day.git", optional = true }
-day-toolkit-arkui = { git = "https://github.com/daybrite/day.git", optional = true }
-day-toolkit-dom = { git = "https://github.com/daybrite/day.git", optional = true }
+day-toolkit-appkit = { version = "0.6", optional = true }
+day-toolkit-gtk = { version = "0.6", optional = true }
+day-toolkit-qt = { version = "0.6", optional = true }
+day-toolkit-uikit = { version = "0.6", optional = true }
+day-toolkit-material = { version = "0.6", optional = true }
+day-platform-android = { version = "0.6", optional = true }
+day-toolkit-winui = { version = "0.6", optional = true }
+day-toolkit-xaml-sys = { version = "0.6", optional = true }
+day-toolkit-arkui = { version = "0.6", optional = true }
+day-toolkit-dom = { version = "0.6", optional = true }
 # Apple completion handlers for evaluateJavaScript (docs/webview-eval.md).
 gtk4 = { version = "0.11", optional = true }
 
@@ -86,12 +83,12 @@ gtk4 = { version = "0.11", optional = true }
 webkit6 = { version = "0.6", optional = true }
 
 [build-dependencies]
-day-build = { git = "https://github.com/daybrite/day.git" }
-day-toolchain = { git = "https://github.com/daybrite/day.git" }
+day-build = "0.6"
+day-toolchain = "0.6"
 cc = "1"
 
 [dev-dependencies]
-day-mock = { git = "https://github.com/daybrite/day.git" }
+day-mock = "0.6"
 
 # Standalone-piece Android contribution (https://daybrite.dev/contributing/extending). The day CLI reads
 # this from `cargo metadata` and folds it into the app's Gradle build: the piece carries its

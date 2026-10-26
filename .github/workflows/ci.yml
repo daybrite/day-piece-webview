@@ -6,12 +6,14 @@ name: ci
 #   cross-check do the mobile and web arms compile for their targets?
 #   renderer-comparison do native and Servo pages pass and produce matched captures?
 #   demo        do the walkthroughs pass on all eight primary platform-toolkit pairs,
-#               against day's newest main?
+#               against day's main or newest release?
 #
-# No Cargo.lock is committed, here or in demo/: this crate tracks an unpublished framework by
-# its bare git URL, so every run resolves day afresh at the tip of main and proves the crate
-# against it. A red run after a day push is the signal, not a nuisance, and there is no pinned
-# lock for a local `day patch` table to rewrite and commit by accident.
+# No Cargo.lock is committed, here or in demo/: every run resolves day afresh. A push builds against the
+# head of day's main (and of every other Day repository it uses), and the nightly run against
+# the newest releases on crates.io (daybrite/actions' day-deps). A red push run after a day push
+# is the signal, not a nuisance; a red nightly run means this crate needs a day that is not
+# released yet. There is no pinned lock for a local `day patch` table to rewrite and commit by
+# accident.
 on:
   push:
     branches: ["**"]
@@ -19,6 +21,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      day-main:
+        description: Build against day's main branch instead of the newest release
+        type: boolean
+        default: false
       measure-sizes:
         description: Compare native-only and Servo release artifact sizes
         type: boolean
@@ -52,6 +58,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      # Day from crates.io, or from main on a push (daybrite/actions day-deps).
+      - uses: daybrite/actions/.github/actions/day-deps@v1
+        with:
+          day-deps: ${{ inputs.day-main && 'main' || 'auto' }}
       - name: Install the toolkit and web engine libraries
         if: runner.os == 'Linux'
         uses: daybrite/actions/.github/actions/setup-day-deps@v1
@@ -119,6 +129,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # Day from crates.io, or from main on a push (daybrite/actions day-deps).
+      - uses: daybrite/actions/.github/actions/day-deps@v1
+        with:
+          day-deps: ${{ inputs.day-main && 'main' || 'auto' }}
       - uses: actions/setup-java@v5
         if: matrix.features == 'material'
         with:
@@ -165,6 +179,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      # Day from crates.io, or from main on a push (daybrite/actions day-deps).
+      - uses: daybrite/actions/.github/actions/day-deps@v1
+        with:
+          day-deps: ${{ inputs.day-main && 'main' || 'auto' }}
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -398,7 +416,11 @@ jobs:
         harmony-arkui, web-dom
       target-packages: |
         windows-winui: webview2-runtime
-      update-day-deps: true
+      day-deps: ${{ inputs.day-main && 'main' || 'auto' }}
+      # On a version tag, after every leg passed: the library crates to crates.io.
+      publish-crates: true
+      # The piece, then the Servo backend, which depends on the piece.
+      publish-crates-paths: . servo
       scripts: dayscript/webview.yaml
       script-setup: |
         if [[ "$DAY_SCRIPT_TARGET" == android-material ]]; then

@@ -9,7 +9,7 @@ browsing, JavaScript evaluation, bundled websites, and application-provided reso
 
 ```toml
 [dependencies]
-day-piece-webview = { git = "https://github.com/daybrite/day-piece-webview.git" }
+day-piece-webview = "0.4"
 ```
 
 `day build` selects the backend feature and stages native code and browser assets automatically.

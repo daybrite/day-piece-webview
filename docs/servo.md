@@ -10,8 +10,8 @@ Servo and WebView pages can coexist in tabs or separate windows of one app.
 
 ```toml
 [dependencies]
-day-piece-webview = { git = "https://github.com/daybrite/day-piece-webview.git" }
-day-piece-webview-servo = { git = "https://github.com/daybrite/day-piece-webview.git", optional = true, default-features = false }
+day-piece-webview = "0.4"
+day-piece-webview-servo = { version = "0.4", optional = true, default-features = false }
 
 [features]
 servo = ["dep:day-piece-webview-servo", "day-piece-webview-servo/servo"]
