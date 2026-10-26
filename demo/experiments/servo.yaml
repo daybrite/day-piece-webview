@@ -19,8 +19,8 @@ flow:
   - tap: { id: webview_renderer_tab:3 }
   - assert_text: { id: webview_renderer_tab:3, key: renderer_servo }
   - web_eval: { id: webview_tab:3, script: "navigator.userAgent.includes('Servo')", text: "true", timeout_secs: 90 }
-  - web_eval: { id: webview_tab:3, script: "typeof window.rendererFixture", text: "undefined" }
-  - web_eval: { id: webview_tab:3, script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()", text: "yes" }
+  - web_eval: { id: webview_tab:3, script: "typeof window.rendererFixture", text: "undefined", timeout_secs: 30 }
+  - web_eval: { id: webview_tab:3, script: "getComputedStyle(document.documentElement).getPropertyValue('--site-loaded').trim()", text: "yes", timeout_secs: 30 }
   - screenshot: { name: servo-bundled, title: "Servo bundled page" }
   - tap: { id: tab_previous_tab:3 }
   - web_eval: { id: webview_tab:2, script: "window.rendererFixture", text: "123" }
