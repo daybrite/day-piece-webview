@@ -39,10 +39,8 @@ bundled mount routing, HEAD/ranges, missing owners, and scope/path boundaries. I
 replace an actual service-worker test in a browser. The Harmony host harness tests command
 queueing and disposal, not the NDK scheme handler itself.
 
-The Linux Qt host job also builds and runs `tests/qt` with the offscreen Qt platform. It compiles
-the Windows QWidget host against a fake bridge so its scheduling and lifetime rules are tested
-without a Windows runner. XAML reparenting and the actual Windows Qt engine still require native
-execution; downstream Stanza reader tests cover those paths separately.
+XAML reparenting still requires native execution; downstream Stanza reader tests cover that path
+separately.
 
 ## End-to-end resource assertions
 
