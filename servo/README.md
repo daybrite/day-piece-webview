@@ -1,13 +1,27 @@
-<!-- Copyright © The Daybrite Project; SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!--
+Copyright © The Daybrite Project
+SPDX-License-Identifier: MPL-2.0
+-->
+
 # day-piece-webview-servo
 
-Experimental Servo adapter for `day-piece-webview`, on macOS, Linux, Windows (MSVC), and Android.
-The OpenHarmony host compiles but is [paused](../docs/servo.md#paused-openharmony) until the
-engine's prebuilt SpiderMonkey can be used as shipped there.
-Enable the `servo` feature (disabled by default) and call `register()` on the UI thread before
-creating views. Day selects the host feature for the chosen toolkit. AppKit uses a native GPU surface;
-other hosts present offscreen frames through Day Canvas. These paths remain experimental.
+Render a Day web view with the experimental Servo engine.
 
-See [setup, registration, demo, and limitations](../docs/servo.md). This package depends on the
-native piece; the native piece has no dependency on this package. Applications that expose the
-adapter's `servo` feature inherit its resolution constraints even when that build option is off.
+[Day](https://daybrite.dev/docs/) is a Rust framework for building apps with native desktop and
+mobile controls, plus HTML controls on the web.
+
+Register the adapter during UI startup and select Servo per view. Native views remain available
+alongside it. Review the platform requirements and missing browser-host features before use.
+
+## Use
+
+Add the optional adapter dependency, enable its `servo` feature, and register it on the UI
+thread. Follow the setup guide for the required toolkit features and engine toolchain.
+
+## Documentation
+
+- [Setup and usage guide](../docs/servo.md)
+- [Rust API](https://docs.rs/day-piece-webview-servo/0.4.3/day_piece_webview_servo/)
+- [Crates.io](https://crates.io/crates/day-piece-webview-servo)
+
+[Source](https://github.com/daybrite/day-piece-webview/tree/main/servo) · [MPL-2.0 license](https://github.com/daybrite/day-piece-webview/blob/main/LICENSE)

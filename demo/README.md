@@ -104,9 +104,9 @@ The demo declares the adapter as an optional dependency, so Cargo resolves its e
 even in a native demo build. Apps depending only on `day-piece-webview` avoid that graph.
 
 CI runs the native walkthrough across the platform matrix and separate mixed-renderer jobs
-for all implemented Servo hosts. The website gallery groups matched WebView and Servo captures
-by target, showing bundled and provider pages side-by-side. Run `experiments/renderer-comparison.yaml` with `--flavor servo`
-to reproduce them locally. See [CI and gallery details](../docs/testing.md#renderer-comparison-in-ci-and-on-the-website).
+for all implemented Servo hosts, which upload matched WebView and Servo captures of the bundled
+and provider pages from each run. Run `experiments/renderer-comparison.yaml` with `--flavor servo`
+to reproduce them locally. See [CI details](../docs/testing.md#renderer-comparison-in-ci).
 
 For measured native-versus-Servo sizes and the repeatable measurement command, see
 [demo build sizes](../docs/build-sizes.md).

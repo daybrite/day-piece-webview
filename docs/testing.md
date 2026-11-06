@@ -317,7 +317,7 @@ LLVM, and deployment-target environment described in [Servo setup](servo.md). Ba
 cover registration idempotence and conflicts without initializing an engine; the demo scripts
 exercise actual mixed-engine routing and lifetime.
 
-## Renderer comparison in CI and on the website
+## Renderer comparison in CI
 
 The demo's `website/site.toml` explicitly includes `macos-gtk` and `macos-qt` in its gallery.
 Day normally excludes those development targets when merging screenshot indexes; the matching
@@ -344,16 +344,16 @@ The paint checks require the synthetic marker in both engines, without requiring
 page pixels. The host appearance is shared, but Servo does not yet receive AppKit appearance changes, so
 the bundled page can appear light in Servo and dark in WKWebView; see [current limits](servo.md#current-limits).
 
-The job uploads `screenshots-renderer-comparison-<target>` with the usual
-`<target>/<variant>/<shot>.png` layout and Day's `gallery.json`. The native demo workflow waits
-for this job before starting, so its existing website and release jobs collect the comparison
-artifact alongside native captures. Host lint and cross-check jobs run independently.
-A failed comparison blocks publication. macOS GTK requires the matching Day native-window
+The job uploads `flavor-servo-screenshots-renderer-comparison-<target>` with the usual
+`<target>/<variant>/<shot>.png` layout and Day's `gallery.json`. The name follows the shared
+workflow's convention for a flavor's captures, so its release and website jobs leave the artifact
+out: the tree carries its own `<target>/gallery.json`, and a release bundle holds one file per
+path. The comparison captures stay downloadable from the run. The native demo workflow waits for
+this job, so a failed comparison holds back the demo, its release, and its website. Host lint and
+cross-check jobs run independently. macOS GTK requires the matching Day native-window
 capture fix: GTK widget snapshots omit Cocoa browser children. The native piece also prevents
 a released GTK anchor from reattaching its old WKWebView over a replacement renderer. Script reports upload even on failure.
 
-The project-local Daysite gallery override displays complete WebView/Servo pairs side-by-side
-(vertically on narrow screens), with full-size image links and localized capture labels.
-It reads each channel's generated manifest, keeping release and main screenshots separate.
-Older releases without comparison captures retain the ordinary gallery. This requires no
-shared-workflow or Daysite changes.
+The demo website keeps a gallery override (`demo/website/components/GalleryPage.astro`) that
+shows complete WebView/Servo pairs side by side when a channel's manifest holds both captures.
+The website job does not collect the comparison artifact, so the site shows the ordinary gallery.
