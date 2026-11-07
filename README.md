@@ -16,7 +16,7 @@ use iframes and remain subject to same-origin and embedding restrictions.
 
 ## Use
 
-Add `day-piece-webview = "0.4.4"` to your app’s `[dependencies]`.
+Add `day-piece-webview = "0.*"` to your app’s `[dependencies]`.
 Build with the Day CLI to select the matching toolkit integration.
 
 ## Documentation

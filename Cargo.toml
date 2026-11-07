@@ -14,11 +14,8 @@ build = "build.rs"
 # cross-platform front-end (Rust) and its per-toolkit backend (objc2 / C++ shims / Android Java /
 # ArkTS / gtk-rs) without touching any day crate. See docs/webview.md.
 #
-# Every day dependency names the bare canonical URL: no branch, tag, or rev. Cargo unifies a git
-# dependency only when URL and ref match, so an app on `git = "…/day.git"` and a piece pinned to
-# a tag would carry two copies of every day crate; leaving the ref off lets the app's Cargo.lock
-# choose one revision for the whole graph. No lock is committed here (see .gitignore), and
-# `compat` below says which day minor this release is built and tested against.
+# Daybrite-owned dependencies accept every stable 0.x release. Apps retain a tested
+# dependency set with Cargo.lock; updating it may require source changes.
 
 [features]
 appkit = ["dep:day-toolkit-appkit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-core-foundation", "dep:objc2-web-kit", "dep:block2"]
@@ -41,8 +38,8 @@ arkui = ["dep:day-toolkit-arkui"]        # + [package.metadata.day.ohos]
 dom = ["dep:day-toolkit-dom"]
 
 [package.metadata.day]
-# The day minor this release is built and tested against. `day build` notes a mismatch.
-compat = "0.6"
+# Accept the pre-1.0 series; source compatibility between releases is not guaranteed.
+compat = "0.*"
 
 # Backends this piece carries a native-renderer [features] entry for. `day` unions `<pkg>/<backend>`
 # into an app build (Tier A.2), so an app depends on this piece with a plain `{ git = "…" }` line,
@@ -54,27 +51,27 @@ assets = ["web"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 psl = "2.1"
-day-async = "0.6"
+day-async = "0.*"
 url = "2"
 percent-encoding = "2"
 serde_json = "1"
-day-bridge = "0.6"
+day-bridge = "0.*"
 log = "0.4"
-day-spec = "0.6"
-day-core = "0.6"
-day-pieces = "0.6"
-day-reactive = "0.6"
+day-spec = "0.*"
+day-core = "0.*"
+day-pieces = "0.*"
+day-reactive = "0.*"
 linkme = "0.3"
-day-toolkit-appkit = { version = "0.6", optional = true }
-day-toolkit-gtk = { version = "0.6", optional = true }
-day-toolkit-qt = { version = "0.6", optional = true }
-day-toolkit-uikit = { version = "0.6", optional = true }
-day-toolkit-material = { version = "0.6", optional = true }
-day-platform-android = { version = "0.6", optional = true }
-day-toolkit-winui = { version = "0.6", optional = true }
-day-toolkit-xaml-sys = { version = "0.6", optional = true }
-day-toolkit-arkui = { version = "0.6", optional = true }
-day-toolkit-dom = { version = "0.6", optional = true }
+day-toolkit-appkit = { version = "0.*", optional = true }
+day-toolkit-gtk = { version = "0.*", optional = true }
+day-toolkit-qt = { version = "0.*", optional = true }
+day-toolkit-uikit = { version = "0.*", optional = true }
+day-toolkit-material = { version = "0.*", optional = true }
+day-platform-android = { version = "0.*", optional = true }
+day-toolkit-winui = { version = "0.*", optional = true }
+day-toolkit-xaml-sys = { version = "0.*", optional = true }
+day-toolkit-arkui = { version = "0.*", optional = true }
+day-toolkit-dom = { version = "0.*", optional = true }
 # Apple completion handlers for evaluateJavaScript (docs/webview-eval.md).
 gtk4 = { version = "0.11", optional = true }
 
@@ -83,12 +80,12 @@ gtk4 = { version = "0.11", optional = true }
 webkit6 = { version = "0.6", optional = true }
 
 [build-dependencies]
-day-build = "0.6"
-day-toolchain = "0.6"
+day-build = "0.*"
+day-toolchain = "0.*"
 cc = "1"
 
 [dev-dependencies]
-day-mock = "0.6"
+day-mock = "0.*"
 
 # Standalone-piece Android contribution (https://daybrite.dev/contributing/extending). The day CLI reads
 # this from `cargo metadata` and folds it into the app's Gradle build: the piece carries its

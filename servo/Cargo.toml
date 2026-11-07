@@ -21,16 +21,16 @@ arkui = ["day-piece-webview/arkui"]
 appkit = ["day-piece-webview/appkit", "dep:day-toolkit-appkit", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
 
 [dependencies]
-day-piece-webview = { path = "..", version = "0.4" }
-day-spec = "0.6"
-day-core = "0.6"
-day-reactive = "0.6"
+day-piece-webview = { path = "..", version = "0.*" }
+day-spec = "0.*"
+day-core = "0.*"
+day-reactive = "0.*"
 serde_json = "1"
 url = "2"
 log = "0.4"
 
 [package.metadata.day]
-compat = "0.6"
+compat = "0.*"
 
 [package.metadata.day.piece]
 backends = ["appkit", "gtk", "qt", "xaml", "winui", "material", "arkui"]
@@ -57,7 +57,7 @@ rustls = { version = "0.23", optional = true, default-features = false, features
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-day-toolkit-appkit = { version = "0.6", optional = true }
+day-toolkit-appkit = { version = "0.*", optional = true }
 objc2 = { version = "0.6", optional = true }
 objc2-app-kit = { version = "0.3", optional = true, features = ["NSView", "NSResponder"] }
 objc2-foundation = { version = "0.3", optional = true, features = ["NSString", "NSURL", "NSURLRequest", "NSError"] }
@@ -74,8 +74,8 @@ servo = { version = "=0.6.0", optional = true, default-features = false, feature
 servo-default-resources = { version = "=0.6.0", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
-day-toolkit-material = { version = "0.6", optional = true }
-day-platform-android = { version = "0.6", optional = true }
+day-toolkit-material = { version = "0.*", optional = true }
+day-platform-android = { version = "0.*", optional = true }
 rustls-platform-verifier = { version = "=0.7.1", optional = true }
 # Keep the Kotlin AAR and Rust package on the same ABI version.
 rustls-platform-verifier-android = { version = "=0.2.0", optional = true }
