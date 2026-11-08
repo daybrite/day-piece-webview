@@ -360,7 +360,7 @@ pub fn root() -> impl Piece {
     .on_new(move || tabs.open(String::new(), true))
     .on_close(move |key| tabs.close(&key))
     .id(day::id!(browser_tabs))
-    .grow(),))
+    .grow(Dimension::Both),))
 }
 fn tab_controls(tabs: BrowserTabs, tab_number: u64) -> impl Piece {
     row((
@@ -733,7 +733,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         generation.update(|n| *n = n.wrapping_add(1));
                     })
                     .id(tab_widget_id!(tab_number, webview_home, webview_home_tab)),
-                spacer().grow_w(),
+                spacer().grow(Dimension::Width),
                 when(
                     move || private.get(),
                     move || {
@@ -805,7 +805,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         webview_address,
                         webview_address_tab
                     ))
-                    .grow_w(),
+                    .grow(Dimension::Width),
                 button(res::str::go())
                     .icon(Symbol::Forward)
                     .icon_only()
@@ -925,7 +925,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     .any()
             },
         )
-        .grow(),
+        .grow(Dimension::Both),
         row((
             label(move || {
                 let title = browser.navigation.get().title;
@@ -936,7 +936,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                 }
             })
             .single_line()
-            .grow_w()
+            .grow(Dimension::Width)
             .id(tab_widget_id!(tab_number, webview_title, webview_title_tab)),
             when(
                 move || browser.navigation.get().loading,
@@ -988,7 +988,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         text_field(script)
                             .placeholder(res::str::js_hint())
                             .id(tab_widget_id!(tab_number, webview_js, webview_js_tab))
-                            .grow_w(),
+                            .grow(Dimension::Width),
                         button(res::str::js_run())
                             .action(move || {
                                 day::task(async move {
