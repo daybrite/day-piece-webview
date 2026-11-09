@@ -98,6 +98,8 @@ jobs:
         if: matrix.features == 'gtk'
       - run: python3 -m unittest discover -s scripts -p test_renderer_comparison.py -v
         if: matrix.features == 'gtk'
+      - run: python3 -m unittest discover -s scripts -p test_ci_resolution.py -v
+        if: matrix.features == 'gtk'
       - run: python3 -m unittest discover -s scripts -p test_windows_angle.py -v
         if: matrix.features == 'gtk'
       - run: python3 -m unittest discover -s scripts -p test_renderer_size.py -v
@@ -176,12 +178,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       # Day from crates.io, or from main on a push (daybrite/actions day-deps).
       - uses: daybrite/actions/.github/actions/day-deps@v1
+        id: renderer-day
         with:
           day-deps: ${{ inputs.day-main && 'main' || 'auto' }}
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - uses: daybrite/actions/.github/actions/setup-day-cli@v1
+        with:
+          version: ${{ steps.renderer-day.outputs.cli }}
       - uses: daybrite/actions/.github/actions/setup-day-deps@v1
         with:
           target: ${{ matrix.target }}
@@ -254,6 +259,10 @@ jobs:
           $revision = git -C $env:GITHUB_WORKSPACE rev-parse HEAD
           git -C $shortRoot checkout --detach $revision
           if ($LASTEXITCODE -ne 0) { throw 'Selecting the CI revision failed' }
+          # A Git clone omits the generated overrides and resolved locks. Keep the exact
+          # dependency graph selected above instead of falling back to published crates.
+          python scripts/copy-ci-resolution.py $env:GITHUB_WORKSPACE $shortRoot
+          if ($LASTEXITCODE -ne 0) { throw 'Copying the resolved dependencies failed' }
           "RENDERER_ROOT=$shortRoot" >> $env:GITHUB_ENV
           "DEMO_DIR=$shortRoot/demo" >> $env:GITHUB_ENV
       - name: Install Servo Android NDK

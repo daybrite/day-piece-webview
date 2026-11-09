@@ -192,6 +192,9 @@ character process limit under the default workspace path. A `subst` drive does n
 Day canonicalizes the project root back to its physical path. The cache, capture checks,
 size measurements, and artifact uploads all use the short checkout until mozangle supports
 linker response files.
+The comparison workflow uses the CLI selected by dependency resolution. Before building in
+the short Windows checkout, it copies the generated Cargo overrides and each workspace's
+lockfile, preserving the selected Day revision instead of resolving older published crates.
 
 After building on Windows, stage ANGLE beside the executable before launching (from the
 repository root):

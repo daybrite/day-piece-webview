@@ -288,6 +288,7 @@ impl View {
                     image: bitmap.id(),
                     rect: Rect::new(0.0, 0.0, size.width, size.height),
                     opacity: 1.0,
+                    source: None,
                 }],
             )
         });
