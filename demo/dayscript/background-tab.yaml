@@ -1,0 +1,17 @@
+# Copyright © The Daybrite Project
+# SPDX-License-Identifier: MPL-2.0
+name: background-tab
+description: A tab opened in the background loads its page while hidden.
+flow:
+  - web_eval: { id: webview, script: "document.readyState", text: "complete", timeout_secs: 30 }
+  - wait_idle: {}
+  - tap: { id: webview_tools }
+  - tap: { id: fixture_demo }
+  - web_eval: { id: webview, script: "document.title", text: "Fixture start page", timeout_secs: 30 }
+  - toggle: { id: tab_controls, value: true }
+  - tap: { id: tab_background }
+  # The first tab stays selected; the new one's page loads without being shown.
+  - wait_for: { id: webview_tab:2, timeout_secs: 30 }
+  - assert_text: { id: webview_title, key: fixture_start }
+  - web_eval: { id: webview_tab:2, script: "document.readyState + ' ' + document.title", text: "complete Fixture start page", timeout_secs: 30 }
+  - assert_text: { id: webview_title_tab:2, key: fixture_start, timeout_secs: 10 }

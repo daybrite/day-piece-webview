@@ -124,6 +124,37 @@ accessors; do not ship English fallback labels in the shell.
 `res::assets::reader` constant to mount the bundle, rather than loading bundled resources with
 literal names in the callback.
 
+## App-served pages in a browsing view
+
+`web_view(url).resources(provider)` attaches a provider to an ordinary view instead of
+confining the view to it. The view navigates anywhere, and provider pages are reached at
+`provider.url(path)` or under `provider.base_url()`. A browser's test mode uses this to answer
+for the network: it maps a web address such as `https://example.test/a?b=1` to
+`base_url() + "https/example.test/a?b=1"`, serves the recorded page from the callback, and maps
+reported URLs back for its address bar:
+
+```rust
+use day_piece_webview::{ResourceProvider, ResourceResponse, WebView, web_view};
+use day::prelude::*;
+
+fn fixture_tab(pages: std::collections::HashMap<String, Vec<u8>>) -> WebView {
+    let provider = ResourceProvider::new(move |request| match pages.get(&request.path) {
+        Some(html) => ResourceResponse::new("text/html; charset=utf-8", html.clone()),
+        None => ResourceResponse::not_found(),
+    });
+    let start = format!("{}https/example.test/index.html", provider.base_url());
+    web_view(Signal::new(start)).resources(provider)
+}
+```
+
+Links between the served pages behave as they would on the web when they are relative:
+document-relative links, `<form method="get">` and `location` assignments resolve against
+the page, and their query arrives as `ResourceRequest::query`. A root-relative URL (`/about`)
+resolves against the root of `base_url()`'s origin, which is outside the `https/<host>/`
+prefix (and on Android, WebView2 and ArkWeb outside the provider's own segment), so it
+returns 403. Navigation reports, `on_load`, page state, `on_new_tab` and Back/Forward work
+for provider pages as for remote ones; the demo's `dayscript/page-state.yaml` covers them.
+
 ## Requests and responses
 
 | Request field | Meaning |

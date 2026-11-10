@@ -9,15 +9,17 @@
 // project and generates the aggregator that registers `dayPiece` with the shim.
 //
 // Commands arrive as the piece's own vocabulary ('load' | 'back' | 'forward' | 'stop' | 'reload')
-// and are applied through the ArkTS WebviewController. Navigation reports the current URL back
-// through `pieceEvent`, which reaches the piece's Rust front-end as an `Event::Custom`, so a
-// bound text field follows along exactly as it does on the other backends.
+// and are applied through the ArkTS WebviewController; the settings ('zoom' | 'javascript' |
+// 'desktop') through the component's attributes or the controller's user agent. Navigation
+// reports the current URL back through `pieceEvent`, which reaches the piece's Rust front-end as
+// an `Event::Custom`, so a bound text field follows along exactly as it does on the other
+// backends.
 
 import { BuilderNode, FrameNode, UIContext } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import nativeEntry from 'libentry.so';
 import { DayPieceModule } from '../DayPiece';
-import { Controller, evalError } from './Controller';
+import { Controller, evalError, messageReport } from './Controller';
 
 // One live web view: its BuilderNode (which owns the component) and the controller commands go
 // through. Held until Day disposes the node; a Web engine instance is expensive and does not go
@@ -25,11 +27,33 @@ import { Controller, evalError } from './Controller';
 class DayWebViewInstance {
   node: BuilderNode<[DayWebViewParams]>;
   controller: Controller;
+  // What the builder was built from: a setting held in it changes by updating the node with it.
+  params: DayWebViewParams;
 
-  constructor(node: BuilderNode<[DayWebViewParams]>, controller: Controller) {
+  constructor(node: BuilderNode<[DayWebViewParams]>, controller: Controller, params: DayWebViewParams) {
     this.node = node;
     this.controller = controller;
+    this.params = params;
   }
+}
+
+// The page side of WebView::on_script_message: the dayMessage shim posts its envelope here, and
+// the report reaches the Rust front-end on num -8.
+class DayMessageHost {
+  id: number = 0;
+  disposed: () => boolean = () => false;
+  post(envelope: string): void {
+    const report: string = messageReport(envelope);
+    if (report !== '' && !this.disposed()) {
+      nativeEntry.pieceEvent(this.id, report, -8);
+    }
+  }
+}
+
+class ContentProps {
+  filter: boolean = false;
+  messages: boolean = false;
+  scripts: string = '';
 }
 
 class DayWebViewParams {
@@ -47,13 +71,43 @@ class DayWebViewParams {
   // background is transparent shows the app behind it.
   transparent: boolean = false;
   resources: boolean = false;
+  // The first page waits for the controller (src stays about:blank): a desktop agent can only
+  // be set through it, and the first load must already carry it.
+  deferLoad: boolean = false;
+  // WebView::zoom (as ArkWeb's text zoom percentage) and WebView::javascript.
+  textZoom: number = 100;
+  scripts: boolean = true;
   privateMode: boolean = false;
+  // Content blocking and page scripts (docs/webview.md): a request filter waits for the native
+  // scheme handler before the first page, like a provider; `startScripts` is one document-start
+  // script (the app's, in order); `messages` names the page message handlers, reached through
+  // the `__dayMessageHost` proxy.
+  filter: boolean = false;
+  startScripts: string = '';
+  messages: boolean = false;
+  messageHost: DayMessageHost = new DayMessageHost();
   controller: webview.WebviewController;
   state: Controller;
   constructor(controller: webview.WebviewController, state: Controller) {
     this.controller = controller;
     this.state = state;
   }
+}
+
+const TAB_MODIFIER_SCRIPT: string = "(()=>{const click=e=>{const a=e.composedPath().find(n=>n?.tagName==='A'&&n.href);if(!a||!(e.metaKey||e.ctrlKey||e.button===1))return;e.preventDefault();e.stopImmediatePropagation();location.href='day-tab://open/'+(e.shiftKey?'0':'1')+'/'+encodeURIComponent(a.href);};addEventListener('click',click,true);addEventListener('auxclick',click,true);})();";
+
+// The document-start scripts: the tab modifier hook, then the app's page scripts as one script
+// (the Rust front-end joins them in order, so ArkWeb's ordering of script items cannot reorder
+// them).
+function startScripts(params: DayWebViewParams): ScriptItem[] {
+  const scripts: ScriptItem[] = [];
+  if (params.tabs) {
+    scripts.push({ script: TAB_MODIFIER_SCRIPT, scriptRules: ['*'] });
+  }
+  if (params.startScripts !== '') {
+    scripts.push({ script: params.startScripts, scriptRules: ['*'] });
+  }
+  return scripts;
 }
 
 // The component. `onPageEnd` fires for every committed navigation, including in-page link taps,
@@ -66,12 +120,18 @@ function dayWebViewBuilder(params: DayWebViewParams) {
   // window and the Web would cover the page. Day owns layout and sets this node's position + size
   // through the ArkUI C API like every other leaf, which is what the piece's `fill_measure` asks
   // for on every other backend too.
-  Web({ src: params.resources ? 'about:blank' : params.url, controller: params.controller, incognitoMode: params.privateMode })
+  Web({ src: params.resources || params.filter || params.deferLoad ? 'about:blank' : params.url, controller: params.controller, incognitoMode: params.privateMode })
     .backgroundColor(params.transparent ? Color.Transparent : Color.White)
-    .javaScriptAccess(true)
+    // Page scripts only: `runJavaScript` still runs the app's evaluation with them off.
+    .javaScriptAccess(params.scripts)
+    // Text zoom, like Android WebView's: it persists across navigations and reflows the text.
+    .textZoomRatio(params.textZoom)
     .domStorageAccess(true)
     .multiWindowAccess(params.tabs)
-    .javaScriptOnDocumentStart(params.tabs ? [{script: "(()=>{const click=e=>{const a=e.composedPath().find(n=>n?.tagName==='A'&&n.href);if(!a||!(e.metaKey||e.ctrlKey||e.button===1))return;e.preventDefault();e.stopImmediatePropagation();location.href='day-tab://open/'+(e.shiftKey?'0':'1')+'/'+encodeURIComponent(a.href);};addEventListener('click',click,true);addEventListener('auxclick',click,true);})();", scriptRules:['*']}] : [])
+    // The page message host (WebView::on_script_message); no methods without handlers.
+    .javaScriptProxy({object: params.messageHost, name: '__dayMessageHost',
+      methodList: params.messages ? ['post'] : [], controller: params.controller})
+    .javaScriptOnDocumentStart(startScripts(params))
     .onWindowNew((event) => {
       if (params.tabs && event.isUserTrigger && event.targetUrl !== '') {
         nativeEntry.pieceEvent(params.id,JSON.stringify({url:event.targetUrl,background:false}),-4);
@@ -90,9 +150,17 @@ function dayWebViewBuilder(params: DayWebViewParams) {
     })
     .onControllerAttached(() => {
       console.info(`day-piece-webview: controller attached for ${params.id}`);
-      setTimeout(() => {params.state.attach();if(params.resources)nativeEntry.pieceEvent(params.id,'day-web-'+params.id,-3);}, 0);
+      setTimeout(() => {params.state.attach();if(params.resources||params.filter)nativeEntry.pieceEvent(params.id,'day-web-'+params.id,-3);}, 0);
     })
     .onPageBegin(() => { params.state.setLoading(true); })
+    // Live page state (WebView::page_state): the controller re-reads and reports on each change.
+    .onTitleReceive(() => { params.state.report(); })
+    .onProgressChange((event) => {
+      if (event !== undefined) {
+        params.state.setProgress(event.newProgress);
+      }
+    })
+    .onRefreshAccessedHistory(() => { params.state.report(); })
     .onPageEnd((event) => {
       params.state.setLoading(false);
       if (event !== undefined && !params.state.isDisposed()) {
@@ -167,13 +235,45 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
   const SEP: string = '\u001F';
   // A transparent view leads with its own marker (lib-arkui.rs), ahead of everything below.
   let rest: string = props;
+  // Settings other than the defaults lead with theirs, outermost:
+  // `day-settings<US><text zoom percent><US><desktop 0/1><US><scripts 0/1><US>`.
+  // Content blocking and page scripts lead with theirs, outermost of all:
+  // `day-content<US><JSON {filter, messages, scripts}><US>`. JSON escapes control characters,
+  // so the separator cannot occur inside it.
+  if (rest.startsWith('day-content' + SEP)) {
+    const from: number = ('day-content' + SEP).length;
+    const to: number = rest.indexOf(SEP, from);
+    try {
+      const content: ContentProps = JSON.parse(rest.substring(from, to)) as ContentProps;
+      params.filter = content.filter === true;
+      params.messages = content.messages === true;
+      params.startScripts = typeof content.scripts === 'string' ? content.scripts : '';
+    } catch (err) {
+      console.error(`day-piece-webview: content props: ${err}`);
+    }
+    rest = rest.substring(to + 1);
+  }
+  params.messageHost.id = id;
+  params.messageHost.disposed = () => state.isDisposed();
+  let desktop: boolean = false;
+  if (rest.startsWith('day-settings' + SEP)) {
+    const settings: string[] = rest.split(SEP);
+    params.textZoom = Number(settings[1]);
+    desktop = settings[2] === '1';
+    params.scripts = settings[3] !== '0';
+    rest = settings.slice(4).join(SEP);
+  }
   if (rest.startsWith('day-tabs'+SEP)) {
     const labels: string[] = rest.split(SEP);
     params.tabs=true;params.foregroundLabel=labels[1];params.backgroundLabel=labels[2];
     rest=labels.slice(3).join(SEP);
   }
   if (rest.startsWith('day-private'+SEP)) {params.privateMode=true;state.setPrivate(true);rest=rest.substring(('day-private'+SEP).length);}
-  if (rest.startsWith('day-resource'+SEP)) {params.resources=true;rest=rest.substring(('day-resource'+SEP).length);}
+  // `day-resource-site` is a provider's own site, policed by its base below; `day-resource` is a
+  // provider attached to an ordinary view, which browses anywhere.
+  let resourceSite: boolean = false;
+  if (rest.startsWith('day-resource-site'+SEP)) {params.resources=true;resourceSite=true;rest=rest.substring(('day-resource-site'+SEP).length);}
+  else if (rest.startsWith('day-resource'+SEP)) {params.resources=true;rest=rest.substring(('day-resource'+SEP).length);}
   if (rest.startsWith('day-transparent' + SEP)) {
     params.transparent = true;
     rest = rest.substring(('day-transparent' + SEP).length);
@@ -186,14 +286,23 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
     params.url = params.inlinePrefix + start;
   } else {
     params.url = rest;
-    if(params.resources)params.inlinePrefix=rest.substring(0,rest.indexOf('/','https://day-resource.invalid/'.length)+1);
+    if(resourceSite)params.inlinePrefix=rest.substring(0,rest.indexOf('/','https://day-resource.invalid/'.length)+1);
+  }
+  if (desktop) {
+    // Queued until the controller attaches, then run in order: the agent, then the first page
+    // (a provider's view loads its first page itself, once its scheme is installed).
+    state.command('desktop', '1');
+    if (!params.resources && !params.filter) {
+      params.deferLoad = true;
+      state.command('load', params.url);
+    }
   }
   const node: BuilderNode<[DayWebViewParams]> = new BuilderNode(ui);
   try {
     node.build(wrapBuilder<[DayWebViewParams]>(dayWebViewBuilder), params);
     const frame: FrameNode | null = node.getFrameNode();
     if (frame !== null) {
-      instances.set(id, new DayWebViewInstance(node, state));
+      instances.set(id, new DayWebViewInstance(node, state, params));
       return frame;
     }
   } catch (err) {
@@ -233,8 +342,29 @@ function update(id: number, cmd: string, arg: string): void {
     }
     return;
   }
-  if (live !== undefined) {
-    live.controller.command(cmd, arg);
+  if (live === undefined) {
+    return;
+  }
+  // Settings (WebView::zoom, WebView::javascript): Web attributes, applied by updating the
+  // builder with the changed parameters. A page cannot gain or lose its scripts while it runs.
+  if (cmd === 'zoom' || cmd === 'javascript') {
+    if (cmd === 'zoom') {
+      live.params.textZoom = Number(arg);
+    } else {
+      live.params.scripts = arg === '1';
+    }
+    live.node.update(live.params);
+    if (cmd === 'javascript') {
+      live.controller.command('reload', '');
+    }
+    return;
+  }
+  // A filtered view's first page, once its scheme handler is installed: the Rust side asks
+  // for it with an empty URL, since an inline site's address is composed here.
+  live.controller.command(cmd, cmd === 'load' && arg === '' ? live.params.url : arg);
+  // WebView::desktop_mode: a new agent, then the page again so the site answers it.
+  if (cmd === 'desktop') {
+    live.controller.command('reload', '');
   }
 }
 

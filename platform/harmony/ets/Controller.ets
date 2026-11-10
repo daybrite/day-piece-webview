@@ -7,6 +7,27 @@ export function evalError(message: string): string {
   return '0\u001FArkWeb\u001F' + message;
 }
 
+// WebView::desktop_mode: a desktop Chrome user agent at the engine's major version, Chrome's
+// "Desktop site" string. The Rust front-end's `desktop_user_agent` composes the same text.
+export function desktopAgent(mobile: string): string {
+  const at: number = mobile.indexOf('Chrome/');
+  let major: string = '';
+  if (at >= 0) {
+    for (let i: number = at + 'Chrome/'.length; i < mobile.length; i++) {
+      const digit: string = mobile.charAt(i);
+      if (digit < '0' || digit > '9') {
+        break;
+      }
+      major += digit;
+    }
+  }
+  if (major === '') {
+    major = '120';
+  }
+  return 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + major +
+    '.0.0.0 Safari/537.36';
+}
+
 // The Rust wrapper always returns a string. ArkWeb versions can return that string raw or
 // JSON-quoted; unwrap only the latter, preserving Unicode and the protocol separators.
 export function evalPayload(result: string): string {
@@ -22,6 +43,40 @@ export function evalPayload(result: string): string {
     }
   }
   return result;
+}
+
+class MessageEnvelope {
+  dayMessage: string = '';
+  id: number = 0;
+  payload: string = '';
+}
+
+class MessageReport {
+  id: number = 0;
+  name: string = '';
+  payload: string = '';
+  origin: string = '';
+  main_frame: boolean = false;
+}
+
+// A page message (WebView::on_script_message) as the Rust front-end reads it (num -8): the
+// dayMessage shim's envelope `{"dayMessage", "id", "payload"}` becomes `{"id", "name", "payload",
+// "origin", "main_frame"}`. ArkWeb's host object does not say which frame or origin called it.
+// An envelope that does not parse is dropped ('').
+export function messageReport(envelope: string): string {
+  try {
+    const message: MessageEnvelope = JSON.parse(envelope) as MessageEnvelope;
+    if (typeof message.dayMessage !== 'string' || typeof message.id !== 'number') {
+      return '';
+    }
+    const report: MessageReport = new MessageReport();
+    report.id = message.id;
+    report.name = message.dayMessage;
+    report.payload = typeof message.payload === 'string' ? message.payload : '';
+    return JSON.stringify(report);
+  } catch (err) {
+    return '';
+  }
 }
 
 class DataRequest {
@@ -45,7 +100,39 @@ export class Controller {
   private reply: (request: number, payload: string) => void;
   private privateMode: boolean = false;
   private loading: boolean = false;
-  setLoading(value: boolean): void { this.loading = value; }
+  private progress: number = 100;
+  private lastState: string = '';
+  setLoading(value: boolean): void {
+    this.loading = value;
+    if (value) {
+      this.progress = 0;
+    }
+    this.report();
+  }
+  setProgress(value: number): void {
+    this.progress = value;
+    this.report();
+  }
+  // Report the page state (WebView::page_state) on num -5, in the front-end's
+  // `<loading><back><forward>␟<progress>␟<url>␟<title>` text, unless it is unchanged.
+  report(): void {
+    if (this.disposed || !this.ready) {
+      return;
+    }
+    try {
+      const flag = (value: boolean): string => value ? '1' : '0';
+      const progress: string = this.loading ? (Math.min(100, Math.max(0, this.progress)) / 100).toFixed(2) : '1';
+      const text: string = flag(this.loading) + flag(this.native.accessBackward()) +
+        flag(this.native.accessForward()) + '\u001F' + progress + '\u001F' + this.native.getUrl() +
+        '\u001F' + this.native.getTitle();
+      if (text !== this.lastState) {
+        this.lastState = text;
+        this.reply(-5, text);
+      }
+    } catch (err) {
+      // A controller between pages throws; the next change reports again.
+    }
+  }
   setPrivate(value: boolean): void { this.privateMode = value; }
   private ready: boolean = false;
   private disposed: boolean = false;
@@ -97,6 +184,16 @@ export class Controller {
         this.native.refresh();
       } else if (name === 'reload') {
         this.native.refresh();
+      } else if (name === 'run') {
+        // A page message's reply (WebView::on_script_message), settled in the top document.
+        this.native.runJavaScript(arg).catch((err: Object) => {
+          console.error(`day-piece-webview: message reply failed: ${err}`);
+        });
+      } else if (name === 'desktop') {
+        // `getUserAgent` is the engine's own agent, whatever custom one is set, so turning
+        // desktop mode off restores it.
+        const standard: string = this.native.getUserAgent();
+        this.native.setCustomUserAgent(arg === '1' ? desktopAgent(standard) : standard);
       }
     } catch (err) {
       console.error(`day-piece-webview: ${name} failed: ${err}`);
@@ -116,6 +213,9 @@ export class Controller {
         const data: DataRequest = JSON.parse(script.substring(13)) as DataRequest;
         if(data.operation === 'navigation') {
           this.finish(request, '1\u001F' + JSON.stringify({url:this.native.getUrl(),title:this.native.getTitle(),can_go_back:this.native.accessBackward(),can_go_forward:this.native.accessForward(),loading:this.loading}));
+        } else if(data.operation === 'snapshot') {
+          // ArkWeb's page snapshot is not wired up yet; say so in the shape the front-end maps.
+          this.finish(request, '0\u001FUnsupported\u001Fpage snapshots are unavailable on ArkWeb');
         } else if(data.operation === 'cookies') {
           const cookies: string = webview.WebCookieManager.fetchCookieSync(data.url, this.privateMode);
           this.finish(request, '1\u001F' + JSON.stringify(cookies));

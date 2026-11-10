@@ -16,9 +16,11 @@ const webview = { WebCookieManager: {
   fetchCookieSync: (url, privateMode) => { cookieCalls.push(['read', url, privateMode]); return 'session=fixture'; },
   configCookieSync: (url, cookie, privateMode, httpOnly) => cookieCalls.push(['write', url, cookie, privateMode, httpOnly]),
 } };
-const { Controller, evalPayload } = runInNewContext(
-  `${stripTypeScriptTypes(source)}\n({ Controller, evalPayload })`, { console, webview, setTimeout, clearTimeout },
+const { Controller, evalPayload, desktopAgent, messageReport } = runInNewContext(
+  `${stripTypeScriptTypes(source)}\n({ Controller, evalPayload, desktopAgent, messageReport })`, { console, webview, setTimeout, clearTimeout },
 );
+const ARKWEB_AGENT = 'Mozilla/5.0 (Phone; OpenHarmony 5.0) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+  'Chrome/114.0.0.0 Safari/537.36 ArkWeb/4.1.6.1 Mobile';
 
 function setup(runJavaScript = () => Promise.resolve('1\x1fvalue')) {
   const commands = [];
@@ -35,6 +37,8 @@ function setup(runJavaScript = () => Promise.resolve('1\x1fvalue')) {
     accessForward: () => true,
     backward: () => commands.push(['back']),
     forward: () => commands.push(['forward']),
+    getUserAgent: () => ARKWEB_AGENT,
+    setCustomUserAgent: agent => commands.push(['agent', agent]),
   }, (request, payload) => replies.push([request, payload]));
   return { controller, commands, replies };
 }
@@ -150,11 +154,13 @@ test('unsupported complete profile clearing never clears unrelated sites', () =>
 
 test('navigation snapshots expose actual controller history and loading state', () => {
   const s=setup();s.controller.attach();s.controller.setLoading(true);
+  // Page-state reports (-5) share the reply channel; this test reads the evaluation replies.
+  const replies=()=>s.replies.filter(reply=>reply[0]!==-5);
   s.controller.evaluate(24,'day-web-data:'+JSON.stringify({operation:'navigation'}));
-  const state=JSON.parse(s.replies[0][1].substring(2));
+  const state=JSON.parse(replies()[0][1].substring(2));
   assert.deepEqual(state,{url:'https://fixture.example/second',title:'Fixture page',can_go_back:false,can_go_forward:true,loading:true});
   s.controller.setLoading(false);s.controller.evaluate(25,'day-web-data:'+JSON.stringify({operation:'navigation'}));
-  assert.equal(JSON.parse(s.replies[1][1].substring(2)).loading,false);
+  assert.equal(JSON.parse(replies()[1][1].substring(2)).loading,false);
 });
 
 
@@ -216,4 +222,58 @@ test('an engine that throws instead of answering never blocks the capture', asyn
   const s = setup(() => { throw new Error('17100001 Init error'); });
   s.controller.attach();
   await s.controller.settle(40);
+});
+
+test('page state reports carry history, progress and title, and skip repeats', () => {
+  const s = setup();
+  s.controller.setLoading(true);
+  assert.deepEqual(s.replies, [], 'nothing reports before the controller is attached');
+  s.controller.attach();
+  s.controller.setLoading(true);
+  s.controller.setProgress(42);
+  s.controller.setProgress(42);
+  s.controller.report();
+  s.controller.setLoading(false);
+  assert.deepEqual(s.replies, [
+    [-5, '101\x1f0.00\x1fhttps://fixture.example/second\x1fFixture page'],
+    [-5, '101\x1f0.42\x1fhttps://fixture.example/second\x1fFixture page'],
+    [-5, '001\x1f1\x1fhttps://fixture.example/second\x1fFixture page'],
+  ]);
+});
+
+test('snapshots report unsupported in the shape the front-end maps', () => {
+  const s = setup();
+  s.controller.attach();
+  s.controller.evaluate(7, 'day-web-data:{"operation":"snapshot","width":200}');
+  assert.equal(s.replies.length, 1);
+  assert.equal(s.replies[0][0], 7);
+  assert.match(s.replies[0][1], /^0\x1fUnsupported\x1f/);
+});
+
+test('desktop mode sets a desktop Chrome agent at the engine version, and restores the default', () => {
+  const desktop = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+    'Chrome/114.0.0.0 Safari/537.36';
+  assert.equal(desktopAgent(ARKWEB_AGENT), desktop);
+  assert.match(desktopAgent('ArkWeb/4.1 Mobile'), /Chrome\/120\.0\.0\.0 /);
+  // A view created in desktop mode queues the agent ahead of its first page (Index.ets).
+  const s = setup();
+  s.controller.command('desktop', '1');
+  s.controller.command('load', 'https://fixture.example/');
+  s.controller.attach();
+  s.controller.command('desktop', '0');
+  assert.deepEqual(s.commands, [
+    ['agent', desktop], ['load', 'https://fixture.example/'], ['agent', ARKWEB_AGENT],
+  ]);
+});
+
+test('page message envelopes become the front-end report, and replies run in the page', async () => {
+  const report = JSON.parse(messageReport(JSON.stringify({ dayMessage: 'dayAdblock', id: 41, payload: '{"type":"page"}' })));
+  assert.deepEqual({ ...report }, { id: 41, name: 'dayAdblock', payload: '{"type":"page"}', origin: '', main_frame: false });
+  assert.equal(messageReport('not json'), '');
+  assert.equal(messageReport(JSON.stringify({ id: 1 })), '');
+  const ran = [];
+  const { controller } = setup((script) => { ran.push(script); return Promise.resolve(''); });
+  controller.attach();
+  controller.command('run', 'window.__dayMessageReply&&window.__dayMessageReply(41,null)');
+  assert.deepEqual(ran, ['window.__dayMessageReply&&window.__dayMessageReply(41,null)']);
 });

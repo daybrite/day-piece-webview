@@ -222,6 +222,7 @@ impl View {
             })();
             match made {
                 Ok(web) => {
+                    engine::apply_settings(&self.state, &web);
                     *self.web.borrow_mut() = Some(web);
                     for patch in std::mem::take(&mut *self.pending.borrow_mut()) {
                         self.update(&patch);

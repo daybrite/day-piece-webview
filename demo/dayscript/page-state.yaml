@@ -1,0 +1,57 @@
+# Copyright © The Daybrite Project
+# SPDX-License-Identifier: MPL-2.0
+name: page-state
+description: Browse app-served fixture pages in an ordinary view, and follow the live page state the engine pushes.
+flow:
+  - web_eval: { id: webview, script: "document.readyState", text: "complete", timeout_secs: 30 }
+  - wait_idle: {}
+  - tap: { id: webview_tools }
+  - tap: { id: fixture_demo }
+
+  # The first fixture page, served by the app at `https/example.test/index.html`.
+  - web_eval: { id: webview, script: "document.title", text: "Fixture start page", timeout_secs: 30 }
+  # Pushed state: the title, a finished load, and fresh history.
+  - assert_text: { id: webview_title, key: fixture_start, timeout_secs: 10 }
+  - assert_text: { id: webview_page_summary, key: page_summary, args: { progress: 100, back: "no", forward: "no" }, timeout_secs: 10 }
+  # Navigation reports reach the URL binding, which the demo maps back to the logical address.
+  - assert_text: { id: webview_address, text: "https://example.test/index.html", timeout_secs: 10 }
+  - screenshot: { name: fixture-start, title: "A fixture page served by the app" }
+
+  # A relative link with a query, between provider pages; the query reaches the handler.
+  - web_eval: { id: webview, script: "document.getElementById('next').click(); 'clicked'", text: "clicked" }
+  - web_eval: { id: webview, script: "document.title", text: "Fixture second page", timeout_secs: 30 }
+  - web_eval: { id: webview, script: "document.body.dataset.query", text: "from=start" }
+  - assert_text: { id: webview_title, key: fixture_next, timeout_secs: 10 }
+  - assert_text: { id: webview_address, text: "https://example.test/next.html?from=start", timeout_secs: 10 }
+  # Chromium leaves a page entered without user activation out of Back, so a script click proves
+  # history only on WebKit; the walkthrough's Back/Forward steps cover the others.
+  - assert_text: { id: webview_page_summary, key: page_summary, args: { progress: 100, back: "yes", forward: "no" }, timeout_secs: 10, only_on: [appkit, uikit, gtk] }
+  - tap: { id: webview_back, only_on: [appkit, uikit, gtk] }
+  - assert_text: { id: webview_title, key: fixture_start, timeout_secs: 10, only_on: [appkit, uikit, gtk] }
+  - assert_text: { id: webview_page_summary, key: page_summary, args: { progress: 100, back: "no", forward: "yes" }, timeout_secs: 10, only_on: [appkit, uikit, gtk] }
+
+  # A GET form and a script-assigned relative location, both with queries.
+  - web_eval: { id: webview, script: "document.getElementById('search').submit(); 'sent'", text: "sent" }
+  - web_eval: { id: webview, script: "document.title", text: "Fixture search results", timeout_secs: 30 }
+  - web_eval: { id: webview, script: "document.body.dataset.query", text: "q=day" }
+  - assert_text: { id: webview_title, key: fixture_search, timeout_secs: 10 }
+  - web_eval: { id: webview, script: "location.href = 'next.html?from=script'; 'assigned'", text: "assigned" }
+  - web_eval: { id: webview, script: "document.body.dataset.query", text: "from=script", timeout_secs: 30 }
+  # A same-document change reports its URL too.
+  - web_eval: { id: webview, script: "history.pushState(null, '', 'next.html?from=push'); 'pushed'", text: "pushed" }
+  - assert_text: { id: webview_address, text: "https://example.test/next.html?from=push", timeout_secs: 10 }
+  - screenshot: { name: fixture-pushed, title: "Page state after browsing fixture pages" }
+
+  # A native snapshot of the visible page, scaled to the width asked for (300 px is a whole
+  # number of points at 1x, 2x and 3x).
+  - tap: { id: webview_snapshot }
+  - assert_text: { id: webview_snapshot_result, key: snapshot_taken, args: { width: 300 }, timeout_secs: 15, only_on: [appkit, uikit, gtk, qt, material, xaml] }
+
+  # A target=_blank link asks the app for a tab, which opens on the same fixture page. Chromium
+  # engines (Qt, Android, WebView2) and ArkWeb open new windows only from a user gesture, which
+  # a script click is not, so this runs where WebKit honors it.
+  - web_eval: { id: webview, script: "document.getElementById('blank').click(); 'clicked'", text: "clicked", only_on: [appkit, uikit, gtk] }
+  - wait_for: { id: webview_tab:2, timeout_secs: 30, only_on: [appkit, uikit, gtk] }
+  - web_eval: { id: webview_tab:2, script: "document.body.dataset.query", text: "from=blank", timeout_secs: 30, only_on: [appkit, uikit, gtk] }
+  - assert_text: { id: webview_title_tab:2, key: fixture_next, timeout_secs: 10, only_on: [appkit, uikit, gtk] }
+  - assert_no_placeholders: {}

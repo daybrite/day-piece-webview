@@ -62,8 +62,15 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
     }
     backend.set_attr(&h, "allow", "autoplay; fullscreen; gamepad");
     backend.set_attr(&h, "allowfullscreen", "");
+    // Settings before the first page: a sandbox only governs loads made after it is set.
+    if !p.settings.javascript {
+        super::browser::scripts(h.0 as i32, false);
+    }
+    if p.settings.zoom != 1.0 {
+        super::browser::zoom(h.0 as i32, p.settings.zoom);
+    }
     if let Some(provider) = &p.resources {
-        super::browser::resources(h.0 as i32, &provider.base_url(), &p.url);
+        super::browser::resources(h.0 as i32, &provider.base_url(), &p.url, p.resource_site);
         LAST_SRC.with(|m| m.borrow_mut().insert(h, p.url.clone()));
     } else if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the bundled site deploys under `assets/data/` beside
@@ -77,8 +84,9 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
     } else if !p.url.is_empty() {
         load(backend, &h, &p.url);
     }
-    // No `sandbox` attribute: present-but-empty is deny-everything, which breaks scripts, forms and
-    // same-origin reads on nearly every site. Absent is the permissive default we want.
+    // No `sandbox` attribute unless page scripts are off: present-but-empty is deny-everything,
+    // which breaks scripts, forms and same-origin reads on nearly every site. Absent is the
+    // permissive default we want; `scripts_browser` grants all of it but scripts.
     // The inline style fills the frame day's layout assigns, the growing-leaf contract the native
     // arms honor by sizing their native view to the same rect.
     // A frame is transparent wherever its page is, with one exception: when the frame's color
@@ -102,6 +110,8 @@ fn update(backend: &mut Dom, h: &DomHandle, patch: &WebPatch) {
     match patch {
         WebPatch::Load(url) => load(backend, h, url),
         WebPatch::ForceReload => {} // No iframe API can guarantee a server reload.
+        // No retained frames: a fresh one reports as its first load proceeds.
+        WebPatch::ReportState => {}
         WebPatch::Reload => {
             // Re-assign whatever we last set. Nothing to do before the first load.
             if let Some(url) = LAST_SRC.with(|m| m.borrow().get(h).cloned()) {
@@ -114,6 +124,19 @@ fn update(backend: &mut Dom, h: &DomHandle, patch: &WebPatch) {
         WebPatch::Back | WebPatch::Forward | WebPatch::Stop => {}
         // Same-origin frames can evaluate; the browser bridge reports cross-origin access as an error.
         WebPatch::Eval { req, script } => super::browser::eval(h.0 as i32, *req as f64, script),
+        WebPatch::Zoom(zoom) => super::browser::zoom(h.0 as i32, *zoom),
+        // A frame cannot change what the host browser tells sites about itself.
+        WebPatch::DesktopMode(_) => {}
+        // An iframe offers no request hook, no rule lists and no script injection into another
+        // origin's document (docs/webview.md), so the content patches change nothing here.
+        WebPatch::ContentRules(_) | WebPatch::ScriptReply { .. } | WebPatch::MediaDecision { .. } => {}
+        // The sandbox applies from the next load: load the last URL again under it.
+        WebPatch::JavaScript(enabled) => {
+            super::browser::scripts(h.0 as i32, *enabled);
+            if let Some(url) = LAST_SRC.with(|m| m.borrow().get(h).cloned()) {
+                backend.set_attr(h, "src", &url);
+            }
+        }
     }
 }
 

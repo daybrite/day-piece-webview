@@ -136,6 +136,8 @@ fn build_xaml() {
         webview2.join(format!("build/native/{arch}")).display()
     );
     println!("cargo:rustc-link-lib=static=WebView2LoaderStatic");
+    // WIC, which scales a page snapshot before re-encoding it.
+    println!("cargo:rustc-link-lib=windowscodecs");
 }
 
 /// Locate the Microsoft.Web.WebView2 SDK (headers + static loader), returning its package root.

@@ -75,6 +75,7 @@
 #include <windows.h>
 #include <wrl.h>
 #include <wrl/event.h>
+#include <wincodec.h> // WIC: scaling a page snapshot (JsHandle::snapshot) before re-encoding it
 #include <WebView2.h>
 #include <WebView2EnvironmentOptions.h>
 #ifdef DAY_WINUI
@@ -96,6 +97,7 @@
 #include "resources.h"
 #include <winrt/Windows.System.h> // DispatcherQueue for desktop XAML Islands
 #include <memory>
+#include <vector>
 #include <algorithm>
 #include <cstdlib>
 #include <cwchar>
@@ -171,7 +173,25 @@ struct WebViewCtx {
     std::wstring profile_name;
     std::wstring profile_directory;
     bool private_mode{};
+    // Live page state (WebView::page_state). WebView2 raises no progress events, so `progress`
+    // steps through fixed points as the navigation events arrive; `last_state` suppresses repeats.
+    double progress{1.0};
+    std::string last_state;
     void *engine_handle{}; // privately owned; callbacks never capture a released Day node handle
+    // WebView::zoom and WebView::javascript, applied once the engine is up and on each change.
+    // WinUI zooms through CSS (apply_zoom); `zoom_script` is that build's document-created
+    // script id, so a later factor can replace it.
+    double zoom{1.0};
+    bool scripts{true};
+    std::wstring zoom_script;
+    // WebView::request_filter (the Rust hooks token, 0 for none) and the page scripts
+    // (WebView::user_script, ::user_style, the dayMessage shim), installed when the engine is
+    // up and before its first navigation. `pending_top` is the URL the last top-level
+    // NavigationStarting named, which is how a Document request is told to be the main frame's.
+    uint64_t hooks{};
+    std::vector<std::wstring> page_scripts;
+    bool content_installed{};
+    std::wstring pending_top;
 };
 
 // Hold COM objects on the UI apartment; workers only load immutable Rust bytes.
@@ -234,11 +254,148 @@ static WebViewCtx *find_ctx(void *handle) {
     return it == g_webviews.end() ? nullptr : it->second;
 }
 
+// Set once from Rust: WebView::request_filter (true blocks) and page messages (the shim's JSON
+// envelope plus the posting document's URI). WebView2 calls both on the UI thread.
+static bool (*g_filter_cb)(uint64_t, const char *, const char *, int, bool, const char *) = nullptr;
+static void (*g_message_cb)(uint64_t, const char *, const char *) = nullptr;
+
 // ---- JavaScript evaluation (docs/webview-eval.md) --------------------------
 //
 // One file-static callback shared by every web view; each reply carries its own node id, so the
 // Rust side registers it once rather than per view (the Qt shim's arrangement).
 static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
+// One page-state report, in the front-end's `<loading><back><forward>␟<progress>␟<url>␟<title>`.
+static void (*g_state_cb)(uint64_t, const char *) = nullptr;
+
+static void report_state(WebViewCtx *c) {
+    // A retained session view between mounts has id 0: nobody to tell.
+    if (!g_state_cb || !c || !c->webview || !c->id)
+        return;
+    LPWSTR src = nullptr, title = nullptr;
+    BOOL back = FALSE, forward = FALSE;
+    c->webview->get_Source(&src);
+    c->webview->get_DocumentTitle(&title);
+    c->webview->get_CanGoBack(&back);
+    c->webview->get_CanGoForward(&forward);
+    std::string text;
+    text.push_back(c->loading ? '1' : '0');
+    text.push_back(back ? '1' : '0');
+    text.push_back(forward ? '1' : '0');
+    text.push_back('\x1f');
+    char progress[16];
+    std::snprintf(progress, sizeof progress, "%.2f", c->loading ? c->progress : 1.0);
+    text += progress;
+    text.push_back('\x1f');
+    // A page can title itself with a lone surrogate, which the conversion refuses: report an
+    // empty field rather than throw out of an engine callback.
+    auto narrow = [](LPWSTR w) {
+        try {
+            return day_webview::utf8(std::wstring_view(w ? w : L""));
+        } catch (...) {
+            return std::string();
+        }
+    };
+    text += narrow(src);
+    text.push_back('\x1f');
+    text += narrow(title);
+    CoTaskMemFree(src);
+    CoTaskMemFree(title);
+    if (text == c->last_state)
+        return;
+    c->last_state = text;
+    g_state_cb(c->id, text.c_str());
+}
+
+static std::string base64(std::string const &bytes) {
+    static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((bytes.size() + 2) / 3 * 4);
+    size_t i = 0;
+    for (; i + 2 < bytes.size(); i += 3) {
+        const unsigned v = (unsigned char)bytes[i] << 16 | (unsigned char)bytes[i + 1] << 8 | (unsigned char)bytes[i + 2];
+        out += digits[v >> 18];
+        out += digits[(v >> 12) & 63];
+        out += digits[(v >> 6) & 63];
+        out += digits[v & 63];
+    }
+    if (i < bytes.size()) {
+        const unsigned v = (unsigned char)bytes[i] << 16 | (i + 1 < bytes.size() ? (unsigned char)bytes[i + 1] << 8 : 0);
+        out += digits[v >> 18];
+        out += digits[(v >> 12) & 63];
+        out += i + 1 < bytes.size() ? digits[(v >> 6) & 63] : '=';
+        out += '=';
+    }
+    return out;
+}
+
+// The bytes of an HGLOBAL-backed stream.
+static bool stream_bytes(IStream *stream, std::string &out) {
+    HGLOBAL global{};
+    STATSTG stat{};
+    if (FAILED(GetHGlobalFromStream(stream, &global)) || FAILED(stream->Stat(&stat, STATFLAG_NONAME)))
+        return false;
+    const void *data = GlobalLock(global);
+    if (!data)
+        return false;
+    out.assign(static_cast<const char *>(data), static_cast<size_t>(stat.cbSize.QuadPart));
+    GlobalUnlock(global);
+    return true;
+}
+
+// Whether the view is on screen, so a capture can complete. WebView2 stops rendering a view that
+// is not shown (a background tab, a page under another), and CapturePreview on such a view
+// never raises its completion handler: the request would stay unanswered and its caller would
+// wait forever. A view counts as shown when it is laid out with a size, and nothing above it is
+// collapsed; the controller's own IsVisible is the system-XAML build's equivalent.
+static bool view_showing(WebViewCtx *c) {
+#ifdef DAY_WINUI
+    if (!c->control || !c->control.IsLoaded() || c->control.ActualWidth() <= 0 || c->control.ActualHeight() <= 0)
+        return false;
+    for (WUX::DependencyObject at = c->control; at; at = WUXM::VisualTreeHelper::GetParent(at)) {
+        auto element = at.try_as<WUX::UIElement>();
+        if (element && element.Visibility() != WUX::Visibility::Visible)
+            return false;
+    }
+    return true;
+#else
+    BOOL visible = FALSE;
+    return c->controller && SUCCEEDED(c->controller->get_IsVisible(&visible)) && visible;
+#endif
+}
+
+// CapturePreview's PNG, scaled down to at most `width` pixels wide through WIC when wider.
+static bool snapshot_png(IStream *capture, int width, std::string &out) {
+    LARGE_INTEGER zero{};
+    capture->Seek(zero, STREAM_SEEK_SET, nullptr);
+    wrl::ComPtr<IWICImagingFactory> factory;
+    wrl::ComPtr<IWICBitmapDecoder> decoder;
+    wrl::ComPtr<IWICBitmapFrameDecode> frame;
+    UINT w = 0, h = 0;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateDecoderFromStream(capture, nullptr, WICDecodeMetadataCacheOnLoad, &decoder)) ||
+        FAILED(decoder->GetFrame(0, &frame)) || FAILED(frame->GetSize(&w, &h)) || w == 0)
+        return false;
+    if (width <= 0 || w <= static_cast<UINT>(width))
+        return stream_bytes(capture, out);
+    const UINT th = (std::max)(1u, static_cast<UINT>(static_cast<unsigned long long>(h) * width / w));
+    wrl::ComPtr<IWICBitmapScaler> scaler;
+    wrl::ComPtr<IWICFormatConverter> converter;
+    wrl::ComPtr<IStream> encoded;
+    wrl::ComPtr<IWICBitmapEncoder> encoder;
+    wrl::ComPtr<IWICBitmapFrameEncode> target;
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+    return SUCCEEDED(factory->CreateBitmapScaler(&scaler)) &&
+           SUCCEEDED(scaler->Initialize(frame.Get(), width, th, WICBitmapInterpolationModeFant)) &&
+           SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+           SUCCEEDED(converter->Initialize(scaler.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom)) &&
+           SUCCEEDED(CreateStreamOnHGlobal(nullptr, TRUE, &encoded)) &&
+           SUCCEEDED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) &&
+           SUCCEEDED(encoder->Initialize(encoded.Get(), WICBitmapEncoderNoCache)) &&
+           SUCCEEDED(encoder->CreateNewFrame(&target, nullptr)) && SUCCEEDED(target->Initialize(nullptr)) &&
+           SUCCEEDED(target->SetSize(width, th)) && SUCCEEDED(target->SetPixelFormat(&format)) &&
+           SUCCEEDED(target->WriteSource(converter.Get(), nullptr)) && SUCCEEDED(target->Commit()) &&
+           SUCCEEDED(encoder->Commit()) && stream_bytes(encoded.Get(), out);
+}
 
 // A reply in the 0x1F-separated form the Rust front-end decodes. Only for engine failures; a
 // script that merely throws is caught by the JS wrapper and arrives as an ordinary value.
@@ -520,6 +677,176 @@ static void startup_failed(void *handle, const char *stage, HRESULT hr) {
 // The engine is up (both stacks): its background, the inline asset host, the link and
 // navigation handlers, then the first navigation. Split out of the controller callback so the
 // WinUI build, whose engine comes from the WebView2 control instead, runs the same wiring.
+// WebView::javascript: ICoreWebView2Settings::IsScriptEnabled, which governs the next
+// navigation's document scripts only. ExecuteScript still runs (WebView2 documents this), so the
+// app's evaluation and page state keep working with page scripts off.
+static void apply_scripts(WebViewCtx *c) {
+    wrl::ComPtr<ICoreWebView2Settings> settings;
+    if (c->webview && SUCCEEDED(c->webview->get_Settings(&settings)) && settings)
+        settings->put_IsScriptEnabled(c->scripts ? TRUE : FALSE);
+}
+
+// WebView::zoom. The system-XAML host owns the controller and sets its ZoomFactor, the engine's
+// own zoom, which persists across navigations. The WinUI control keeps its controller (and with
+// it ZoomFactor) to itself, so that build sets CSS `zoom` on the page now and on each document
+// from its creation on.
+static void apply_zoom(WebViewCtx *c) {
+#ifdef DAY_WINUI
+    if (!c->webview)
+        return;
+    if (!c->zoom_script.empty()) {
+        c->webview->RemoveScriptToExecuteOnDocumentCreated(c->zoom_script.c_str());
+        c->zoom_script.clear();
+    }
+    // A whole percentage keeps the number out of the C locale's decimal separator.
+    const long percent = std::lround(c->zoom * 100.0);
+    const std::wstring value = percent == 100 ? std::wstring() : std::to_wstring(percent) + L"%";
+    const std::wstring script =
+        L"(()=>{const a=()=>{const e=document.documentElement;if(e)e.style.zoom='" + value +
+        L"';};a();if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',a);})()";
+    c->webview->ExecuteScript(script.c_str(), nullptr);
+    if (percent == 100)
+        return;
+    void *handle = c->engine_handle;
+    c->webview->AddScriptToExecuteOnDocumentCreated(
+        script.c_str(),
+        wrl::Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+            [handle, percent](HRESULT hr, LPCWSTR id) -> HRESULT {
+                auto *cc = find_ctx(handle);
+                if (!cc || FAILED(hr) || !id || !cc->webview)
+                    return S_OK;
+                // The factor changed again while this script was being added: it is stale.
+                if (std::lround(cc->zoom * 100.0) != percent || !cc->zoom_script.empty())
+                    cc->webview->RemoveScriptToExecuteOnDocumentCreated(id);
+                else
+                    cc->zoom_script = id;
+                return S_OK;
+            })
+            .Get());
+#else
+    if (c->controller)
+        c->controller->put_ZoomFactor(c->zoom);
+#endif
+}
+
+// The first navigation, once every page script has been added: a document created before
+// AddScriptToExecuteOnDocumentCreated completes would run without it.
+static void navigate_first(WebViewCtx *c) {
+    if (c->webview && !c->pending_url.empty())
+        c->webview->Navigate(c->pending_url.c_str());
+}
+
+// Ask WebView::request_filter about a request (RequestHooks::decide, which passes a provider's
+// pages where the provider is the app's own site). False when the view has no filter.
+static bool filter_blocks(WebViewCtx *cc, ICoreWebView2WebResourceRequestedEventArgs *args,
+                          const std::wstring &url, const std::wstring &verb) {
+    if (!cc || !cc->hooks || !g_filter_cb)
+        return false;
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL;
+    args->get_ResourceContext(&context);
+    // WebView2 names no frame: a Document request for the URL the top-level
+    // NavigationStarting just announced is the main frame's.
+    const bool main = context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT && url == cc->pending_top;
+    const std::string u = to_utf8(winrt::hstring{url}), m = to_utf8(winrt::hstring{verb});
+    return g_filter_cb(cc->hooks, u.c_str(), "", static_cast<int>(context), main, m.c_str());
+}
+
+// Answer a blocked request with an empty 403.
+static void answer_blocked(ICoreWebView2Environment *environment, ICoreWebView2WebResourceRequestedEventArgs *args) {
+    wrl::ComPtr<ICoreWebView2WebResourceResponse> blocked;
+    if (environment && SUCCEEDED(environment->CreateWebResourceResponse(nullptr, 403, L"Blocked", L"", &blocked)) && blocked)
+        args->put_Response(blocked.Get());
+}
+
+// WebView::request_filter, the page scripts and the page message channel, then the first page.
+static void install_content(void *handle, WebViewCtx *c) {
+    if (!c->webview || c->content_installed) {
+        navigate_first(c);
+        return;
+    }
+    c->content_installed = true;
+    wrl::ComPtr<ICoreWebView2_2> wv2;
+    wrl::ComPtr<ICoreWebView2Environment> environment;
+    if (SUCCEEDED(c->webview.As(&wv2)) && wv2)
+        wv2->get_Environment(&environment);
+    wrl::ComPtr<ICoreWebView2_22> filters;
+    if (c->hooks && environment && SUCCEEDED(c->webview.As(&filters)) && filters) {
+        // Every request from the page, its frames and its workers. Each one crosses to this UI
+        // thread and waits for the filter, so the filter must be quick.
+        filters->AddWebResourceRequestedFilterWithRequestSourceKinds(
+            L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL, COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL);
+        EventRegistrationToken token{};
+        c->webview->add_WebResourceRequested(wrl::Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+            [handle, environment](ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *args) -> HRESULT {
+                auto *cc = find_ctx(handle);
+                if (!cc || !cc->hooks || !g_filter_cb)
+                    return S_OK;
+                wrl::ComPtr<ICoreWebView2WebResourceRequest> request;
+                if (FAILED(args->get_Request(&request)) || !request)
+                    return S_OK;
+                LPWSTR uri = nullptr, method = nullptr;
+                request->get_Uri(&uri);
+                request->get_Method(&method);
+                const std::wstring url = uri ? uri : L"";
+                const std::wstring verb = method ? method : L"GET";
+                CoTaskMemFree(uri);
+                CoTaskMemFree(method);
+                // The provider's own namespace goes through the resource handler, which asks the
+                // filter itself before serving.
+                if (url.rfind(L"https://day-resource.invalid/", 0) == 0)
+                    return S_OK;
+                if (filter_blocks(cc, args, url, verb))
+                    answer_blocked(environment.Get(), args);
+                return S_OK;
+            }).Get(), &token);
+        c->webview->add_NavigationStarting(wrl::Callback<ICoreWebView2NavigationStartingEventHandler>(
+            [handle](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+                auto *cc = find_ctx(handle);
+                LPWSTR uri = nullptr;
+                if (cc && SUCCEEDED(args->get_Uri(&uri)) && uri) {
+                    cc->pending_top = uri;
+                    CoTaskMemFree(uri);
+                }
+                return S_OK;
+            }).Get(), &token);
+    }
+    // Page messages: the top-level document's `chrome.webview.postMessage` (iframes post to
+    // their own CoreWebView2Frame, which this channel does not hear).
+    EventRegistrationToken messageToken{};
+    c->webview->add_WebMessageReceived(wrl::Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+        [handle](ICoreWebView2 *, ICoreWebView2WebMessageReceivedEventArgs *args) -> HRESULT {
+            auto *cc = find_ctx(handle);
+            if (!cc || !g_message_cb || !cc->id)
+                return S_OK;
+            LPWSTR text = nullptr, source = nullptr;
+            if (FAILED(args->TryGetWebMessageAsString(&text)) || !text)
+                return S_OK;
+            args->get_Source(&source);
+            const std::string message = to_utf8(winrt::hstring{text});
+            const std::string from = source ? to_utf8(winrt::hstring{source}) : std::string();
+            CoTaskMemFree(text);
+            CoTaskMemFree(source);
+            g_message_cb(cc->id, message.c_str(), from.c_str());
+            return S_OK;
+        }).Get(), &messageToken);
+    if (c->page_scripts.empty()) {
+        navigate_first(c);
+        return;
+    }
+    auto remaining = std::make_shared<size_t>(c->page_scripts.size());
+    for (const auto &script : c->page_scripts) {
+        c->webview->AddScriptToExecuteOnDocumentCreated(
+            script.c_str(),
+            wrl::Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+                [handle, remaining](HRESULT, LPCWSTR) -> HRESULT {
+                    if (--*remaining == 0)
+                        if (auto *cc = find_ctx(handle))
+                            navigate_first(cc);
+                    return S_OK;
+                }).Get());
+    }
+}
+
 static void on_engine_ready(void *handle, WebViewCtx *c2) {
     if (c2->transparent) {
 #ifdef DAY_WINUI
@@ -552,6 +879,10 @@ static void on_engine_ready(void *handle, WebViewCtx *c2) {
                 wrl::ComPtr<ICoreWebView2WebResourceRequest> request;args->get_Request(&request);
                 LPWSTR url=nullptr,method=nullptr,range=nullptr;
                 request->get_Uri(&url);request->get_Method(&method);
+                // A request filter's "*" filter raises this event for every request too.
+                if(!url || std::wstring_view(url).rfind(L"https://day-resource.invalid/",0)!=0){CoTaskMemFree(url);CoTaskMemFree(method);return S_OK;}
+                // The provider's pages go to the request filter first, as on every engine.
+                if(filter_blocks(c,args,url,method?method:L"GET")){answer_blocked(environment.Get(),args);CoTaskMemFree(url);CoTaskMemFree(method);return S_OK;}
                 wrl::ComPtr<ICoreWebView2HttpRequestHeaders> headers;request->get_Headers(&headers);
                 if(headers)headers->GetHeader(L"Range",&range);
                 auto pending=new ResourcePending();pending->environment=environment;pending->args=args;
@@ -692,7 +1023,17 @@ static void on_engine_ready(void *handle, WebViewCtx *c2) {
     }
     if (c2->webview) {
         EventRegistrationToken startToken{};
-        c2->webview->add_NavigationStarting(wrl::Callback<ICoreWebView2NavigationStartingEventHandler>([handle](ICoreWebView2 *,ICoreWebView2NavigationStartingEventArgs *)->HRESULT {if(auto *ctx=find_ctx(handle))ctx->loading=true;return S_OK;}).Get(),&startToken);
+        c2->webview->add_NavigationStarting(wrl::Callback<ICoreWebView2NavigationStartingEventHandler>([handle](ICoreWebView2 *,ICoreWebView2NavigationStartingEventArgs *)->HRESULT {if(auto *ctx=find_ctx(handle)){ctx->loading=true;ctx->progress=0.1;report_state(ctx);}return S_OK;}).Get(),&startToken);
+        // Page state: the remaining milestones of a load, and every title, history and URL change
+        // (SourceChanged covers same-document navigations too).
+        EventRegistrationToken stateToken{};
+        c2->webview->add_ContentLoading(wrl::Callback<ICoreWebView2ContentLoadingEventHandler>([handle](ICoreWebView2 *,ICoreWebView2ContentLoadingEventArgs *)->HRESULT {if(auto *ctx=find_ctx(handle)){ctx->progress=(std::max)(ctx->progress,0.5);report_state(ctx);}return S_OK;}).Get(),&stateToken);
+        c2->webview->add_DocumentTitleChanged(wrl::Callback<ICoreWebView2DocumentTitleChangedEventHandler>([handle](ICoreWebView2 *,IUnknown *)->HRESULT {report_state(find_ctx(handle));return S_OK;}).Get(),&stateToken);
+        c2->webview->add_HistoryChanged(wrl::Callback<ICoreWebView2HistoryChangedEventHandler>([handle](ICoreWebView2 *,IUnknown *)->HRESULT {report_state(find_ctx(handle));return S_OK;}).Get(),&stateToken);
+        c2->webview->add_SourceChanged(wrl::Callback<ICoreWebView2SourceChangedEventHandler>([handle](ICoreWebView2 *,ICoreWebView2SourceChangedEventArgs *)->HRESULT {report_state(find_ctx(handle));return S_OK;}).Get(),&stateToken);
+        wrl::ComPtr<ICoreWebView2_2> dom;
+        if (SUCCEEDED(c2->webview.As(&dom)) && dom)
+            dom->add_DOMContentLoaded(wrl::Callback<ICoreWebView2DOMContentLoadedEventHandler>([handle](ICoreWebView2 *,ICoreWebView2DOMContentLoadedEventArgs *)->HRESULT {if(auto *ctx=find_ctx(handle)){ctx->progress=(std::max)(ctx->progress,0.8);report_state(ctx);}return S_OK;}).Get(),&stateToken);
         // Report the settled URL back so the app's URL bar follows navigation.
         EventRegistrationToken tok{};
         c2->webview->add_NavigationCompleted(
@@ -722,6 +1063,8 @@ static void on_engine_ready(void *handle, WebViewCtx *c2) {
                             c3n->cb(c3n->id, s.c_str());
                         CoTaskMemFree(src);
                     }
+                    c3n->progress = 1.0;
+                    report_state(c3n);
                     return S_OK;
                 })
                 .Get(),
@@ -731,8 +1074,11 @@ static void on_engine_ready(void *handle, WebViewCtx *c2) {
     wire_input(handle);
     sync_size(c2);
 #endif
-    if (c2->webview && !c2->pending_url.empty())
-        c2->webview->Navigate(c2->pending_url.c_str());
+    // WebView::javascript and WebView::zoom, before the first navigation.
+    apply_scripts(c2);
+    if (c2->zoom != 1.0)
+        apply_zoom(c2);
+    install_content(handle, c2);
 }
 
 #ifdef DAY_WINUI
@@ -958,7 +1304,8 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
                            const char *inline_root, const char *inline_start,
                            const char *inline_dir,
                            void (*link_cb)(uint64_t, const char *), bool transparent,
-                           uint64_t session, const char *profile_key, const char *profile_directory, bool private_mode) {
+                           uint64_t session, const char *profile_key, const char *profile_directory, bool private_mode,
+                           uint64_t resource_provider, const char *resource_prefix) {
     if (session) {
         auto known = g_sessions.find(session);
         if (known != g_sessions.end()) {
@@ -966,6 +1313,9 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
             c->id = id;
             c->cb = cb;
             c->link_cb = link_cb;
+            // Reported on request (`day_webview_xaml_report_state`), once the node's handler
+            // exists: a report from here reaches a node that cannot hear it yet.
+            c->last_state.clear();
             // A fresh Day handle owns this mount; the private handle and engine survive it.
             void *mounted = day_xaml_box(winrt::get_abi(c->placeholder));
             g_webviews[mounted] = c;
@@ -1000,14 +1350,11 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
     c->cb = cb;
     c->pending_url = first;
     c->inline_prefix = prefix;
-    const std::wstring resourceRoot=L"https://day-resource.invalid/";
-    if(first.rfind(resourceRoot,0)==0) {
-        auto end=first.find(L'/',resourceRoot.size());
-        if(end!=std::wstring::npos) {
-            c->resource_provider=std::wcstoull(first.substr(resourceRoot.size(),end-resourceRoot.size()).c_str(),nullptr,10);
-            c->inline_prefix=first.substr(0,end+1);
-        }
-    }
+    // A provider's requests are intercepted either way; only its own site (`resource_prefix`
+    // set) is policed like an inline one. `WebView::resources` leaves the prefix empty.
+    c->resource_provider = resource_provider;
+    if (resource_provider && resource_prefix && *resource_prefix)
+        c->inline_prefix = hs(resource_prefix).c_str();
     c->inline_dir = inlined && inline_dir ? std::wstring(hs(inline_dir).c_str()) : std::wstring();
     c->link_cb = link_cb;
     c->transparent = transparent;
@@ -1082,6 +1429,36 @@ void day_webview_xaml_forward(void *handle) {
     }
 }
 void day_webview_xaml_set_eval_cb(void (*cb)(uint64_t, uint64_t, const char *)) { g_eval_cb = cb; }
+void day_webview_xaml_set_content_cbs(bool (*filter)(uint64_t, const char *, const char *, int, bool, const char *),
+                                      void (*message)(uint64_t, const char *, const char *)) {
+    g_filter_cb = filter;
+    g_message_cb = message;
+}
+// WebView::request_filter and the page scripts, right after `day_webview_xaml_new`: kept for
+// install_content while the engine starts. `scripts` is a JSON array of script sources. A
+// retained session's engine keeps its scripts and takes the new node's hooks.
+void day_webview_xaml_content(void *handle, uint64_t hooks, const char *scripts) {
+    auto *c = find_ctx(handle);
+    if (!c)
+        return;
+    c->hooks = hooks;
+    if (c->content_installed || !scripts || !*scripts)
+        return;
+    try {
+        auto array = winrt::Windows::Data::Json::JsonArray::Parse(hs(scripts));
+        for (auto const &value : array)
+            c->page_scripts.emplace_back(value.GetString().c_str());
+    } catch (winrt::hresult_error const &) {
+        std::fprintf(stderr, "day-piece-webview: page scripts were not valid JSON\n");
+    }
+}
+// A page message's reply, as a web message to the top-level document.
+void day_webview_xaml_post_json(void *handle, const char *json) {
+    auto *c = find_ctx(handle);
+    if (c && c->webview)
+        c->webview->PostWebMessageAsJson(hs(json).c_str());
+}
+void day_webview_xaml_set_state_cb(void (*cb)(uint64_t, const char *)) { g_state_cb = cb; }
 
 // Evaluate `script` (already wrapped by the Rust front-end) and reply exactly once.
 //
@@ -1121,6 +1498,20 @@ void day_webview_xaml_eval(void *handle, uint64_t req, const char *script) {
                 JSON::JsonObject state;state.Insert(L"url",JSON::JsonValue::CreateStringValue(url?url:L""));state.Insert(L"title",JSON::JsonValue::CreateStringValue(title?title:L""));
                 state.Insert(L"can_go_back",JSON::JsonValue::CreateBooleanValue(back));state.Insert(L"can_go_forward",JSON::JsonValue::CreateBooleanValue(forward));state.Insert(L"loading",JSON::JsonValue::CreateBooleanValue(c->loading));
                 CoTaskMemFree(url);CoTaskMemFree(title);eval_reply(id,req,"1\x1f"+to_utf8(state.Stringify()));return;
+            }
+            if(operation=="snapshot") {
+                if(!view_showing(c)){eval_reply(id,req,eval_engine_error("SnapshotError","view not on screen"));return;}
+                const int width=static_cast<int>(request.GetNamedNumber(L"width",0));
+                wrl::ComPtr<IStream> capture;
+                HRESULT hr=CreateStreamOnHGlobal(nullptr,TRUE,&capture);
+                if(SUCCEEDED(hr))hr=c->webview->CapturePreview(COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,capture.Get(),
+                    wrl::Callback<ICoreWebView2CapturePreviewCompletedHandler>([id,req,capture,width](HRESULT done)->HRESULT {
+                        std::string png;
+                        if(FAILED(done)||!snapshot_png(capture.Get(),width,png)){eval_reply(id,req,eval_engine_error("SnapshotError","capture failed"));return S_OK;}
+                        eval_reply(id,req,"1\x1f\""+base64(png)+"\"");return S_OK;
+                    }).Get());
+                if(FAILED(hr))eval_reply(id,req,eval_engine_error("SnapshotError","capture refused"));
+                return;
             }
             if(operation=="cookies") {
                 const auto url=request.GetNamedString(L"url");
@@ -1257,10 +1648,51 @@ void day_webview_xaml_force_reload(void *handle) {
                 [](HRESULT, LPCWSTR)->HRESULT { return S_OK; }).Get());
     }
 }
+void day_webview_xaml_report_state(void *handle) {
+    if (auto *c = find_ctx(handle)) {
+        c->last_state.clear();
+        report_state(c);
+    }
+}
 void day_webview_xaml_reload(void *handle) {
     auto *c = find_ctx(handle);
     if (c && c->webview)
         c->webview->Reload();
+}
+
+// The node's WebView::zoom and WebView::javascript, right after `day_webview_xaml_new`: kept for
+// on_engine_ready while the engine starts, or applied at once to a retained session's engine.
+void day_webview_xaml_settings(void *handle, double zoom, bool javascript) {
+    auto *c = find_ctx(handle);
+    if (!c)
+        return;
+    const bool zoom_changed = c->zoom != zoom;
+    c->zoom = zoom;
+    c->scripts = javascript;
+    if (!c->webview)
+        return;
+    apply_scripts(c);
+    if (zoom_changed)
+        apply_zoom(c);
+}
+void day_webview_xaml_set_zoom(void *handle, double zoom) {
+    auto *c = find_ctx(handle);
+    if (!c)
+        return;
+    c->zoom = zoom;
+    if (c->webview)
+        apply_zoom(c);
+}
+// A running page cannot gain or lose its scripts: change the setting, then reload.
+void day_webview_xaml_set_javascript(void *handle, bool enabled) {
+    auto *c = find_ctx(handle);
+    if (!c || c->scripts == enabled)
+        return;
+    c->scripts = enabled;
+    if (c->webview) {
+        apply_scripts(c);
+        c->webview->Reload();
+    }
 }
 
 } // extern "C"

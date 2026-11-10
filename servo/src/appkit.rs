@@ -162,6 +162,7 @@ impl ServoView {
             .url(url)
             .hidpi_scale_factor(euclid::Scale::new(self.scale() as f32))
             .build();
+        engine::apply_settings(&self.ivars().state, &web);
         *self.ivars().web.borrow_mut() = Some(web);
         Waker.wake();
     }

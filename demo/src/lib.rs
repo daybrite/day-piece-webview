@@ -9,8 +9,8 @@
 
 use day::prelude::*;
 use day_piece_webview::{
-    JsHandle, LinkPolicy, NavigationState, WebRenderer, eval_support, inline_support, support,
-    web_view, web_view_inline,
+    JsHandle, LinkPolicy, PageState, ResourceProvider, ResourceRequest, ResourceResponse,
+    WebRenderer, eval_support, inline_support, support, web_view, web_view_inline,
 };
 use std::collections::HashMap;
 
@@ -33,6 +33,9 @@ enum Source {
     Home,
     Resources,
     Remote,
+    /// Remote-style browsing of pages the app serves itself (`WebView::resources`), the way a
+    /// browser's test mode stands in for the network.
+    Fixture,
 }
 #[derive(Clone, Copy)]
 struct Browser {
@@ -41,7 +44,10 @@ struct Browser {
     resource_base: Signal<String>,
     location: Signal<String>,
     address: Signal<String>,
-    navigation: Signal<NavigationState>,
+    /// The live page state the view reports (`WebView::page_state`).
+    page: Signal<PageState>,
+    /// The fixture page to open next, as a provider path (`https/<host>/<path>?<query>`).
+    fixture_start: Signal<String>,
     status: Signal<String>,
     received: Signal<String>,
     js: JsHandle,
@@ -68,6 +74,18 @@ impl Browser {
                 self.source.set(Source::Resources);
                 self.location.set(String::new());
             }
+            Ok(url) if self.source.get_untracked() == Source::Fixture => {
+                // Fixture mode serves every web address from the app's namespace.
+                match fixture_path(&url) {
+                    Some(path) => {
+                        self.location
+                            .set(format!("{}{path}", self.resource_base.get_untracked()));
+                        self.go.notify();
+                        self.status.set(String::new());
+                    }
+                    None => self.status.set(res::str::address_invalid().format()),
+                }
+            }
             Ok(url) => {
                 self.location.set(url.clone());
                 self.address.set(url);
@@ -91,7 +109,10 @@ impl Browser {
             return;
         }
         if day::share_support() == Support::Native {
-            if !day::share_url(&url, &self.navigation.get_untracked().title) {
+            if !day::Share::url(url.clone())
+                .title(self.page.get_untracked().title)
+                .present()
+            {
                 self.status.set(res::str::share_failed().format());
             }
         } else {
@@ -278,7 +299,34 @@ fn canonical_tab_url(browser: Browser, url: &str) -> String {
             return format!("day://resources/{path}");
         }
     }
+    if source == Source::Fixture {
+        let base = browser.resource_base.get_untracked();
+        if !base.is_empty()
+            && let Some(path) = url.strip_prefix(&base)
+        {
+            return format!("day://fixture/{path}");
+        }
+    }
     url.to_owned()
+}
+/// The provider path a fixture-mode web address is served at: `https://example.test/a?b` is
+/// `https/example.test/a?b`.
+fn fixture_path(url: &str) -> Option<String> {
+    let url = url::Url::parse(url).ok()?;
+    let host = url.host_str()?;
+    let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
+    let query = url.query().map(|q| format!("?{q}")).unwrap_or_default();
+    Some(format!(
+        "{}/{host}{port}{}{query}",
+        url.scheme(),
+        url.path()
+    ))
+}
+/// The web address a fixture page stands for, as the address bar shows it: the inverse of
+/// [`fixture_path`] on a URL the view reported.
+fn fixture_address(base: &str, url: &str) -> Option<String> {
+    let (scheme, rest) = url.strip_prefix(base)?.split_once('/')?;
+    matches!(scheme, "http" | "https").then(|| format!("{scheme}://{rest}"))
 }
 fn tab_url(browser: Browser) -> String {
     let location = browser.location.get_untracked();
@@ -364,6 +412,23 @@ pub fn root() -> impl Piece {
 }
 fn tab_controls(tabs: BrowserTabs, tab_number: u64) -> impl Piece {
     row((
+        // What a link's "Open in Background Tab" does, for scripts: the tab's page is built
+        // while hidden and must load all the same.
+        button(res::str::open_link_background_tab())
+            .icon(Symbol::Add)
+            .icon_only()
+            .compact()
+            .action(move || {
+                if let Some(view) = tabs.active() {
+                    tabs.open(tab_url(view.browser), false);
+                }
+            })
+            .id(tab_widget_id!(
+                tab_number,
+                tab_background,
+                tab_background_tab
+            ))
+            .width(40.0),
         button(res::str::new_tab())
             .icon(Symbol::Add)
             .icon_only()
@@ -481,14 +546,12 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
                 menu_item(res::str::back())
                     .id(day::id!(browser_back))
                     .key("[")
-                    .enabled(support() == Support::Native && browser.navigation.get().can_go_back)
+                    .enabled(support() == Support::Native && browser.page.get().can_go_back)
                     .action(move || browser.back.notify()),
                 menu_item(res::str::forward())
                     .id(day::id!(browser_forward))
                     .key("]")
-                    .enabled(
-                        support() == Support::Native && browser.navigation.get().can_go_forward,
-                    )
+                    .enabled(support() == Support::Native && browser.page.get().can_go_forward)
                     .action(move || browser.forward.notify()),
                 menu_separator(),
                 menu_item(res::str::home())
@@ -522,7 +585,7 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
                     .enabled(
                         renderer.get() == WebRenderer::WebView
                             && support() == Support::Native
-                            && browser.navigation.get().loading,
+                            && browser.page.get().loading,
                     )
                     .action(move || browser.stop.notify()),
                 menu_separator(),
@@ -550,8 +613,12 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
         .unwrap_or_default();
     let remote = !initial.is_empty()
         && !initial.starts_with("day://home")
-        && !initial.starts_with("day://resources");
-    let initial_source = if initial.starts_with("day://resources") {
+        && !initial.starts_with("day://resources")
+        && !initial.starts_with("day://fixture/");
+    let fixture_start = initial.strip_prefix("day://fixture/").map(str::to_owned);
+    let initial_source = if fixture_start.is_some() {
+        Source::Fixture
+    } else if initial.starts_with("day://resources") {
         Source::Resources
     } else if remote {
         Source::Remote
@@ -571,7 +638,10 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
             String::new()
         }),
         address: Signal::new(if remote { initial } else { "day://home".into() }),
-        navigation: Signal::new(NavigationState::default()),
+        page: Signal::new(PageState::default()),
+        fixture_start: Signal::new(
+            fixture_start.unwrap_or_else(|| "https/example.test/index.html".to_owned()),
+        ),
         status: Signal::new(String::new()),
         received: Signal::new(String::new()),
         js: JsHandle::new(),
@@ -595,6 +665,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
     let address_focus = Signal::new(false);
     let script = Signal::new(String::new());
     let answer = Signal::new(String::new());
+    let snapshot = Signal::new(String::new());
     watch(
         move || private.get(),
         move |value, _| {
@@ -620,7 +691,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
     });
     let title_key = tab_key.clone();
     watch(
-        move || browser.navigation.get().title,
+        move || browser.page.get().title,
         move |title, _| {
             tabs.titles.update(|titles| {
                 titles.insert(title_key.clone(), title.clone());
@@ -636,41 +707,41 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
             renderer.get(),
         )
     };
-    let polling = day::task(async move {
-        loop {
-            let requested = key();
-            if support() == Support::Native
-                && !(requested.1 && requested.4.private_browsing_support() == Support::Unsupported)
-                && let futures_util::future::Either::Left((Ok(state), _)) =
-                    futures_util::future::select(
-                        Box::pin(browser.js.navigation_state()),
+    // The engine pushes page state; the address bar follows its URL, including same-document
+    // changes. An iframe host reports no state, so web-dom re-localizes the home page instead.
+    watch(
+        move || browser.page.get().url,
+        move |url, _| {
+            if !url.is_empty() && *url != browser.location.get_untracked() {
+                browser.location.set(url.clone());
+            }
+        },
+    );
+    if support() == Support::Emulated {
+        let localizing = day::task(async move {
+            loop {
+                let requested = key();
+                if requested.0 == Source::Home && !requested.1 {
+                    let _ = futures_util::future::select(
+                        Box::pin(browser.js.eval(home_localization())),
                         Box::pin(day::sleep(1000)),
                     )
-                    .await
-                && requested == key()
-            {
-                if !state.url.is_empty() && state.url != browser.location.get_untracked() {
-                    browser.location.set(state.url.clone());
-                    browser.address.set(state.url.clone());
+                    .await;
                 }
-                browser.navigation.set_if_changed(state);
+                day::sleep(300).await;
             }
-            if support() == Support::Emulated && requested.0 == Source::Home && !requested.1 {
-                let _ = futures_util::future::select(
-                    Box::pin(browser.js.eval(home_localization())),
-                    Box::pin(day::sleep(1000)),
-                )
-                .await;
-            }
-            day::sleep(300).await;
-        }
-    });
-    day::reactive::Scope::current().on_cleanup(move || polling.abort());
+        });
+        day::reactive::Scope::current().on_cleanup(move || localizing.abort());
+    }
     watch(
         move || browser.location.get(),
         move |url, _| {
             if !url.is_empty() {
-                browser.address.set(url.clone());
+                // Fixture pages show the web address they stand for.
+                let shown = (browser.source.get_untracked() == Source::Fixture)
+                    .then(|| fixture_address(&browser.resource_base.get_untracked(), url))
+                    .flatten();
+                browser.address.set(shown.unwrap_or_else(|| url.clone()));
             }
         },
     );
@@ -685,9 +756,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     .icon(Symbol::Back)
                     .icon_only()
                     .compact()
-                    .enabled(move || {
-                        support() == Support::Native && browser.navigation.get().can_go_back
-                    })
+                    .enabled(move || support() == Support::Native && browser.page.get().can_go_back)
                     .action(move || browser.back.notify())
                     .id(tab_widget_id!(tab_number, webview_back, webview_back_tab)),
                 button(res::str::forward())
@@ -695,7 +764,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     .icon_only()
                     .compact()
                     .enabled(move || {
-                        support() == Support::Native && browser.navigation.get().can_go_forward
+                        support() == Support::Native && browser.page.get().can_go_forward
                     })
                     .action(move || browser.forward.notify())
                     .id(tab_widget_id!(
@@ -720,7 +789,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     .enabled(move || {
                         renderer.get() == WebRenderer::WebView
                             && support() == Support::Native
-                            && browser.navigation.get().loading
+                            && browser.page.get().loading
                     })
                     .action(move || browser.stop.notify())
                     .id(tab_widget_id!(tab_number, webview_stop, webview_stop_tab)),
@@ -760,7 +829,10 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                                 if let Some(path) = resource_page_path(&url) {
                                     resource_start.set(path);
                                 }
-                                browser.navigation.set(NavigationState::default());
+                                if let Some(path) = url.strip_prefix("day://fixture/") {
+                                    browser.fixture_start.set(path.to_owned());
+                                }
+                                browser.page.set(PageState::default());
                                 renderer.set(if renderer.get_untracked() == WebRenderer::Servo {
                                     WebRenderer::WebView
                                 } else {
@@ -878,6 +950,16 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         );
                     }
                     Source::Remote => web_view(browser.location),
+                    Source::Fixture => {
+                        let provider = fixture_provider();
+                        browser.resource_base.set(provider.base_url());
+                        browser.location.set(format!(
+                            "{}{}",
+                            provider.base_url(),
+                            browser.fixture_start.get_untracked()
+                        ));
+                        web_view(browser.location).resources(provider)
+                    }
                 };
                 let Ok(view) = view.renderer(renderer) else {
                     return label(res::str::renderer_unavailable()).any();
@@ -895,6 +977,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                         },
                     )
                     .js(browser.js)
+                    .page_state(browser.page)
                     .go(browser.go)
                     .back(browser.back)
                     .forward(browser.forward)
@@ -902,7 +985,10 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                     .reload(browser.reload)
                     .force_reload(browser.force_reload)
                     .on_external_link(move |url| {
-                        if browser.source.get_untracked() == Source::Remote {
+                        if matches!(
+                            browser.source.get_untracked(),
+                            Source::Remote | Source::Fixture
+                        ) {
                             if let Some(route) = url.strip_prefix(APP_SCHEME) {
                                 browser.received.set(route.trim_matches('/').into());
                                 LinkPolicy::Ignore
@@ -928,7 +1014,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
         .grow(Dimension::Both),
         row((
             label(move || {
-                let title = browser.navigation.get().title;
+                let title = browser.page.get().title;
                 if title.is_empty() {
                     res::str::app_title().format()
                 } else {
@@ -939,13 +1025,15 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
             .grow(Dimension::Width)
             .id(tab_widget_id!(tab_number, webview_title, webview_title_tab)),
             when(
-                move || browser.navigation.get().loading,
+                move || browser.page.get().loading,
                 move || {
-                    spinner().frame(16.0, 16.0).id(tab_widget_id!(
-                        tab_number,
-                        browser_loading,
-                        browser_loading_tab
-                    ))
+                    progress(move || browser.page.get().progress)
+                        .width(80.0)
+                        .id(tab_widget_id!(
+                            tab_number,
+                            browser_loading,
+                            browser_loading_tab
+                        ))
                 },
             ),
             label(move || browser.status.get())
@@ -1016,6 +1104,31 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                             webview_js_result_tab
                         )),
                     label(move || {
+                        let page = browser.page.get();
+                        let flag = |b: bool| if b { "yes" } else { "no" };
+                        res::str::page_summary(res::str::PageSummary {
+                            progress: (page.progress * 100.0).round() as i64,
+                            back: flag(page.can_go_back),
+                            forward: flag(page.can_go_forward),
+                        })
+                        .format()
+                    })
+                    .font(Font::Footnote)
+                    .single_line()
+                    .id(tab_widget_id!(
+                        tab_number,
+                        webview_page_summary,
+                        webview_page_summary_tab
+                    )),
+                    label(move || snapshot.get())
+                        .font(Font::Footnote)
+                        .single_line()
+                        .id(tab_widget_id!(
+                            tab_number,
+                            webview_snapshot_result,
+                            webview_snapshot_result_tab
+                        )),
+                    label(move || {
                         let route = browser.received.get();
                         if route.is_empty() {
                             res::str::link_none().format()
@@ -1069,6 +1182,39 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                                 );
                             })
                             .id(tab_widget_id!(tab_number, resource_demo, resource_demo_tab)),
+                        button(res::str::snapshot())
+                            .action(move || {
+                                day::task(async move {
+                                    // A PNG's width is the big-endian u32 at byte 16 (IHDR).
+                                    let text = match browser.js.snapshot(300).await {
+                                        Ok(png) if png.len() > 24 => {
+                                            let width = u32::from_be_bytes([
+                                                png[16], png[17], png[18], png[19],
+                                            ]);
+                                            res::str::snapshot_taken(i64::from(width)).format()
+                                        }
+                                        _ => res::str::snapshot_failed().format(),
+                                    };
+                                    snapshot.set(text);
+                                });
+                            })
+                            .id(tab_widget_id!(
+                                tab_number,
+                                webview_snapshot,
+                                webview_snapshot_tab
+                            )),
+                        button(res::str::fixture_demo())
+                            .action(move || {
+                                browser.location.set(String::new());
+                                browser.source.set(
+                                    if browser.source.get_untracked() == Source::Fixture {
+                                        Source::Home
+                                    } else {
+                                        Source::Fixture
+                                    },
+                                );
+                            })
+                            .id(tab_widget_id!(tab_number, fixture_demo, fixture_demo_tab)),
                     ))
                     .spacing(8.0),
                 ))
@@ -1249,6 +1395,7 @@ fn resource_site(
     .profile(renderer_profile(renderer, private))
     .url_binding(browser.location)
     .js(browser.js)
+    .page_state(browser.page)
     .go(browser.go)
     .back(browser.back)
     .forward(browser.forward)
@@ -1257,6 +1404,58 @@ fn resource_site(
     .force_reload(browser.force_reload)
     .id(tab_widget_id!(tab_number, webview, webview_tab))
     .any()
+}
+
+/// The fixture namespace: a small site the app serves under `https/<host>/`, for any host, the
+/// way a browser's test mode answers for the network. Its pages link to each other with queries,
+/// open a new tab, submit a GET form and assign `location`, and each echoes the query it was
+/// requested with (`ResourceRequest::query`) into `body[data-query]`.
+fn fixture_provider() -> ResourceProvider {
+    // Localize on the UI thread; the provider itself runs on native IO workers.
+    let texts = [
+        res::str::fixture_start().format(),
+        res::str::fixture_next().format(),
+        res::str::fixture_search().format(),
+        res::str::fixture_caption().format(),
+        res::str::fixture_next_link().format(),
+        res::str::fixture_tab_link().format(),
+        res::str::fixture_search_button().format(),
+    ]
+    .map(|text| escape_html(&text));
+    ResourceProvider::new(move |request: ResourceRequest| {
+        let [
+            start,
+            next,
+            search,
+            caption,
+            next_link,
+            tab_link,
+            search_button,
+        ] = &texts;
+        let mut parts = request.path.splitn(3, '/');
+        let (Some("https" | "http"), Some(_host), Some(page)) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            return ResourceResponse::not_found();
+        };
+        let title = match page {
+            "" | "index.html" => start,
+            "next.html" => next,
+            "search.html" => search,
+            _ => return ResourceResponse::not_found(),
+        };
+        let query = escape_html(request.query.as_deref().unwrap_or_default());
+        let html = format!(
+            r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title><style>body{{font:17px system-ui;padding:20px;line-height:1.5}}</style></head><body data-query="{query}"><h1>{title}</h1><p>{caption}</p><p><a id="next" href="next.html?from=start">{next_link}</a></p><p><a id="blank" href="next.html?from=blank" target="_blank">{tab_link}</a></p><form id="search" action="search.html" method="get"><input name="q" value="day"> <button>{search_button}</button></form><p><a id="start" href="index.html">{start}</a></p><p id="details"></p></body></html>"#
+        );
+        ResourceResponse::new("text/html; charset=utf-8", html.into_bytes())
+    })
+}
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn default_renderer() -> WebRenderer {

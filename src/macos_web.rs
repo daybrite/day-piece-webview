@@ -36,6 +36,13 @@ struct NavIvars {
     tabs: RefCell<Option<TabLinkLabels>>,
     background: Cell<bool>,
     link_item: RefCell<Option<Retained<NSMenuItem>>>,
+    /// The last page-state report sent, so a KVO change that leaves the reported state as it
+    /// was (progress inside the same hundredth) sends nothing.
+    last_state: RefCell<String>,
+    /// `WebView::desktop_mode` and `WebView::javascript`, applied to each navigation's
+    /// `WKWebpagePreferences` as the delegate decides it.
+    desktop_mode: Cell<bool>,
+    javascript: Cell<bool>,
 }
 
 define_class!(
@@ -48,6 +55,14 @@ define_class!(
     unsafe impl NSObjectProtocol for WebNav {}
 
     impl WebNav {
+        // KVO on the page-state keys (`storage_apple::observe_state`): every change re-reads
+        // the whole state, and `report_state` drops the ones that leave it unchanged.
+        #[unsafe(method(observeValueForKeyPath:ofObject:change:context:))]
+        fn observe_value(&self, _key: Option<&NSString>, object: Option<&AnyObject>, _change: Option<&AnyObject>, _context: *mut std::ffi::c_void) {
+            if let Some(web) = object {
+                self.report_state(web);
+            }
+        }
         #[unsafe(method(openBackgroundTab:))]
         fn open_background(&self, _sender: Option<&AnyObject>) {
             let item = self.ivars().link_item.borrow().clone();
@@ -77,63 +92,24 @@ define_class!(
             }
         }
 
-        // Inline mode's link policy (docs/webview.md): a main-frame navigation leaving the
-        // bundled site is cancelled here and reported to the piece, which runs the app's
-        // `LinkPolicy` (events are enqueue-only, so the decision cannot come back through this
-        // callback; cancel-then-dispatch is the contract). Remote mode allows everything.
-        #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
+        // The preferences form of the policy callback, which WebKit calls instead of the
+        // two-argument one: the decision is `policy`'s, and the navigation's preferences carry
+        // the view's desktop-mode and script settings (`storage_apple::webpage_preferences`).
+        #[unsafe(method(webView:decidePolicyForNavigationAction:preferences:decisionHandler:))]
         fn decide_policy(
             &self,
             web_view: &WKWebView,
             action: &WKNavigationAction,
-            handler: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy)>,
+            preferences: &AnyObject,
+            handler: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy, *mut AnyObject)>,
         ) {
-            let frame = unsafe { action.targetFrame() };
-            let subframe = frame.as_ref().is_some_and(|f| !unsafe { f.isMainFrame() });
-            let url = unsafe { action.request() }
-                .URL()
-                .and_then(|u| u.absoluteString())
-                .map(|s| s.to_string())
-                .unwrap_or_default();
-            let activated = unsafe { action.navigationType() }
-                == objc2_web_kit::WKNavigationType::LinkActivated;
-            let modifiers: usize = unsafe { msg_send![action, modifierFlags] };
-            let button: isize = unsafe { msg_send![action, buttonNumber] };
-            if self.ivars().tabs.borrow().is_some() && !subframe &&
-                (frame.is_none() || (activated && (modifiers & (1 << 20) != 0 || button == 2))) {
-                let background = self.ivars().background.replace(false) ||
-                    (activated && (modifiers & (1 << 20) != 0 || button == 2) && modifiers & (1 << 17) == 0);
-                (self.ivars().emit)(self.ivars().node.get(), new_tab_event(url, background));
-                handler.call((WKNavigationActionPolicy::Cancel,));
-                return;
-            }
-            let external = match &*self.ivars().inline_base.borrow() {
-                Some(base) => !subframe && !url.starts_with(base.as_str()) && url != "about:blank",
-                None => {
-                    self.ivars().external_links.get()
-                        && super::external_document_link(
-                            current_url(web_view).as_deref(),
-                            &url,
-                            activated,
-                            frame.is_none(),
-                            subframe,
-                        )
-                }
-            };
-            let policy = if external {
-                (self.ivars().emit)(
-                    self.ivars().node.get(),
-                    Event::Custom {
-                        tag: "webview:link",
-                        num: super::LINK_REPORT,
-                        text: url,
-                    },
-                );
-                WKNavigationActionPolicy::Cancel
-            } else {
-                WKNavigationActionPolicy::Allow
-            };
-            handler.call((policy,));
+            let policy = self.policy(web_view, action);
+            super::storage_apple::webpage_preferences(
+                preferences,
+                self.ivars().desktop_mode.get(),
+                self.ivars().javascript.get(),
+            );
+            handler.call((policy, preferences as *const AnyObject as *mut AnyObject));
         }
     }
 );
@@ -173,6 +149,82 @@ define_class!(
 );
 
 impl WebNav {
+    /// Inline mode's link policy (docs/webview.md): a main-frame navigation leaving the bundled
+    /// site is cancelled here and reported to the piece, which runs the app's `LinkPolicy`
+    /// (events are enqueue-only, so the decision cannot come back through the delegate callback;
+    /// cancel-then-dispatch is the contract). Remote mode allows everything.
+    fn policy(
+        &self,
+        web_view: &WKWebView,
+        action: &WKNavigationAction,
+    ) -> WKNavigationActionPolicy {
+        let frame = unsafe { action.targetFrame() };
+        let subframe = frame.as_ref().is_some_and(|f| !unsafe { f.isMainFrame() });
+        let url = unsafe { action.request() }
+            .URL()
+            .and_then(|u| u.absoluteString())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let activated =
+            unsafe { action.navigationType() } == objc2_web_kit::WKNavigationType::LinkActivated;
+        let modifiers: usize = unsafe { msg_send![action, modifierFlags] };
+        let button: isize = unsafe { msg_send![action, buttonNumber] };
+        if self.ivars().tabs.borrow().is_some()
+            && !subframe
+            && (frame.is_none() || (activated && (modifiers & (1 << 20) != 0 || button == 2)))
+        {
+            let background = self.ivars().background.replace(false)
+                || (activated
+                    && (modifiers & (1 << 20) != 0 || button == 2)
+                    && modifiers & (1 << 17) == 0);
+            (self.ivars().emit)(self.ivars().node.get(), new_tab_event(url, background));
+            return WKNavigationActionPolicy::Cancel;
+        }
+        let external = match &*self.ivars().inline_base.borrow() {
+            Some(base) => !subframe && !url.starts_with(base.as_str()) && url != "about:blank",
+            None => {
+                self.ivars().external_links.get()
+                    && super::external_document_link(
+                        current_url(web_view).as_deref(),
+                        &url,
+                        activated,
+                        frame.is_none(),
+                        subframe,
+                    )
+            }
+        };
+        if external {
+            (self.ivars().emit)(
+                self.ivars().node.get(),
+                Event::Custom {
+                    tag: "webview:link",
+                    num: super::LINK_REPORT,
+                    text: url,
+                },
+            );
+            WKNavigationActionPolicy::Cancel
+        } else {
+            WKNavigationActionPolicy::Allow
+        }
+    }
+
+    /// Send the web view's current page state unless it equals the last one sent.
+    fn report_state(&self, web: &AnyObject) {
+        let text = super::encode_page_state(&super::storage_apple::page_state(web));
+        if *self.ivars().last_state.borrow() == text {
+            return;
+        }
+        *self.ivars().last_state.borrow_mut() = text.clone();
+        (self.ivars().emit)(
+            self.ivars().node.get(),
+            Event::Custom {
+                tag: "webview:state",
+                num: super::PAGE_STATE_REPORT,
+                text,
+            },
+        );
+    }
+
     fn new(mtm: MainThreadMarker, node: NodeId, emit: fn(NodeId, Event)) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(NavIvars {
             node: Cell::new(node),
@@ -182,6 +234,9 @@ impl WebNav {
             tabs: RefCell::new(None),
             background: Cell::new(false),
             link_item: RefCell::new(None),
+            last_state: RefCell::new(String::new()),
+            desktop_mode: Cell::new(false),
+            javascript: Cell::new(true),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -234,6 +289,13 @@ fn page_url(dir: &std::path::Path, page: &str) -> objc2::rc::Retained<NSURL> {
         .unwrap_or(url)
 }
 
+/// The first page a new view loads, held until its content rule lists are attached.
+enum First {
+    File(Retained<NSURL>, Retained<NSURL>),
+    Url(String),
+    None,
+}
+
 pub(crate) fn make(
     mtm: MainThreadMarker,
     p: &WebProps,
@@ -253,7 +315,16 @@ pub(crate) fn make(
                 nav.ivars().node.set(id);
                 nav.ivars().external_links.set(p.external_links);
                 *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
-                *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
+                // The node's settings: zoom at once, the rest from the next navigation on.
+                nav.ivars().desktop_mode.set(p.settings.desktop_mode);
+                nav.ivars().javascript.set(p.settings.javascript);
+                super::storage_apple::set_page_zoom(&view, p.settings.zoom);
+                super::content_apple::retarget(key, id, emit);
+                // The node's own rule lists (its scripts and handlers stay the view's first).
+                super::content_apple::update(key, &WebPatch::ContentRules(p.content.rules.clone()));
+                // The node now showing the page has heard nothing yet. It is told once its
+                // handler exists (`WebPatch::ReportState`): a report from here would be lost.
+                nav.ivars().last_state.borrow_mut().clear();
             }
         });
         return view;
@@ -281,10 +352,20 @@ pub(crate) fn make(
     let nav = WebNav::new(mtm, id, emit);
     nav.ivars().external_links.set(p.external_links);
     *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
+    // Set before the first load, whose policy decision already reads them.
+    nav.ivars().desktop_mode.set(p.settings.desktop_mode);
+    nav.ivars().javascript.set(p.settings.javascript);
+    if p.settings.zoom != 1.0 {
+        super::storage_apple::set_page_zoom(&web, p.settings.zoom);
+    }
     unsafe {
         let _: () = msg_send![&*web, setUIDelegate: &*nav];
     }
     unsafe { web.setNavigationDelegate(Some(ProtocolObject::from_ref(&*nav))) };
+    // Live page state (`WebView::page_state`). Removed again in `release`, before the delegate
+    // that observes goes away.
+    super::storage_apple::observe_state(&web, &nav);
+    let mut first = First::None;
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): the bundled site is loose files (the assets tree in
         // the bundle, or the project's `resource/assets/` under `day launch`), so a file URL
@@ -312,7 +393,7 @@ pub(crate) fn make(
             if let Some(base) = site.absoluteString() {
                 *nav.ivars().inline_base.borrow_mut() = Some(base.to_string());
             }
-            let _ = unsafe { web.loadFileURL_allowingReadAccessToURL(&index, &read) };
+            first = First::File(index, read);
         } else {
             log::warn!(
                 "day-piece-webview: inline site {:?} not found in the staged assets",
@@ -320,11 +401,32 @@ pub(crate) fn make(
             );
         }
     } else if !p.url.is_empty() {
-        if let Some(provider) = &p.resources {
+        // A provider's own site keeps its navigations inside the provider; a provider attached
+        // to an ordinary view (`WebView::resources`) only adds the scheme, configured above.
+        if let Some(provider) = p.resources.as_ref().filter(|_| p.resource_site) {
             *nav.ivars().inline_base.borrow_mut() = Some(provider.base_url());
         }
-        load_url(&web, &p.url);
+        first = First::Url(p.url.clone());
     }
+    // Scripts, message handlers and rule lists (`WebView::content_rules` and friends). The first
+    // page waits for the rule lists, so it never loads unfiltered.
+    let key = (&*web as *const WKWebView) as usize;
+    let loader = web.clone();
+    super::content_apple::attach(
+        mtm,
+        key,
+        &config,
+        &p.content,
+        id,
+        emit,
+        move || match first {
+            First::File(index, read) => {
+                let _ = unsafe { loader.loadFileURL_allowingReadAccessToURL(&index, &read) };
+            }
+            First::Url(url) => load_url(&loader, &url),
+            First::None => {}
+        },
+    );
     let view: Retained<NSView> = Retained::from(<WKWebView as AsRef<NSView>>::as_ref(&web));
     DELEGATES.with(|m| {
         m.borrow_mut()
@@ -400,7 +502,18 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
                 }
             }
         }
-        WebPatch::Load(url) => load_url(web, url),
+        WebPatch::ContentRules(_)
+        | WebPatch::ScriptReply { .. }
+        | WebPatch::MediaDecision { .. } => {
+            super::content_apple::update((&**h as *const NSView) as usize, patch);
+        }
+        // While the first page waits for its rule lists, a navigation takes its place.
+        WebPatch::Load(url) => {
+            let (loader, url) = (objc2::Message::retain(web), url.clone());
+            super::content_apple::navigate((&**h as *const NSView) as usize, move || {
+                load_url(&loader, &url)
+            });
+        }
         WebPatch::Back => {
             let _ = unsafe { web.goBack() };
         }
@@ -408,11 +521,48 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
             let _ = unsafe { web.goForward() };
         }
         WebPatch::Stop => unsafe { web.stopLoading() },
+        // Nothing has loaded while the first page waits for its rules; it loads when they do.
+        WebPatch::Reload | WebPatch::ForceReload
+            if super::content_apple::holding((&**h as *const NSView) as usize) => {}
         WebPatch::ForceReload => {
             let _ = unsafe { web.reloadFromOrigin() };
         }
         WebPatch::Reload => {
             let _ = unsafe { web.reload() };
+        }
+        WebPatch::ReportState => {
+            let key = (&**h as *const NSView) as usize;
+            DELEGATES.with(|m| {
+                if let Some(nav) = m.borrow().get(&key) {
+                    nav.ivars().last_state.borrow_mut().clear();
+                    nav.report_state(web);
+                }
+            });
+        }
+        WebPatch::Zoom(zoom) => super::storage_apple::set_page_zoom(web, *zoom),
+        // Stored for the next navigation's preferences. A Mac asks for desktop sites already
+        // (`WKContentModeRecommended` is the desktop layout here), so desktop mode changes
+        // nothing and needs no reload.
+        WebPatch::DesktopMode(desktop) => {
+            let key = (&**h as *const NSView) as usize;
+            DELEGATES.with(|m| {
+                if let Some(nav) = m.borrow().get(&key) {
+                    nav.ivars().desktop_mode.set(*desktop);
+                }
+            });
+        }
+        // A page cannot gain or lose its scripts while it runs: reload it under the new
+        // preferences.
+        WebPatch::JavaScript(enabled) => {
+            let key = (&**h as *const NSView) as usize;
+            let changed = DELEGATES.with(|m| {
+                m.borrow()
+                    .get(&key)
+                    .is_some_and(|nav| nav.ivars().javascript.replace(*enabled) != *enabled)
+            });
+            if changed {
+                let _ = unsafe { web.reload() };
+            }
         }
     }
 }
@@ -435,7 +585,37 @@ pub(crate) fn release(h: &Retained<NSView>) {
     if retained {
         return;
     }
-    DELEGATES.with(|m| {
-        m.borrow_mut().remove(&key);
-    });
+    super::content_apple::release(key);
+    let nav = DELEGATES.with(|m| m.borrow_mut().remove(&key));
+    if let (Some(nav), Some(web)) = (nav, h.downcast_ref::<WKWebView>()) {
+        super::storage_apple::unobserve_state(web, &nav);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WebKit calls the preferences form of the policy callback when the delegate responds to
+    /// it, and then only that form: the class must register it, with an object for the
+    /// preferences and a block for the decision handler.
+    #[test]
+    fn the_navigation_delegate_takes_the_preferences_form() {
+        let protocol = objc2::runtime::AnyProtocol::get(c"WKNavigationDelegate");
+        assert!(protocol.is_some(), "WebKit is linked into the test binary");
+        let class = <WebNav as objc2::ClassType>::class();
+        assert!(protocol.is_some_and(|protocol| class.conforms_to(protocol)));
+        let selector =
+            objc2::sel!(webView:decidePolicyForNavigationAction:preferences:decisionHandler:);
+        let method = class.instance_method(selector).expect("registered");
+        // self, _cmd, the web view, the action, the preferences, the handler.
+        assert_eq!(method.arguments_count(), 6);
+        let argument = |i| {
+            method
+                .argument_type(i)
+                .map(|t| t.to_str().unwrap_or("").to_owned())
+        };
+        assert_eq!(argument(4).as_deref(), Some("@"));
+        assert_eq!(argument(5).as_deref(), Some("@?"));
+    }
 }

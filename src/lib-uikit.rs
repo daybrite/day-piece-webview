@@ -46,6 +46,14 @@ struct NavIvars {
     inline_base: RefCell<Option<String>>,
     external_links: Cell<bool>,
     tabs: RefCell<Option<TabLinkLabels>>,
+    /// The last page-state report sent (see the AppKit arm's `report_state`).
+    last_state: RefCell<String>,
+    /// The node showing the view binds its scroll position (`WebProps::scroll_reports`).
+    scroll_reports: Cell<bool>,
+    /// `WebView::desktop_mode` and `WebView::javascript`, applied to each navigation's
+    /// `WKWebpagePreferences` as the delegate decides it.
+    desktop_mode: Cell<bool>,
+    javascript: Cell<bool>,
 }
 
 /// WKNavigationActionPolicy, hand-rolled like the class itself: Cancel = 0, Allow = 1.
@@ -62,6 +70,13 @@ define_class!(
     unsafe impl NSObjectProtocol for WebNav {}
 
     impl WebNav {
+        // KVO on the page-state keys (`storage_apple::observe_state`).
+        #[unsafe(method(observeValueForKeyPath:ofObject:change:context:))]
+        fn observe_value(&self, _key: Option<&NSString>, object: Option<&AnyObject>, _change: Option<&AnyObject>, _context: *mut std::ffi::c_void) {
+            if let Some(web) = object {
+                self.report_state(web);
+            }
+        }
         #[unsafe(method(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
         fn new_window(&self, _web: &WKWebView, _configuration: &AnyObject, action: &AnyObject, _features: &AnyObject) -> *mut AnyObject {
             if self.ivars().tabs.borrow().is_some() {
@@ -100,6 +115,20 @@ define_class!(
         // UIScrollViewDelegate, as the web view's scroll view's external delegate (WebKit keeps its
         // own and forwards to this one). The adjusted inset changes when WebKit learns whether the
         // page covers the safe areas; see `refresh_viewport`.
+        // Scroll reports (`WebView::scroll_state`): every frame of scrolling, plus the moments
+        // a drag starts and ends, so the binding knows whether a finger is on the page.
+        #[unsafe(method(scrollViewDidScroll:))]
+        fn did_scroll(&self, scroll: &UIView) {
+            self.report_scroll(scroll);
+        }
+        #[unsafe(method(scrollViewWillBeginDragging:))]
+        fn will_begin_dragging(&self, scroll: &UIView) {
+            self.report_scroll(scroll);
+        }
+        #[unsafe(method(scrollViewDidEndDragging:willDecelerate:))]
+        fn did_end_dragging(&self, scroll: &UIView, _decelerate: bool) {
+            self.report_scroll(scroll);
+        }
         #[unsafe(method(scrollViewDidChangeAdjustedContentInset:))]
         fn adjusted_inset_changed(&self, scroll: &UIView) {
             // UIScrollViewContentInsetAdjustmentNever: WebKit's choice for a page that covers.
@@ -120,56 +149,114 @@ define_class!(
             }
         }
 
-        // Inline mode's link policy, the same contract as the AppKit arm's `decide_policy`: a
-        // main-frame navigation leaving the bundled site is canceled and reported; the piece
-        // runs the app's `LinkPolicy` (events are enqueue-only, the decision can't come back
-        // through this callback). Raw msg_send shapes, like the rest of this hand-rolled arm.
-        #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
+        // The preferences form of the policy callback, which WebKit calls instead of the
+        // two-argument one: the decision is `policy`'s, and the navigation's preferences carry
+        // the view's desktop-mode and script settings (`storage_apple::webpage_preferences`).
+        #[unsafe(method(webView:decidePolicyForNavigationAction:preferences:decisionHandler:))]
         fn decide_policy(
             &self,
             web_view: &WKWebView,
             action: &AnyObject,
-            handler: &block2::DynBlock<dyn Fn(isize)>,
+            preferences: &AnyObject,
+            handler: &block2::DynBlock<dyn Fn(isize, *mut AnyObject)>,
         ) {
-            let frame: *mut AnyObject = unsafe { msg_send![action, targetFrame] };
-            let subframe = !frame.is_null() && !unsafe { msg_send![&*frame, isMainFrame] };
-            let req: Retained<NSURLRequest> = unsafe { msg_send![action, request] };
-            let url = req.URL().and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default();
-            if self.ivars().tabs.borrow().is_some() && let Some(request)=tab_scheme_request(&url) {
-                day_toolkit_uikit::emit(self.ivars().node.get(), new_tab_event(request.url,request.background));
-                handler.call((POLICY_CANCEL,)); return;
-            }
-            let kind: isize = unsafe { msg_send![action, navigationType] };
-            let activated = kind == 0; // WKNavigationTypeLinkActivated
-            if self.ivars().tabs.borrow().is_some() && frame.is_null() {
-                day_toolkit_uikit::emit(self.ivars().node.get(),new_tab_event(url,false));
-                handler.call((POLICY_CANCEL,)); return;
-            }
-            let external = match &*self.ivars().inline_base.borrow() {
-                Some(base) => !subframe && !url.starts_with(base.as_str()) && url != "about:blank",
-                None => self.ivars().external_links.get() && super::external_document_link(
-                    current_url(web_view).as_deref(), &url, activated, frame.is_null(), subframe),
-            };
-            let policy = if external {
-                day_toolkit_uikit::emit(self.ivars().node.get(), Event::Custom {
-                    tag: "webview:link", num: super::LINK_REPORT, text: url,
-                });
-                POLICY_CANCEL
-            } else {
-                POLICY_ALLOW
-            };
-            handler.call((policy,));
+            let policy = self.policy(web_view, action);
+            super::storage_apple::webpage_preferences(
+                preferences,
+                self.ivars().desktop_mode.get(),
+                self.ivars().javascript.get(),
+            );
+            handler.call((policy, preferences as *const AnyObject as *mut AnyObject));
         }
     }
 );
 
 impl WebNav {
+    /// Inline mode's link policy, the same contract as the AppKit arm's `policy`: a main-frame
+    /// navigation leaving the bundled site is canceled and reported; the piece runs the app's
+    /// `LinkPolicy` (events are enqueue-only, the decision can't come back through the delegate
+    /// callback). Raw msg_send shapes, like the rest of this hand-rolled arm.
+    fn policy(&self, web_view: &WKWebView, action: &AnyObject) -> isize {
+        let frame: *mut AnyObject = unsafe { msg_send![action, targetFrame] };
+        let subframe = !frame.is_null() && !unsafe { msg_send![&*frame, isMainFrame] };
+        let req: Retained<NSURLRequest> = unsafe { msg_send![action, request] };
+        let url = req.URL().and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default();
+        if self.ivars().tabs.borrow().is_some() && let Some(request)=tab_scheme_request(&url) {
+            day_toolkit_uikit::emit(self.ivars().node.get(), new_tab_event(request.url,request.background));
+            return POLICY_CANCEL;
+        }
+        let kind: isize = unsafe { msg_send![action, navigationType] };
+        let activated = kind == 0; // WKNavigationTypeLinkActivated
+        if self.ivars().tabs.borrow().is_some() && frame.is_null() {
+            day_toolkit_uikit::emit(self.ivars().node.get(),new_tab_event(url,false));
+            return POLICY_CANCEL;
+        }
+        let external = match &*self.ivars().inline_base.borrow() {
+            Some(base) => !subframe && !url.starts_with(base.as_str()) && url != "about:blank",
+            None => self.ivars().external_links.get() && super::external_document_link(
+                current_url(web_view).as_deref(), &url, activated, frame.is_null(), subframe),
+        };
+        if external {
+            day_toolkit_uikit::emit(self.ivars().node.get(), Event::Custom {
+                tag: "webview:link", num: super::LINK_REPORT, text: url,
+            });
+            POLICY_CANCEL
+        } else {
+            POLICY_ALLOW
+        }
+    }
+
+    /// Send where the page is scrolled, when the node showing the view asked for it. The offset
+    /// counts from the top of the content, past the inset UIKit adds under the bars.
+    fn report_scroll(&self, scroll: &UIView) {
+        if !self.ivars().scroll_reports.get() {
+            return;
+        }
+        // SAFETY: UIScrollView's geometry getters, on the main thread its delegate is called on.
+        let (offset, size, inset, dragging) = unsafe {
+            let offset: objc2_core_foundation::CGPoint = msg_send![scroll, contentOffset];
+            let size: objc2_core_foundation::CGSize = msg_send![scroll, contentSize];
+            let inset: objc2_ui_kit::UIEdgeInsets = msg_send![scroll, adjustedContentInset];
+            let dragging: bool = msg_send![scroll, isDragging];
+            (offset, size, inset, dragging)
+        };
+        let viewport = scroll.bounds().size.height - inset.top - inset.bottom;
+        let state = super::ScrollState {
+            offset: offset.y + inset.top,
+            content_height: size.height,
+            viewport_height: viewport.max(0.0),
+            dragging,
+        };
+        day_toolkit_uikit::emit(self.ivars().node.get(), super::scroll_state_event(&state));
+    }
+
+    /// Send the web view's current page state unless it equals the last one sent.
+    fn report_state(&self, web: &AnyObject) {
+        let text = super::encode_page_state(&super::storage_apple::page_state(web));
+        if *self.ivars().last_state.borrow() == text {
+            return;
+        }
+        *self.ivars().last_state.borrow_mut() = text.clone();
+        day_toolkit_uikit::emit(
+            self.ivars().node.get(),
+            Event::Custom {
+                tag: "webview:state",
+                num: super::PAGE_STATE_REPORT,
+                text,
+            },
+        );
+    }
+
     fn new(mtm: MainThreadMarker, node: NodeId) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(NavIvars {
             node: Cell::new(node),
             inline_base: RefCell::new(None),
             external_links: Cell::new(false),
             tabs: RefCell::new(None),
+            last_state: RefCell::new(String::new()),
+            scroll_reports: Cell::new(false),
+            desktop_mode: Cell::new(false),
+            javascript: Cell::new(true),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -236,6 +323,9 @@ fn page_url(dir: &std::path::Path, page: &str) -> objc2::rc::Retained<NSURL> {
         .unwrap_or(url)
 }
 
+/// A new view's first page, held until its content rule lists are attached.
+type FirstLoad = Box<dyn FnOnce(&WKWebView)>;
+
 fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
     // A session already holding a view: re-attach it rather than build a new one. Only the node
     // changes: point the delegate at the node now showing it, and do not reload, since the whole
@@ -248,7 +338,18 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
             if let Some(nav) = m.borrow().get(&key) {
                 nav.ivars().node.set(id);
                 nav.ivars().external_links.set(p.external_links);
+                nav.ivars().scroll_reports.set(p.scroll_reports);
                 *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
+                // The node's settings: zoom at once, the rest from the next navigation on.
+                nav.ivars().desktop_mode.set(p.settings.desktop_mode);
+                nav.ivars().javascript.set(p.settings.javascript);
+                super::storage_apple::set_page_zoom(&view, p.settings.zoom);
+                super::content_apple::retarget(key, id, day_toolkit_uikit::emit);
+                // The node's own rule lists (its scripts and handlers stay the view's first).
+                super::content_apple::update(key, &WebPatch::ContentRules(p.content.rules.clone()));
+                // The node now showing the page has heard nothing yet. It is told once its
+                // handler exists (`WebPatch::ReportState`): a report from here would be lost.
+                nav.ivars().last_state.borrow_mut().clear();
             }
         });
         return view;
@@ -287,8 +388,19 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
         let _: () = msg_send![&*web, setUIDelegate: &*nav];
     }
     nav.ivars().external_links.set(p.external_links);
+    nav.ivars().scroll_reports.set(p.scroll_reports);
     *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
+    // Set before the first load, whose policy decision already reads them.
+    nav.ivars().desktop_mode.set(p.settings.desktop_mode);
+    nav.ivars().javascript.set(p.settings.javascript);
+    if p.settings.zoom != 1.0 {
+        super::storage_apple::set_page_zoom(&web, p.settings.zoom);
+    }
     let _: () = unsafe { msg_send![&web, setNavigationDelegate: &*nav] };
+    // Live page state (`WebView::page_state`); removed again in `release`.
+    super::storage_apple::observe_state(&web, &nav);
+    // The first page, held until the view's content rule lists are attached (see below).
+    let mut first: Option<FirstLoad> = None;
     // SAFETY: main thread; the scroll view holds its delegate weakly, and DELEGATES keeps `nav`
     // alive as long as the web view.
     unsafe {
@@ -317,8 +429,10 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
             if let Some(base) = site.absoluteString() {
                 *nav.ivars().inline_base.borrow_mut() = Some(base.to_string());
             }
-            let _: *mut AnyObject =
-                unsafe { msg_send![&web, loadFileURL: &*index, allowingReadAccessToURL: &*read] };
+            first = Some(Box::new(move |web: &WKWebView| {
+                let _: *mut AnyObject =
+                    unsafe { msg_send![web, loadFileURL: &*index, allowingReadAccessToURL: &*read] };
+            }));
         } else {
             log::warn!(
                 "day-piece-webview: inline site {:?} not found in the staged assets",
@@ -326,11 +440,30 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
             );
         }
     } else if !p.url.is_empty() {
-        if let Some(provider) = &p.resources {
+        // Only a provider's own site is policed; `WebView::resources` just adds the scheme.
+        if let Some(provider) = p.resources.as_ref().filter(|_| p.resource_site) {
             *nav.ivars().inline_base.borrow_mut() = Some(provider.base_url());
         }
-        load_url(&web, &p.url);
+        let url = p.url.clone();
+        first = Some(Box::new(move |web: &WKWebView| load_url(web, &url)));
     }
+    // Scripts, message handlers and rule lists (`WebView::content_rules` and friends). The first
+    // page waits for the rule lists, so it never loads unfiltered.
+    let key = (&*web as *const WKWebView) as usize;
+    let loader = web.clone();
+    super::content_apple::attach(
+        mtm,
+        key,
+        &config,
+        &p.content,
+        id,
+        day_toolkit_uikit::emit,
+        move || {
+            if let Some(first) = first {
+                first(&loader);
+            }
+        },
+    );
     let view: Retained<UIView> = Retained::from(<WKWebView as AsRef<UIView>>::as_ref(&web));
     DELEGATES.with(|m| {
         m.borrow_mut()
@@ -405,7 +538,21 @@ fn update(_backend: &mut Uikit, h: &Retained<UIView>, patch: &WebPatch) {
                     eval(web, node, *req, script);
                 }
             }
-            WebPatch::Load(url) => load_url(web, url),
+            WebPatch::ContentRules(_)
+            | WebPatch::ScriptReply { .. }
+            | WebPatch::MediaDecision { .. } => {
+                super::content_apple::update((&**h as *const UIView) as usize, patch);
+            }
+            // While the first page waits for its rule lists, a navigation takes its place.
+            WebPatch::Load(url) => {
+                let (loader, url) = (objc2::Message::retain(web), url.clone());
+                super::content_apple::navigate((&**h as *const UIView) as usize, move || {
+                    load_url(&loader, &url)
+                });
+            }
+            // Nothing has loaded while the first page waits for its rules; it loads when they do.
+            WebPatch::Reload | WebPatch::ForceReload
+                if super::content_apple::holding((&**h as *const UIView) as usize) => {}
             WebPatch::Back => {
                 let _: *mut AnyObject = msg_send![web, goBack];
             }
@@ -420,6 +567,35 @@ fn update(_backend: &mut Uikit, h: &Retained<UIView>, patch: &WebPatch) {
             }
             WebPatch::Reload => {
                 let _: *mut AnyObject = msg_send![web, reload];
+            }
+            WebPatch::ReportState => {
+                let key = (&**h as *const UIView) as usize;
+                DELEGATES.with(|m| {
+                    if let Some(nav) = m.borrow().get(&key) {
+                        nav.ivars().last_state.borrow_mut().clear();
+                        nav.report_state(web);
+                    }
+                });
+            }
+            WebPatch::Zoom(zoom) => super::storage_apple::set_page_zoom(web, *zoom),
+            // Both settings reach WebKit through the next navigation's preferences, so the
+            // page reloads to take them: the site answers the desktop request, or the page
+            // comes back without (or with) its scripts.
+            WebPatch::DesktopMode(on) | WebPatch::JavaScript(on) => {
+                let key = (&**h as *const UIView) as usize;
+                let changed = DELEGATES.with(|m| {
+                    m.borrow().get(&key).is_some_and(|nav| {
+                        let setting = if matches!(patch, WebPatch::DesktopMode(_)) {
+                            &nav.ivars().desktop_mode
+                        } else {
+                            &nav.ivars().javascript
+                        };
+                        setting.replace(*on) != *on
+                    })
+                });
+                if changed {
+                    let _: *mut AnyObject = msg_send![web, reload];
+                }
             }
         }
     }
@@ -443,9 +619,11 @@ fn release(_backend: &mut Uikit, h: &Retained<UIView>) {
     if retained {
         return;
     }
-    DELEGATES.with(|m| {
-        m.borrow_mut().remove(&key);
-    });
+    super::content_apple::release(key);
+    let nav = DELEGATES.with(|m| m.borrow_mut().remove(&key));
+    if let (Some(nav), Some(web)) = (nav, (**h).downcast_ref::<WKWebView>()) {
+        super::storage_apple::unobserve_state(web, &nav);
+    }
 }
 
 day_pieces::renderer!(day_toolkit_uikit::RENDERERS, Uikit,

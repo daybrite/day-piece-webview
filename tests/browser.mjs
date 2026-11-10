@@ -108,7 +108,9 @@ test('cross-origin or destroyed frames answer with an error instead of stranding
     assert.match(events[0][2], /^0\u001fError\u001f.*cross-origin/);
 });
 
-// Load reporting is independent of the optional bundled-site click policy.
+// Load reporting is independent of the optional bundled-site click policy. Each real load
+// reports twice: the URL (num 0) and the page state (num -5: loading/back/forward flags,
+// progress, URL, and the title where the frame is same-origin).
 test('load reports skip startup blank, repeat for reload, support cross-origin, and dispose', () => {
     const frame = new EventTarget(), events = [];
     let dispose;
@@ -120,20 +122,73 @@ test('load reports skip startup blank, repeat for reload, support cross-origin, 
             onRelease: (_id, fn) => { dispose = fn; },
         }},
     });
+    const state = (url, title) => [7, -5, `000\u001f1\u001f${url}\u001f${title}`];
     observe(7);
     frame.src = 'https://example.test/reader.html';
     frame.contentWindow = {location: {href: 'about:blank'}};
     frame.dispatchEvent(new Event('load'));
-    assert.deepEqual(events, []);
+    assert.deepEqual(events, [], 'the resource worker\'s startup blank is not a load');
+
     frame.contentWindow.location.href = frame.src;
+    frame.contentDocument = {title: 'Reader'};
     frame.dispatchEvent(new Event('load'));
+    assert.deepEqual(events, [[7, 0, frame.src], state(frame.src, 'Reader')]);
+
+    // A reload reports again, both events, with the title the reloaded page has now.
+    frame.contentDocument = {title: 'Reader (2)'};
     frame.dispatchEvent(new Event('load'));
-    assert.deepEqual(events, [[7, 0, frame.src], [7, 0, frame.src]]);
+    assert.deepEqual(events.slice(2), [[7, 0, frame.src], state(frame.src, 'Reader (2)')]);
+
+    // Cross-origin: the URL comes from `src` and the title is unknowable, so it is empty.
     frame.src = 'https://publication.test/article';
     Object.defineProperty(frame.contentWindow, 'location', {get() { throw new Error('cross-origin'); }});
+    Object.defineProperty(frame, 'contentDocument', {get() { throw new Error('cross-origin'); }});
     frame.dispatchEvent(new Event('load'));
-    assert.deepEqual(events.at(-1), [7, 0, frame.src]);
+    assert.deepEqual(events.slice(4), [[7, 0, frame.src], state(frame.src, '')]);
+
     dispose();
     frame.dispatchEvent(new Event('load'));
-    assert.equal(events.length, 3);
+    assert.equal(events.length, 6, 'nothing reports after disposal');
+});
+
+test('zoom follows same-origin loads, and cross-origin documents stay untouched', () => {
+    const frame = new EventTarget();
+    let dispose;
+    const zoom = runInNewContext(`${arm}\nzoom_browser`, {
+        URL, Uint32Array, crypto: {getRandomValues: a=>a.fill(123)}, navigator: {},
+        dayHost: {dom: { element: () => frame, onRelease: (_id, fn) => { dispose = fn; } }},
+    });
+    const page = () => ({documentElement: {style: {zoom: ''}}});
+    frame.contentDocument = page();
+    zoom(7, 1.5);
+    assert.equal(frame.contentDocument.documentElement.style.zoom, '1.5');
+    // The next document is zoomed when it loads; one listener however often the factor changes.
+    zoom(7, 2);
+    frame.contentDocument = page();
+    frame.dispatchEvent(new Event('load'));
+    assert.equal(frame.contentDocument.documentElement.style.zoom, '2');
+    zoom(7, 1);
+    assert.equal(frame.contentDocument.documentElement.style.zoom, '');
+    Object.defineProperty(frame, 'contentDocument', {get() { throw new Error('cross-origin'); }});
+    assert.doesNotThrow(() => zoom(7, 3));
+    assert.doesNotThrow(() => frame.dispatchEvent(new Event('load')));
+    dispose();
+});
+
+test('page scripts off sandboxes the frame without allow-scripts, and on lifts the sandbox', () => {
+    const attributes = new Map();
+    const frame = {
+        setAttribute: (name, value) => attributes.set(name, value),
+        removeAttribute: name => attributes.delete(name),
+    };
+    const scripts = runInNewContext(`${arm}\nscripts_browser`, {
+        URL, Uint32Array, crypto: {getRandomValues: a=>a.fill(123)}, navigator: {},
+        dayHost: {dom: { element: () => frame }},
+    });
+    scripts(7, false);
+    const sandbox = attributes.get('sandbox').split(' ');
+    assert.ok(!sandbox.includes('allow-scripts'));
+    assert.ok(sandbox.includes('allow-same-origin') && sandbox.includes('allow-forms'));
+    scripts(7, true);
+    assert.equal(attributes.has('sandbox'), false);
 });

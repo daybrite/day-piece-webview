@@ -23,9 +23,18 @@ day_toolkit_material::java_class! {
         static fn supportsProfiles() -> jboolean,
         static fn supportsDataClearing() -> jboolean,
         static fn makeWebView(id: jlong, url: JString, inline_prefix: JString, provider: jlong,
-            profile: JString) -> android.view.View,
+            profile: JString, zoom: jdouble, desktop: jboolean, javascript: jboolean,
+            hooks: jlong, content: JString, media_handler: jboolean)
+            -> android.view.View,
+        static fn scriptReply(view: android.view.View, message: jlong, reply: JString, has_reply: jboolean),
+        static fn mediaDecision(view: android.view.View, request: jlong, allow: jboolean),
+        static fn supportsDocumentStartScripts() -> jboolean,
+        static fn setZoom(view: android.view.View, zoom: jdouble),
+        static fn setDesktopMode(view: android.view.View, desktop: jboolean),
+        static fn setJavaScript(view: android.view.View, enabled: jboolean),
         static fn configureTabs(view: android.view.View, foreground: JString, background: JString),
         static fn setTransparent(view: android.view.View),
+        static fn reportScroll(view: android.view.View),
         static fn evalJs(view: android.view.View, req: jdouble, script: JString),
         static fn webCommand(view: android.view.View, code: jint, url: JString),
         static fn release(view: android.view.View),
@@ -41,7 +50,45 @@ day_toolkit_material::java_class! {
                 -> android.webkit.WebResourceResponse,
             error_policy = day_toolkit_material::jni::errors::ThrowRuntimeExAndDefault,
         },
+        // WebView::request_filter, on WebView's IO workers. Java treats a throw as "allow".
+        static fn decide {
+            sig = (hooks: jlong, url: JString, accept: JString, main_frame: jboolean, method: JString)
+                -> jboolean,
+            error_policy = day_toolkit_material::jni::errors::ThrowRuntimeExAndDefault,
+        },
     },
+}
+
+/// What `makeWebView` installs before the first load: the page scripts (each composed to run at
+/// document start in every frame, since `addDocumentStartJavaScript` has no other mode), the
+/// message handler names, and the `dayMessage` shim for web message listeners and for the
+/// fallback bridge.
+fn content_json(content: &PageContent) -> String {
+    if !content.has_scripts() {
+        return String::new();
+    }
+    let mut app = content.clone();
+    app.messages.clear();
+    let scripts: Vec<String> = app
+        .page_scripts(super::content::Transport::Android, false)
+        .iter()
+        .map(super::content::document_start_everywhere)
+        .collect();
+    serde_json::json!({
+        "scripts": scripts,
+        "messages": content.messages,
+        "shim": super::content::message_shim(super::content::Transport::Android, &content.messages),
+        "fallbackShim": super::content::message_shim(
+            super::content::Transport::Envelope("window.__dayMessageHost.post"),
+            &content.messages,
+        ),
+    })
+    .to_string()
+}
+
+/// Whether document-start scripts run natively on this device's WebView.
+pub(crate) fn document_start_scripts() -> bool {
+    java(|env| DayWebView::supportsDocumentStartScripts(env)).unwrap_or(false)
 }
 
 /// One of DayWebView's capability probes (`supportsProfiles`, `supportsDataClearing`).
@@ -71,8 +118,10 @@ fn make(_backend: &mut Material, p: &WebProps, id: NodeId) -> AHandle {
     let (url, prefix) = if p.inline_root.is_empty() {
         (
             p.url.clone(),
+            // Only a provider's own site is policed; `WebView::resources` only intercepts.
             p.resources
                 .as_ref()
+                .filter(|_| p.resource_site)
                 .map(ResourceProvider::base_url)
                 .unwrap_or_default(),
         )
@@ -90,12 +139,36 @@ fn make(_backend: &mut Material, p: &WebProps, id: NodeId) -> AHandle {
     };
     // A Java throw (e.g. the staged DayWebView class missing) must not panic inside realize:
     // the panic unwinds the JNI up-call and aborts. Placeholder instead.
+    let hooks = p
+        .content
+        .requests
+        .as_ref()
+        .map(super::content::register)
+        .unwrap_or(0);
+    let content = content_json(&p.content);
     let view = day_toolkit_material::realize("web_view", |env| {
         let url = JString::from_str(env, &url)?;
         let prefix = JString::from_str(env, &prefix)?;
         let profile = JString::from_str(env, &profile)?;
-        DayWebView::makeWebView(env, id.0 as i64, &url, &prefix, provider, &profile)
+        let content = JString::from_str(env, &content)?;
+        DayWebView::makeWebView(
+            env,
+            id.0 as i64,
+            &url,
+            &prefix,
+            provider,
+            &profile,
+            p.settings.zoom,
+            p.settings.desktop_mode,
+            p.settings.javascript,
+            hooks as i64,
+            &content,
+            p.content.media_handler,
+        )
     });
+    if p.scroll_reports {
+        java(|env| DayWebView::reportScroll(env, view.0.as_obj()));
+    }
     if let Some(labels) = &p.tabs {
         java(|env| {
             let foreground = JString::from_str(env, &labels.foreground)?;
@@ -120,6 +193,36 @@ fn update(_backend: &mut Material, h: &AHandle, patch: &WebPatch) {
         });
         return;
     }
+    // Settings (docs/webview.md): text zoom, a desktop user agent and viewport, and the script
+    // switch. The Java side reloads the page when desktop mode or scripts change.
+    match patch {
+        WebPatch::ScriptReply { id, reply } => {
+            java(|env| {
+                let text = JString::from_str(env, reply.as_deref().unwrap_or(""))?;
+                DayWebView::scriptReply(env, h.0.as_obj(), *id as i64, &text, reply.is_some())
+            });
+            return;
+        }
+        WebPatch::MediaDecision { id, allow } => {
+            java(|env| DayWebView::mediaDecision(env, h.0.as_obj(), *id as i64, *allow));
+            return;
+        }
+        // WebKit's rule lists; Android filters through `request_filter` instead.
+        WebPatch::ContentRules(_) => return,
+        WebPatch::Zoom(zoom) => {
+            java(|env| DayWebView::setZoom(env, h.0.as_obj(), *zoom));
+            return;
+        }
+        WebPatch::DesktopMode(desktop) => {
+            java(|env| DayWebView::setDesktopMode(env, h.0.as_obj(), *desktop));
+            return;
+        }
+        WebPatch::JavaScript(enabled) => {
+            java(|env| DayWebView::setJavaScript(env, h.0.as_obj(), *enabled));
+            return;
+        }
+        _ => {}
+    }
     // Commands cross as (code, url): 0=load, 1=back, 2=forward, 3=stop, 4=reload.
     let (code, url) = match patch {
         WebPatch::Load(u) => (0, u.as_str()),
@@ -128,7 +231,16 @@ fn update(_backend: &mut Material, h: &AHandle, patch: &WebPatch) {
         WebPatch::Stop => (3, ""),
         WebPatch::Reload => (4, ""),
         WebPatch::ForceReload => (5, ""),
-        WebPatch::Eval { .. } => return, // handled above; keeps the match exhaustive
+        // Handled above; listed to keep the match exhaustive.
+        WebPatch::Eval { .. }
+        | WebPatch::Zoom(_)
+        | WebPatch::DesktopMode(_)
+        | WebPatch::JavaScript(_)
+        | WebPatch::ContentRules(_)
+        | WebPatch::ScriptReply { .. }
+        | WebPatch::MediaDecision { .. } => return,
+        // No retained views: a fresh view reports as its first load proceeds.
+        WebPatch::ReportState => return,
     };
     java(|env| {
         let url = JString::from_str(env, url)?;
@@ -169,5 +281,33 @@ impl DayWebViewNativeInterface for DayWebViewAPI {
                 .collect::<String>(),
         )?;
         DayWebView::response(env, &mime, r.status as i32, &headers, &bytes)
+    }
+
+    fn decide<'l>(
+        env: &mut Env<'l>,
+        _class: JClass<'l>,
+        hooks: i64,
+        url: JString<'l>,
+        accept: JString<'l>,
+        main_frame: bool,
+        method: JString<'l>,
+    ) -> Result<bool, Self::Error> {
+        let Some(hooks) = super::content::hooks(hooks as u64) else {
+            return Ok(false);
+        };
+        let url = string_of(env, &url)?;
+        let accept = string_of(env, &accept)?;
+        let method = string_of(env, &method)?;
+        // Android names no resource type: the Accept header and the extension stand in.
+        let kind = ResourceKind::infer(&url, Some(&accept), main_frame);
+        let request = RequestInfo {
+            url: &url,
+            top_url: None,
+            frame_url: None,
+            kind,
+            main_frame,
+            method: &method,
+        };
+        Ok(hooks.decide(&request) == RequestDecision::Block)
     }
 }

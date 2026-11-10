@@ -37,10 +37,12 @@ fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
     } else {
         props
     };
-    let props = if p.resources.is_some() {
-        format!("day-resource{SEP}{props}", SEP = super::SEP)
-    } else {
-        props
+    // A provider's own site is policed by its base (`day-resource-site`); a provider attached to
+    // an ordinary view (`WebView::resources`) only has its scheme handler installed.
+    let props = match &p.resources {
+        Some(_) if p.resource_site => format!("day-resource-site{SEP}{props}", SEP = super::SEP),
+        Some(_) => format!("day-resource{SEP}{props}", SEP = super::SEP),
+        None => props,
     };
     let props = if p.profile.private {
         format!("day-private{}{props}", super::SEP)
@@ -57,7 +59,53 @@ fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
     } else {
         props
     };
+    // Settings other than the defaults lead with their own marker, outermost:
+    // `day-settings<US><text zoom percent><US><desktop 0/1><US><scripts 0/1><US>`.
+    let props = if p.settings == WebSettings::default() {
+        props
+    } else {
+        format!(
+            "day-settings{SEP}{}{SEP}{}{SEP}{}{SEP}{props}",
+            zoom_percent(p.settings.zoom),
+            u8::from(p.settings.desktop_mode),
+            u8::from(p.settings.javascript),
+            SEP = super::SEP
+        )
+    };
+    // Content blocking and page scripts lead with theirs, outermost of all:
+    // `day-content<US><JSON><US>`. JSON escapes control characters, so the separator cannot
+    // occur inside it. ArkWeb runs every document-start script in every frame, so each script
+    // is composed to keep its own timing and frames, and all are joined into one in order.
+    let props = if p.content.requests.is_some() || p.content.has_scripts() {
+        let scripts: Vec<String> = p
+            .content
+            .page_scripts(
+                super::content::Transport::Envelope("window.__dayMessageHost.post"),
+                false,
+            )
+            .iter()
+            .map(|script| {
+                format!(
+                    "try{{{}\n}}catch(e){{console.error(e)}}",
+                    super::content::document_start_everywhere(script)
+                )
+            })
+            .collect();
+        let content = serde_json::json!({
+            "filter": p.content.requests.is_some(),
+            "messages": !p.content.messages.is_empty(),
+            "scripts": scripts.join("\n"),
+        });
+        format!("day-content{SEP}{content}{SEP}{props}", SEP = super::SEP)
+    } else {
+        props
+    };
     piece::make(KIND, id, &props)
+}
+
+/// ArkWeb's `textZoomRatio` takes a whole percentage.
+fn zoom_percent(zoom: f64) -> u32 {
+    (zoom * 100.0).round() as u32
 }
 
 fn update(_backend: &mut ArkUi, h: &AHandle, patch: &WebPatch) {
@@ -69,6 +117,23 @@ fn update(_backend: &mut ArkUi, h: &AHandle, patch: &WebPatch) {
         piece::update(h, "eval", &format!("{req}{}{script}", super::SEP));
         return;
     }
+    // Settings (docs/webview.md): text zoom and the script switch are Web component attributes,
+    // and desktop mode a custom user agent; the ArkTS side reloads for the latter two.
+    let setting = match patch {
+        WebPatch::Zoom(zoom) => Some(("zoom", zoom_percent(*zoom).to_string())),
+        WebPatch::DesktopMode(desktop) => Some(("desktop", u8::from(*desktop).to_string())),
+        WebPatch::JavaScript(enabled) => Some(("javascript", u8::from(*enabled).to_string())),
+        _ => None,
+    };
+    if let Some((cmd, arg)) = setting {
+        piece::update(h, cmd, &arg);
+        return;
+    }
+    // A page message's reply, settled in the top-level document.
+    if let WebPatch::ScriptReply { id, reply } = patch {
+        piece::update(h, "run", &super::content::reply_script(*id, reply.as_deref()));
+        return;
+    }
     let (cmd, arg) = match patch {
         WebPatch::Load(u) => ("load", u.as_str()),
         WebPatch::Back => ("back", ""),
@@ -76,7 +141,17 @@ fn update(_backend: &mut ArkUi, h: &AHandle, patch: &WebPatch) {
         WebPatch::Stop => ("stop", ""),
         WebPatch::Reload => ("reload", ""),
         WebPatch::ForceReload => ("forceReload", ""),
-        WebPatch::Eval { .. } => return, // handled above; keeps the match exhaustive
+        // Handled above; listed to keep the match exhaustive.
+        WebPatch::Eval { .. }
+        | WebPatch::Zoom(_)
+        | WebPatch::DesktopMode(_)
+        | WebPatch::JavaScript(_)
+        | WebPatch::ScriptReply { .. } => return,
+        // WebKit's rule lists; ArkWeb filters through `request_filter`, and denies capture
+        // devices to pages by default.
+        WebPatch::ContentRules(_) | WebPatch::MediaDecision { .. } => return,
+        // No retained views: a fresh view reports as its first load proceeds.
+        WebPatch::ReportState => return,
     };
     piece::update(h, cmd, arg);
 }

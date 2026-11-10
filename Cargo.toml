@@ -87,6 +87,12 @@ cc = "1"
 [dev-dependencies]
 day-mock = "0.*"
 
+# WebKit answers on the main thread's run loop, so this test runs its own `main`.
+[[test]]
+name = "content-rules-macos"
+harness = false
+required-features = ["appkit"]
+
 # Standalone-piece Android contribution (https://daybrite.dev/contributing/extending). The day CLI reads
 # this from `cargo metadata` and folds it into the app's Gradle build: the piece carries its
 # backend Java and declares the Android permissions it needs, without touching day-toolkit-material or the
@@ -153,7 +159,7 @@ id = "io.qt.qtwebengine.BaseApp"
 block2 = { version = "0.6", optional = true }
 objc2 = { version = "0.6", optional = true }
 objc2-app-kit = { version = "0.3", optional = true, features = ["NSView", "NSResponder"] }
-objc2-ui-kit = { version = "0.3", optional = true, features = ["UIView", "UIResponder"] }
+objc2-ui-kit = { version = "0.3", optional = true, features = ["UIView", "UIResponder", "UIGeometry"] }
 objc2-foundation = { version = "0.3", optional = true, features = ["NSString", "NSURL", "NSURLRequest", "NSError"] }
 objc2-core-graphics = { version = "0.3", optional = true, features = ["CGEvent", "CGEventTypes"] }
 objc2-core-foundation = { version = "0.3", optional = true, features = ["CFCGTypes"] }

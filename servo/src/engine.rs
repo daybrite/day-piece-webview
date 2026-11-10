@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Shared Servo engine, navigation, evaluation, and resource lifecycle for all hosts.
 use day_piece_webview::renderer::{
-    background, data_request, engine_error, external_link_event, load_event, reply_event,
-    resource_response, success_json,
+    background, data_request, engine_error, external_link_event, load_event, page_state_event,
+    reply_event, resource_response, success_json,
 };
-use day_piece_webview::{ResourceProvider, ResourceResponse, WebPatch, WebProps};
+use day_piece_webview::{
+    PageState, RequestDecision, RequestInfo, ResourceKind, ResourceProvider, ResourceResponse,
+    WebPatch, WebProps,
+};
 use day_spec::{Event, NodeId};
 use servo::{EventLoopWaker, Servo, ServoBuilder};
 // Servo itself skips its default resource reader on OpenHarmony (`not(target_env = "ohos")` in
@@ -132,11 +135,45 @@ pub(crate) struct State {
     pub(crate) props: WebProps,
     pub(crate) allowed_url: RefCell<String>,
     inline_provider: Option<ResourceProvider>,
+    /// The last page-state report, so a notification that changes nothing reports nothing.
+    last_state: RefCell<Option<PageState>>,
 }
 impl State {
     pub(crate) fn report(&self, event: Event) {
         let node = self.node.get();
         day_reactive::on_main(move || day_core::enqueue_event(node, event));
+    }
+    /// Report the page state (`WebView::page_state`) when it differs from the last report.
+    /// Servo announces each part of it separately (URL, title, load status, history); every
+    /// announcement re-reads the whole state. Servo exposes no progress estimate, so progress
+    /// steps through the load phases.
+    pub(crate) fn report_state(&self, web: &servo::WebView) {
+        let status = web.load_status();
+        let loading = status != servo::LoadStatus::Complete;
+        let state = PageState {
+            url: web
+                .url()
+                .map(|u| self.external_url(u.as_str()))
+                .unwrap_or_default(),
+            title: web.page_title().unwrap_or_default(),
+            loading,
+            progress: match status {
+                servo::LoadStatus::Started => 0.1,
+                servo::LoadStatus::HeadParsed => 0.5,
+                servo::LoadStatus::Complete => 1.0,
+            },
+            can_go_back: web.can_go_back(),
+            can_go_forward: web.can_go_forward(),
+        };
+        if self.last_state.borrow().as_ref() == Some(&state) {
+            return;
+        }
+        self.report(page_state_event(&state));
+        *self.last_state.borrow_mut() = Some(state);
+    }
+    /// Forget the last report, so the next one is sent even if nothing changed.
+    pub(crate) fn forget_state(&self) {
+        self.last_state.borrow_mut().take();
     }
     pub(crate) fn external_url(&self, url: &str) -> String {
         if let Some(p) = &self.props.resources
@@ -176,6 +213,16 @@ impl servo::WebViewDelegate for State {
         {
             self.report(load_event(self.external_url(url.as_str())));
         }
+        self.report_state(&web);
+    }
+    fn notify_url_changed(&self, web: servo::WebView, _: url::Url) {
+        self.report_state(&web);
+    }
+    fn notify_page_title_changed(&self, web: servo::WebView, _: Option<String>) {
+        self.report_state(&web);
+    }
+    fn notify_history_changed(&self, web: servo::WebView, _: Vec<url::Url>, _: usize) {
+        self.report_state(&web);
     }
     fn notify_crashed(&self, _: servo::WebView, reason: String, _: Option<String>) {
         log::error!("Servo view crashed: {reason}");
@@ -234,6 +281,17 @@ impl servo::WebViewDelegate for State {
                     )
                 })
             });
+        // A provider's pages go to the filter too, as on every engine (`decide` passes them
+        // where the provider is the app's own site); an inline site is always the app's own.
+        let load = if inline.is_none() {
+            match self.filter(load) {
+                Some(load) => load,
+                None => return,
+            }
+        } else {
+            load
+        };
+        // Outside the provider's namespace: the engine loads what the filter let through.
         let Some((provider_id, url)) = resource.or(inline) else {
             return;
         };
@@ -258,6 +316,54 @@ impl servo::WebViewDelegate for State {
         });
     }
 }
+impl State {
+    /// WebView::request_filter for a request: a blocked one is answered at once with an empty
+    /// 403, and anything else comes back to proceed. Servo names the request's destination, its
+    /// main-frame flag and the referrer (the frame's page), on the main thread.
+    fn filter(&self, load: servo::WebResourceLoad) -> Option<servo::WebResourceLoad> {
+        let Some(hooks) = &self.props.content.requests else {
+            return Some(load);
+        };
+        let request = load.request();
+        let destination = format!("{:?}", request.destination);
+        let kind = match destination.as_str() {
+            "Document" if request.is_for_main_frame => ResourceKind::Document,
+            "Document" | "Frame" | "IFrame" => ResourceKind::Subdocument,
+            "Script" | "ServiceWorker" | "SharedWorker" | "Worker" | "AudioWorklet"
+            | "PaintWorklet" => ResourceKind::Script,
+            "Style" | "Xslt" => ResourceKind::Stylesheet,
+            "Image" => ResourceKind::Image,
+            "Font" => ResourceKind::Font,
+            "Audio" | "Video" | "Track" => ResourceKind::Media,
+            "Embed" | "Object" => ResourceKind::Object,
+            "Report" => ResourceKind::Ping,
+            "None" => ResourceKind::Other,
+            _ => ResourceKind::Unknown,
+        };
+        let url = request.url.to_string();
+        let referrer = request.referrer_url.as_ref().map(|url| url.to_string());
+        let method = request.method.to_string();
+        let info = RequestInfo {
+            url: &url,
+            top_url: None,
+            frame_url: referrer.as_deref().filter(|_| !request.is_for_main_frame),
+            kind,
+            main_frame: request.is_for_main_frame,
+            method: &method,
+        };
+        if hooks.decide(&info) != RequestDecision::Block {
+            return Some(load);
+        }
+        let mut reply = servo::WebResourceResponse::new(request.url.clone());
+        if let Ok(status) = 403u16.try_into() {
+            reply.status_code = status;
+        }
+        load.intercept(reply).finish();
+        Waker.wake();
+        None
+    }
+}
+
 fn complete_resource(id: u64, response: ResourceResponse) {
     let Some((_, load)) = LOADS.with(|loads| loads.borrow_mut().remove(&id)) else {
         return;
@@ -298,6 +404,7 @@ pub(crate) fn state(props: &WebProps, node: NodeId) -> Rc<State> {
             None
         },
         props: props.clone(),
+        last_state: RefCell::new(None),
         allowed_url: RefCell::new(String::new()),
     })
 }
@@ -320,6 +427,12 @@ pub(crate) fn initial_url(state: &State) -> Option<url::Url> {
         .ok()
     }
 }
+/// Apply the view's initial settings to a newly built Servo view (`WebView::zoom`).
+pub(crate) fn apply_settings(state: &State, web: &servo::WebView) {
+    if state.props.settings.zoom != 1.0 {
+        web.set_page_zoom(state.props.settings.zoom as f32);
+    }
+}
 pub(crate) fn update(state: &Rc<State>, web: &servo::WebView, patch: &WebPatch) {
     match patch {
         WebPatch::Load(url) => {
@@ -335,7 +448,20 @@ pub(crate) fn update(state: &Rc<State>, web: &servo::WebView, patch: &WebPatch) 
             web.go_forward(1);
         }
         WebPatch::Reload | WebPatch::ForceReload => web.reload(),
+        // Page zoom reflows the page and stays with the view across navigations.
+        WebPatch::Zoom(zoom) => web.set_page_zoom(*zoom as f32),
+        // Servo 0.6 has neither a per-view user agent nor a per-view script switch
+        // (`WebRenderer::desktop_mode_support`, `javascript_support`).
+        WebPatch::DesktopMode(_) | WebPatch::JavaScript(_) => {}
         WebPatch::Stop => { /* Servo 0.6 has no public stop-loading API. */ }
+        // Servo has no rule lists or user scripts; requests are filtered in `load_web_resource`.
+        WebPatch::ContentRules(_)
+        | WebPatch::ScriptReply { .. }
+        | WebPatch::MediaDecision { .. } => {}
+        WebPatch::ReportState => {
+            state.forget_state();
+            state.report_state(web);
+        }
         WebPatch::Eval { req, script } => {
             let req = *req;
             if let Some(request) = data_request(script) {

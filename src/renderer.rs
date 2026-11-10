@@ -249,6 +249,31 @@ fn event(num: f64, text: String) -> Event {
         text,
     }
 }
+/// Report the page's live state for [`crate::WebView::page_state`]. Send one whenever the
+/// engine announces a change; the front-end coalesces bursts and drops unchanged states.
+pub fn page_state_event(state: &crate::PageState) -> Event {
+    crate::page_state_event(state)
+}
+/// Report requests the engine blocked, for [`crate::WebView::on_blocked`]: for engines that
+/// block on their own. A filter called through [`crate::RequestHooks::decide`] reports its
+/// blocks itself. The front-end batches reports into one call per period.
+pub fn blocked_event(loads: &[crate::BlockedLoad]) -> Event {
+    crate::blocked_event(loads)
+}
+/// Report a page message for [`crate::WebView::on_script_message`]. The reply comes back as
+/// [`crate::WebPatch::ScriptReply`] with the same `id`.
+pub fn script_message_event(id: u64, message: crate::ScriptMessage) -> Event {
+    crate::script_message_event(id, message)
+}
+/// Report a content rule list that failed to compile.
+pub fn content_rules_error_event(id: &str, message: &str) -> Event {
+    crate::content_rules_error_event(id, message)
+}
+/// Report a page's camera or microphone request. The answer comes back as
+/// [`crate::WebPatch::MediaDecision`] with the same `id`.
+pub fn media_event(id: u64, request: crate::MediaRequest) -> Event {
+    crate::media_event(id, request)
+}
 /// Request a new browsing context without replacing the current view.
 pub fn new_tab_event(url: String, background: bool) -> Event {
     crate::new_tab_event(url, background)

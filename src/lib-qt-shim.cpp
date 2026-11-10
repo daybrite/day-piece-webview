@@ -14,6 +14,7 @@
 #include <QWidget>
 
 #include <cstdint>
+#include <algorithm>
 #include <map>
 #include <string>
 #include <memory>
@@ -34,6 +35,15 @@ static std::string day_webview_eval_error(const char *msg) {
 // null result all arrive as the same invalid QVariant), which is why the front-end wraps every
 // script in try/catch before it gets here.
 static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
+// Set once from Rust: one page-state report (`WebView::page_state`), in the front-end's
+// `<loading><back><forward>␟<progress>␟<url>␟<title>` text.
+static void (*g_state_cb)(uint64_t, const char *) = nullptr;
+// Set once from Rust: WebView::request_filter. Answers whether to block (true) a request, given
+// the view's hooks token, the URL, the page that issued it, Chromium's resource type and the
+// method. Called on the UI thread, where QtWebEngine intercepts.
+static bool (*g_filter_cb)(uint64_t, const char *, const char *, int, bool, const char *) = nullptr;
+// Set once from Rust: one page message (WebView::on_script_message), the shim's JSON envelope.
+static void (*g_message_cb)(uint64_t, const char *) = nullptr;
 
 #ifdef DAY_WEBVIEW_QT_ENGINE
 
@@ -46,6 +56,7 @@ static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 #include <QWebEngineSettings>
 #include <QWebEngineFullScreenRequest>
 #include <QWebEngineView>
+#include <QWebEngineScript>
 #include <QWebEngineProfile>
 #include <QWebEngineCookieStore>
 #include <QNetworkCookie>
@@ -63,6 +74,11 @@ static void (*g_eval_cb)(uint64_t, uint64_t, const char *) = nullptr;
 #include <QBuffer>
 #include <QPointer>
 #include <QCoreApplication>
+#include <QImage>
+#include <QPixmap>
+#include <QWebEngineUrlRequestInterceptor>
+#include <QWebEngineScriptCollection>
+#include <cstdio>
 #include "resources.h"
 static const bool resourceSchemeRegistered = [] {
     QWebEngineUrlScheme scheme("day-resource");
@@ -168,6 +184,23 @@ public:
     using QWebEnginePage::QWebEnginePage;
 
 protected:
+    // The page message bridge (WebView::on_script_message): the dayMessage shim logs
+    // `\x02dayMessage<envelope>` on the console. QWebChannel would need moc-generated QObject
+    // metadata (this shim compiles without moc) and an asynchronous handshake before the first
+    // message; a console line needs neither. Any script in the page could log the same line, but
+    // it could equally call dayMessage itself: handlers treat every payload as untrusted.
+    void javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString &message,
+                                  int line, const QString &source) override {
+        static const QString prefix = QString(QChar(2)) + QStringLiteral("dayMessage");
+        if (message.startsWith(prefix)) {
+            if (g_message_cb) {
+                const QByteArray envelope = message.mid(prefix.size()).toUtf8();
+                g_message_cb(id, envelope.constData());
+            }
+            return;
+        }
+        QWebEnginePage::javaScriptConsoleMessage(level, message, line, source);
+    }
     bool acceptNavigationRequest(const QUrl &url, NavigationType type, bool isMainFrame) override {
         (void)type;
         if (pathPrefix.isEmpty() || !isMainFrame)
@@ -185,11 +218,58 @@ protected:
     }
 };
 
+// WebView::request_filter: the page's own interceptor, asking Rust about each request. A
+// blocked request fails as the page asked for it (`info.block(true)`).
+class DayInterceptor : public QWebEngineUrlRequestInterceptor {
+public:
+    uint64_t hooks = 0;
+    using QWebEngineUrlRequestInterceptor::QWebEngineUrlRequestInterceptor;
+    void interceptRequest(QWebEngineUrlRequestInfo &info) override {
+        if (!hooks || !g_filter_cb)
+            return;
+        const QByteArray url = info.requestUrl().toEncoded();
+        const QByteArray top = info.firstPartyUrl().toEncoded();
+        const QByteArray method = info.requestMethod();
+        const int type = static_cast<int>(info.resourceType());
+        if (g_filter_cb(hooks, url.constData(), top.constData(), type,
+                        info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame,
+                        method.constData()))
+            info.block(true);
+    }
+};
+
 class TabWebEngineView : public QWebEngineView {
 public:
     void (*tabCb)(uint64_t, const char *, bool) = nullptr;
     uint64_t tabId = 0;
     QString foregroundLabel, backgroundLabel;
+    // WebView::zoom and WebView::javascript. Both are per page in QtWebEngine, so they are kept
+    // here and applied again to a page the view is given later (profile clearing swaps pages).
+    double zoom = 1.0;
+    bool scripts = true;
+    // WebView::request_filter (the hooks token, 0 for none) and the page scripts
+    // (WebView::user_script, ::user_style, the dayMessage shim). Kept here and given to every
+    // page the view shows, like the settings above.
+    DayInterceptor *interceptor = nullptr;
+    QList<QWebEngineScript> userScripts;
+    QPointer<QWebEnginePage> contentPage;
+    void applyContent() {
+        if (contentPage == page())
+            return;
+        contentPage = page();
+        if (interceptor)
+            page()->setUrlRequestInterceptor(interceptor);
+        for (const auto &script : userScripts)
+            page()->scripts().insert(script);
+    }
+    void applySettings() {
+        applyContent();
+        // Only the main world: with page scripts off, the app's own evaluation runs in the
+        // application world instead (day_webview_eval).
+        page()->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled, scripts);
+        if (!qFuzzyCompare(zoomFactor(), zoom))
+            setZoomFactor(zoom);
+    }
     void connectTabs() {
         QObject::disconnect(page(), &QWebEnginePage::newWindowRequested, this, nullptr);
         QObject::connect(page(), &QWebEnginePage::newWindowRequested, this,
@@ -249,11 +329,121 @@ static void day_webview_connect_url(QWebEngineView *v, uint64_t id,
     });
 }
 
+// One view's page-state reporting: a context object owning the connections, so re-pointing a
+// retained view at a new node drops the old ones with it, plus the last progress estimate and
+// report (QtWebEngine signals progress but keeps no readable value of it).
+class StateReporter : public QObject {
+public:
+    using QObject::QObject;
+    uint64_t id = 0;
+    int progress = 100;
+    std::string last;
+};
+static std::map<QWebEngineView *, StateReporter *> g_reporters;
+
+static void day_webview_report_state(QWebEngineView *v, StateReporter *r) {
+    if (!g_state_cb)
+        return;
+    auto *history = v->page()->history();
+    const bool loading = v->page()->isLoading();
+    std::string text;
+    text.push_back(loading ? '1' : '0');
+    text.push_back(history->canGoBack() ? '1' : '0');
+    text.push_back(history->canGoForward() ? '1' : '0');
+    text.push_back('\x1f');
+    // Built from integers, never `%f`: printf follows the C locale's decimal separator, and a
+    // French or German locale wrote `0,50`, which the Rust decoder rejects along with the
+    // whole report (title and history included).
+    const int percent = loading ? std::clamp(r->progress, 0, 100) : 100;
+    text += std::to_string(percent / 100);
+    text.push_back('.');
+    text.push_back(static_cast<char>('0' + (percent % 100) / 10));
+    text.push_back(static_cast<char>('0' + percent % 10));
+    text.push_back('\x1f');
+    text += v->url().toString().toUtf8().constData();
+    text.push_back('\x1f');
+    text += v->title().toUtf8().constData();
+    if (text == r->last)
+        return;
+    r->last = text;
+    g_state_cb(r->id, text.c_str());
+}
+
+// (Re)point a view's page-state reports at `id`. Where things stand is reported on request
+// (`day_webview_report_state_now`), once the node's handler exists: a report from inside
+// `day_webview_new` reaches a node that cannot hear it yet.
+static void day_webview_connect_state(QWebEngineView *v, uint64_t id) {
+    auto known = g_reporters.find(v);
+    if (known != g_reporters.end())
+        delete known->second; // its `destroyed` handler erases the entry
+    auto *r = new StateReporter(v);
+    r->id = id;
+    g_reporters[v] = r;
+    QObject::connect(r, &QObject::destroyed, [v] { g_reporters.erase(v); });
+    auto report = [v, r] { day_webview_report_state(v, r); };
+    QObject::connect(v, &QWebEngineView::urlChanged, r, report);
+    QObject::connect(v, &QWebEngineView::titleChanged, r, report);
+    QObject::connect(v, &QWebEngineView::loadStarted, r, [r, report] { r->progress = 0; report(); });
+    QObject::connect(v, &QWebEngineView::loadProgress, r, [r, report](int p) { r->progress = p; report(); });
+    QObject::connect(v, &QWebEngineView::loadFinished, r, [r, report](bool) { r->progress = 100; report(); });
+}
+
 extern "C" {
+
+void day_webview_set_state_cb(void (*cb)(uint64_t, const char *)) { g_state_cb = cb; }
+void day_webview_set_content_cbs(bool (*filter)(uint64_t, const char *, const char *, int, bool, const char *),
+                                 void (*message)(uint64_t, const char *)) {
+    g_filter_cb = filter;
+    g_message_cb = message;
+}
+
+// WebView::request_filter and the page scripts, before the first load (`day_webview_new` takes
+// no page yet when `defer_load` is set). `scripts` is the Rust front-end's JSON array of
+// {"source", "end", "main"}. A retained view keeps the scripts it was built with and only takes
+// the new node's hooks.
+void day_webview_content(void *w, uint64_t hooks, const char *scripts) {
+    auto *tabs = dynamic_cast<TabWebEngineView *>(static_cast<DayWebView *>(w)->view);
+    if (!tabs)
+        return;
+    if (hooks) {
+        if (!tabs->interceptor)
+            tabs->interceptor = new DayInterceptor(tabs);
+        tabs->interceptor->hooks = hooks;
+        tabs->page()->setUrlRequestInterceptor(tabs->interceptor);
+    } else if (tabs->interceptor) {
+        tabs->interceptor->hooks = 0;
+    }
+    if (!tabs->userScripts.isEmpty() || !scripts || !*scripts)
+        return;
+    int n = 0;
+    for (const auto &value : QJsonDocument::fromJson(QByteArray(scripts)).array()) {
+        const auto object = value.toObject();
+        QWebEngineScript script;
+        script.setName(QStringLiteral("day-user-script-%1").arg(n++));
+        script.setSourceCode(object["source"].toString());
+        script.setInjectionPoint(object["end"].toBool() ? QWebEngineScript::DocumentReady
+                                                        : QWebEngineScript::DocumentCreation);
+        script.setRunsOnSubFrames(!object["main"].toBool());
+        script.setWorldId(QWebEngineScript::MainWorld);
+        tabs->userScripts.append(script);
+        tabs->page()->scripts().insert(script);
+    }
+    tabs->contentPage = tabs->page();
+}
+
+// Run `script` in the page's main world, answering nothing: a page message's reply.
+void day_webview_run(void *w, const char *script) {
+    if (QWebEngineView *v = static_cast<DayWebView *>(w)->view)
+        v->page()->runJavaScript(QString::fromUtf8(script), QWebEngineScript::MainWorld);
+}
+
+void day_webview_load_initial(void *w, const char *url) {
+    static_cast<DayWebView *>(w)->load(QString::fromUtf8(url));
+}
 
 void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const char *),
                       uint64_t session, const char *profile_key, const char *profile_directory, bool private_mode, const char *inline_path_prefix,
-                      void (*link_cb)(uint64_t, const char *)) {
+                      void (*link_cb)(uint64_t, const char *), double zoom, bool javascript, bool defer_load) {
     DayWebView *w = new DayWebView();
     w->id = id;
     w->session = session;
@@ -271,12 +461,20 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
         if (DayWebPage *p = dynamic_cast<DayWebPage *>(v->page()))
             p->id = id;
         day_webview_connect_url(v, id, cb);
+        day_webview_connect_state(v, id);
+        // The new node's settings: zoom at once, scripts from the next navigation on.
+        if (auto *tabs = dynamic_cast<TabWebEngineView *>(v)) {
+            tabs->zoom = zoom;
+            tabs->scripts = javascript;
+            tabs->applySettings();
+        }
         lay->addWidget(v);
         w->view = v;
         return w;
     }
 
-    QWebEngineView *v = new TabWebEngineView();
+    auto *tabs = new TabWebEngineView();
+    QWebEngineView *v = tabs;
     const QString prefix = QString::fromUtf8(inline_path_prefix ? inline_path_prefix : "");
     auto state=profileState(QString::fromUtf8(profile_key),QString::fromUtf8(profile_directory),private_mode);
     state->views.insert(v);
@@ -298,11 +496,24 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
             request.accept();
         });
     day_webview_connect_url(v, id, cb);
+    day_webview_connect_state(v, id);
+    // WebView::zoom and WebView::javascript, before the first load. Chromium can drop a page's
+    // zoom when a navigation moves it to another renderer, so a finished load restores it.
+    tabs->zoom = zoom;
+    tabs->scripts = javascript;
+    tabs->applySettings();
+    QObject::connect(v, &QWebEngineView::loadFinished, v, [tabs](bool) {
+        if (!qFuzzyCompare(tabs->zoomFactor(), tabs->zoom))
+            tabs->setZoomFactor(tabs->zoom);
+    });
     lay->addWidget(v);
     w->view = v;
     if (session != 0)
         g_sessions[session] = v;
-    w->load(QString::fromUtf8(url));
+    // A view with request hooks or page scripts takes them first (day_webview_content), then its
+    // first page (day_webview_load_initial).
+    if (!defer_load)
+        w->load(QString::fromUtf8(url));
     return w;
 }
 
@@ -339,6 +550,16 @@ void day_webview_eval(void *w, uint64_t req, const char *script) {
         if(operation=="navigation") {
             QJsonObject info{{"url",self->view->url().toString()},{"title",self->view->title()},{"can_go_back",self->view->page()->history()->canGoBack()},{"can_go_forward",self->view->page()->history()->canGoForward()},{"loading",self->view->page()->isLoading()}};
             reply(QJsonDocument(info).toJson(QJsonDocument::Compact));return;
+        }
+        if (operation=="snapshot") {
+            // The view's own rendering of what it shows; grab() includes the engine's GPU child.
+            QImage image=self->view->grab().toImage();
+            if (image.isNull()) {if(g_eval_cb)g_eval_cb(id,req,day_webview_eval_error("snapshot failed").c_str());return;}
+            const int width=data["width"].toInt();
+            if (width>0 && image.width()>width) image=image.scaledToWidth(width,Qt::SmoothTransformation);
+            QByteArray png;QBuffer buffer(&png);buffer.open(QIODevice::WriteOnly);
+            if (!image.save(&buffer,"PNG")) {if(g_eval_cb)g_eval_cb(id,req,day_webview_eval_error("PNG encoding failed").c_str());return;}
+            reply(QByteArray("\"")+png.toBase64()+"\"");return;
         }
         if (operation=="cookies") {
             const QUrl url(data["url"].toString());QStringList header;
@@ -393,7 +614,7 @@ void day_webview_eval(void *w, uint64_t req, const char *script) {
                         if(!removed && ++*attempts < 50)return;
                         cleanup->stop();cleanup->deleteLater();
                         state->profile=makeProfile(state);
-                        for(const auto &info:pages)if(info.view){QPointer<QWebEnginePage> old=info.view->page();auto page=new DayWebPage(state->profile,info.view);page->id=info.id;page->pathPrefix=info.prefix;page->linkCb=info.link;page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);info.view->setPage(page);if(auto tabs=dynamic_cast<TabWebEngineView *>(info.view.data()))tabs->connectTabs();if(old)old->deleteLater();}
+                        for(const auto &info:pages)if(info.view){QPointer<QWebEnginePage> old=info.view->page();auto page=new DayWebPage(state->profile,info.view);page->id=info.id;page->pathPrefix=info.prefix;page->linkCb=info.link;page->settings()->setUnknownUrlSchemePolicy(QWebEngineSettings::AllowAllUnknownUrlSchemes);info.view->setPage(page);if(auto tabs=dynamic_cast<TabWebEngineView *>(info.view.data())){tabs->connectTabs();tabs->applySettings();}if(old)old->deleteLater();}
                         if(removed)reply("true");else if(g_eval_cb)g_eval_cb(id,req,day_webview_eval_error("could not remove profile data").c_str());
                     });
                     cleanup->start(100);
@@ -420,10 +641,16 @@ void day_webview_eval(void *w, uint64_t req, const char *script) {
     // The main world (the default), matching WKWebView's `evaluateJavaScript`, so a script sees the
     // page's own globals on every backend alike.
     //
+    // With page scripts off (WebView::javascript), JavascriptEnabled stops the main world only:
+    // the script runs in the application world instead, which shares the page's DOM but not its
+    // globals. A page without scripts has no globals of its own to see.
+    //
     // Capture PODs only. Qt guarantees this callback runs even while the page is being destroyed,
     // and touching the page or view from there is undefined behavior; the guarantee is what keeps
     // the Rust future from leaking, and the constraint is the price of it.
-    self->view->page()->runJavaScript(QString::fromUtf8(script), [id, req](const QVariant &v) {
+    auto *tabs = dynamic_cast<TabWebEngineView *>(self->view);
+    const quint32 world = tabs && !tabs->scripts ? QWebEngineScript::ApplicationWorld : QWebEngineScript::MainWorld;
+    self->view->page()->runJavaScript(QString::fromUtf8(script), world, [id, req](const QVariant &v) {
         if (!g_eval_cb)
             return;
         if (!v.isValid()) {
@@ -456,6 +683,16 @@ void day_webview_force_reload(void *w) {
     if (auto *v = static_cast<DayWebView *>(w)->view)
         v->page()->triggerAction(QWebEnginePage::ReloadAndBypassCache);
 }
+void day_webview_report_state_now(void *w) {
+    QWebEngineView *v = static_cast<DayWebView *>(w)->view;
+    if (!v)
+        return;
+    auto known = g_reporters.find(v);
+    if (known == g_reporters.end())
+        return;
+    known->second->last.clear();
+    day_webview_report_state(v, known->second);
+}
 void day_webview_reload(void *w) {
     if (QWebEngineView *v = static_cast<DayWebView *>(w)->view)
         v->reload();
@@ -466,6 +703,23 @@ void day_webview_reload(void *w) {
 void day_webview_set_transparent(void *w) {
     if (QWebEngineView *v = static_cast<DayWebView *>(w)->view)
         v->page()->setBackgroundColor(Qt::transparent);
+}
+// WebView::zoom: QWebEnginePage's zoom factor, which applies at once.
+void day_webview_set_zoom(void *w, double zoom) {
+    if (auto *tabs = dynamic_cast<TabWebEngineView *>(static_cast<DayWebView *>(w)->view)) {
+        tabs->zoom = zoom;
+        tabs->applySettings();
+    }
+}
+// WebView::javascript: the page's own setting, then a reload, since a running page cannot gain
+// or lose its scripts.
+void day_webview_set_javascript(void *w, bool enabled) {
+    auto *tabs = dynamic_cast<TabWebEngineView *>(static_cast<DayWebView *>(w)->view);
+    if (!tabs || tabs->scripts == enabled)
+        return;
+    tabs->scripts = enabled;
+    tabs->applySettings();
+    tabs->reload();
 }
 
 } // extern "C"
@@ -488,8 +742,10 @@ extern "C" {
 
 void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const char *),
                       uint64_t session, const char *profile_key, const char *profile_directory, bool private_mode, const char *inline_path_prefix,
-                      void (*link_cb)(uint64_t, const char *)) {
+                      void (*link_cb)(uint64_t, const char *), double zoom, bool javascript, bool defer_load) {
     (void)cb;                 // no navigation to report without a real engine
+    (void)defer_load;
+    (void)zoom; (void)javascript; // nor a page to zoom or script
     (void)profile_key; (void)profile_directory; (void)private_mode;
     (void)session;            // nothing to retain either
     (void)inline_path_prefix; // and no engine to police; the label shows the qrc URL
@@ -509,6 +765,18 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
 void day_webview_set_transparent(void *w) {
     (void)w; // a label paints no background of its own already
 }
+void day_webview_set_zoom(void *, double) {}
+void day_webview_set_javascript(void *, bool) {}
+void day_webview_set_content_cbs(bool (*filter)(uint64_t, const char *, const char *, int, bool, const char *),
+                                 void (*message)(uint64_t, const char *)) {
+    g_filter_cb = filter;
+    g_message_cb = message;
+}
+void day_webview_content(void *, uint64_t, const char *) {}
+void day_webview_run(void *, const char *) {}
+void day_webview_load_initial(void *w, const char *url) {
+    static_cast<DayWebView *>(w)->load(QString::fromUtf8(url));
+}
 
 void day_webview_load(void *w, const char *url) {
     static_cast<DayWebView *>(w)->load(QString::fromUtf8(url));
@@ -518,8 +786,10 @@ void day_webview_forward(void *) {}
 void day_webview_stop(void *) {}
 void day_webview_reload(void *) {}
 void day_webview_force_reload(void *) {}
+void day_webview_report_state_now(void *) {}
 
 void day_webview_tabs(void *, const char *, const char *, void (*)(uint64_t,const char *,bool)) {}
+void day_webview_set_state_cb(void (*cb)(uint64_t, const char *)) { g_state_cb = cb; }
 void day_webview_set_eval_cb(void (*cb)(uint64_t, uint64_t, const char *)) { g_eval_cb = cb; }
 
 // No engine to evaluate in, but the reply is still mandatory: the Rust future is only resolved by a

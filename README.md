@@ -10,8 +10,9 @@ Embed web pages and application documents in a Day interface.
 [Day](https://daybrite.dev/docs/) is a Rust framework for building apps with native desktop and
 mobile controls, plus HTML controls on the web.
 
-Use native browser components. Navigate with triggers, evaluate
-JavaScript, choose browser profiles, and serve bundled or app-owned resources. Browser builds
+Use native browser components. Navigate with triggers, follow the page's title, load progress
+and history as the engine reports them, evaluate JavaScript, capture page snapshots, choose
+browser profiles, and serve bundled or app-owned resources. Browser builds
 use iframes and remain subject to same-origin and embedding restrictions.
 
 ## Use

@@ -13,6 +13,8 @@ day_bridge::bridge! {
         fn attach_resources(id: i32, base: &str, start: &str);
         fn resource_reply(token: i32, status: i32, headers: &str, body: &[u8]);
         fn eval_browser(id: i32, req: f64, script: &str);
+        fn zoom_browser(id: i32, zoom: f64);
+        fn scripts_browser(id: i32, enabled: bool);
     }
 
     #[day_bridge::impl(js, platforms = [web])]
@@ -68,6 +70,33 @@ day_bridge::bridge! {
             }
             dayHost.dom.emit(id, req, reply);
         }
+        // WebView::zoom: CSS `zoom` on the frame's document, now and after each load. Only a
+        // same-origin document lets its parent set it; a cross-origin one keeps 100%.
+        function zoom_browser(id, zoom) {
+            const frame = dayHost.dom.element(id);
+            frame.__dayZoom = zoom;
+            const apply = () => {
+                try {
+                    const root = frame.contentDocument?.documentElement;
+                    if (root) root.style.zoom = frame.__dayZoom === 1 ? '' : String(frame.__dayZoom);
+                } catch {}
+            };
+            if (!frame.__dayZoomHooked) {
+                frame.__dayZoomHooked = true;
+                frame.addEventListener('load', apply);
+                dayHost.dom.onRelease(id, () => frame.removeEventListener('load', apply));
+            }
+            apply();
+        }
+        // WebView::javascript: a sandbox granting everything an unsandboxed frame has except
+        // scripts, or none at all. It applies from the frame's next navigation on.
+        function scripts_browser(id, enabled) {
+            const frame = dayHost.dom.element(id);
+            if (enabled) frame.removeAttribute('sandbox');
+            else frame.setAttribute('sandbox', 'allow-same-origin allow-forms allow-popups ' +
+                'allow-popups-to-escape-sandbox allow-modals allow-downloads ' +
+                'allow-top-navigation-by-user-activation');
+        }
         function observe_browser_load(id) {
             const frame = dayHost.dom.element(id);
             function loaded() {
@@ -77,6 +106,11 @@ day_bridge::bridge! {
                 // while their worker starts. It is not the requested page's load.
                 if (url === 'about:blank' && frame.src !== 'about:blank') return;
                 dayHost.dom.emit(id, 0, url);
+                // Page state (num -5): what a frame can tell its parent, the URL and, same-origin
+                // only, the title. An iframe exposes no progress or history across origins.
+                let title = '';
+                try { title = frame.contentDocument?.title || ''; } catch {}
+                dayHost.dom.emit(id, -5, '000\u001f1\u001f' + url + '\u001f' + title);
             }
             frame.addEventListener('load', loaded);
             dayHost.dom.onRelease(id, () => frame.removeEventListener('load', loaded));
@@ -153,6 +187,10 @@ day_bridge::bridge! {
     fn attach_browser(id: i32, base: &str) { let _ = (id, base); }
     #[day_bridge::impl(rust, platforms = [other])]
     fn eval_browser(id: i32, req: f64, script: &str) { let _ = (id, req, script); }
+    #[day_bridge::impl(rust, platforms = [other])]
+    fn zoom_browser(id: i32, zoom: f64) { let _ = (id, zoom); }
+    #[day_bridge::impl(rust, platforms = [other])]
+    fn scripts_browser(id: i32, enabled: bool) { let _ = (id, enabled); }
 }
 
 pub(crate) fn observe_load(id: i32) {
@@ -170,13 +208,27 @@ pub(crate) fn eval(id: i32, req: f64, script: &str) {
     eval_browser(id, req, script);
 }
 
+/// Zoom the frame's document (same-origin only) now and after each load.
+pub(crate) fn zoom(id: i32, zoom: f64) {
+    zoom_browser(id, zoom);
+}
+
+/// Sandbox the frame without `allow-scripts`, or lift the sandbox, from its next load on.
+pub(crate) fn scripts(id: i32, enabled: bool) {
+    scripts_browser(id, enabled);
+}
+
 pub(crate) fn namespace() -> String {
     resource_namespace()
         .expect("resource namespace")
         .to_string()
 }
-pub(crate) fn resources(id: i32, base: &str, start: &str) {
-    attach_browser(id, base);
+/// Serve a provider through the resource worker and open `start`. `site` also polices the
+/// frame's links against `base` (a provider's own site); without it the frame browses freely.
+pub(crate) fn resources(id: i32, base: &str, start: &str, site: bool) {
+    if site {
+        attach_browser(id, base);
+    }
     attach_resources(id, base, start);
 }
 #[cfg(target_arch = "wasm32")]

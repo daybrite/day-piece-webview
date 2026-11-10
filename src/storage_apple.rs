@@ -44,6 +44,176 @@ pub(crate) fn configure(config: &AnyObject, profile: &WebProfile) {
         let _: () = msg_send![config, setWebsiteDataStore: &*store];
     }
 }
+/// The WKWebView properties [`page_state`] reads, each KVO-observable. `URL` follows
+/// same-document changes (pushState, fragments) as well as committed navigations.
+const STATE_KEYS: [&str; 6] = [
+    "URL",
+    "title",
+    "loading",
+    "estimatedProgress",
+    "canGoBack",
+    "canGoForward",
+];
+
+/// Register `observer` (a navigation delegate implementing
+/// `observeValueForKeyPath:ofObject:change:context:`) for every [`STATE_KEYS`] change on `web`.
+/// Undo with [`unobserve_state`] before the observer goes away.
+pub(crate) fn observe_state(web: &AnyObject, observer: &AnyObject) {
+    for key in STATE_KEYS {
+        // NSKeyValueObservingOptionNew; the handler reads the web view, not the change dictionary.
+        unsafe {
+            let _: () = msg_send![web, addObserver: observer, forKeyPath: &*NSString::from_str(key), options: 1usize, context: std::ptr::null_mut::<std::ffi::c_void>()];
+        }
+    }
+}
+
+/// Remove what [`observe_state`] registered. Only call it for a pair that registered: removing
+/// an observer that was never added raises an Objective-C exception.
+pub(crate) fn unobserve_state(web: &AnyObject, observer: &AnyObject) {
+    for key in STATE_KEYS {
+        unsafe {
+            let _: () =
+                msg_send![web, removeObserver: observer, forKeyPath: &*NSString::from_str(key)];
+        }
+    }
+}
+
+/// Zoom `web`'s pages by `zoom` (`WebView::zoom`): `pageZoom`, which WebKit keeps as the view
+/// navigates and which reflows the page the way Safari's zoom does. It is public API from
+/// macOS 11 and iOS 14; an older WebKit lacks the property and keeps 100%.
+pub(crate) fn set_page_zoom(web: &AnyObject, zoom: f64) {
+    unsafe {
+        let available: bool = msg_send![web, respondsToSelector: objc2::sel!(setPageZoom:)];
+        if available {
+            let _: () = msg_send![web, setPageZoom: zoom];
+        }
+    }
+}
+
+/// Fill in one navigation's `WKWebpagePreferences` from the view's settings, in the navigation
+/// delegate's `decidePolicyForNavigationAction:preferences:decisionHandler:`.
+///
+/// - `preferredContentMode` asks for the desktop site (`WKContentModeDesktop`, 2) or leaves the
+///   engine's recommendation (`WKContentModeRecommended`, 0), which is already the desktop site on
+///   a Mac and an iPad. WebKit sends a desktop user agent and lays the page out at desktop width.
+/// - `allowsContentJavaScript` stops the scripts the page brings. It does not stop the app's:
+///   `evaluateJavaScript` and user scripts still run (WWDC 2020, "Discover WKWebView
+///   enhancements"), so `JsHandle::eval`, page state and the tab script keep working. Public from
+///   macOS 11 and iOS 14; an older WebKit keeps scripts on.
+pub(crate) fn webpage_preferences(preferences: &AnyObject, desktop: bool, javascript: bool) {
+    unsafe {
+        let _: () =
+            msg_send![preferences, setPreferredContentMode: if desktop { 2isize } else { 0isize }];
+        let available: bool =
+            msg_send![preferences, respondsToSelector: objc2::sel!(setAllowsContentJavaScript:)];
+        if available {
+            let _: () = msg_send![preferences, setAllowsContentJavaScript: javascript];
+        }
+    }
+}
+
+/// The page state WKWebView holds right now: shared by the KVO reports and the
+/// `navigation_state` data request.
+pub(crate) fn page_state(web: &AnyObject) -> PageState {
+    unsafe {
+        let url: Option<Retained<NSURL>> = msg_send![web, URL];
+        let url = url
+            .and_then(|url| url.absoluteString())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let title: Option<Retained<NSString>> = msg_send![web, title];
+        let loading: bool = msg_send![web, isLoading];
+        let progress: f64 = msg_send![web, estimatedProgress];
+        PageState {
+            url,
+            title: title.map(|s| s.to_string()).unwrap_or_default(),
+            loading,
+            // WebKit leaves the last load's estimate behind once it finishes; a finished page
+            // reads as complete.
+            progress: if loading { progress } else { 1.0 },
+            can_go_back: msg_send![web, canGoBack],
+            can_go_forward: msg_send![web, canGoForward],
+        }
+    }
+}
+
+/// Capture the visible page as PNG for `JsHandle::snapshot`, at most `width` pixels wide, and
+/// answer through `done` with the base64 text as a JSON string.
+fn snapshot(web: &AnyObject, width: f64, done: Rc<dyn Fn(String)>) {
+    unsafe {
+        let config: Retained<AnyObject> = msg_send![objc2::class!(WKSnapshotConfiguration), new];
+        let bounds: objc2_foundation::NSRect = msg_send![web, bounds];
+        // snapshotWidth is in points; the image comes back at the display's scale.
+        #[cfg(target_os = "macos")]
+        let scale: f64 = {
+            let window: *mut AnyObject = msg_send![web, window];
+            if window.is_null() {
+                2.0
+            } else {
+                msg_send![window, backingScaleFactor]
+            }
+        };
+        #[cfg(not(target_os = "macos"))]
+        let scale: f64 = {
+            let traits: Retained<AnyObject> = msg_send![web, traitCollection];
+            let scale: f64 = msg_send![&traits, displayScale];
+            if scale > 0.0 { scale } else { 2.0 }
+        };
+        let points = (width / scale.max(1.0)).min(bounds.size.width).floor();
+        if points >= 1.0 {
+            let number: Retained<AnyObject> =
+                msg_send![objc2::class!(NSNumber), numberWithDouble: points];
+            let _: () = msg_send![&config, setSnapshotWidth: &*number];
+        }
+        let block = RcBlock::new(
+            move |image: *mut AnyObject, error: *mut objc2_foundation::NSError| {
+                if image.is_null() {
+                    let message = if error.is_null() {
+                        "no image".to_owned()
+                    } else {
+                        (*error).localizedDescription().to_string()
+                    };
+                    done(engine_error("SnapshotError", &message));
+                    return;
+                }
+                #[cfg(target_os = "macos")]
+                let png: *mut AnyObject = {
+                    let tiff: *mut AnyObject = msg_send![image, TIFFRepresentation];
+                    let rep: *mut AnyObject =
+                        msg_send![objc2::class!(NSBitmapImageRep), imageRepWithData: tiff];
+                    if rep.is_null() {
+                        std::ptr::null_mut()
+                    } else {
+                        let none: Retained<AnyObject> = msg_send![objc2::class!(NSDictionary), new];
+                        // NSBitmapImageFileTypePNG
+                        msg_send![rep, representationUsingType: 4usize, properties: &*none]
+                    }
+                };
+                #[cfg(not(target_os = "macos"))]
+                let png: *mut AnyObject = UIImagePNGRepresentation(image);
+                if png.is_null() {
+                    done(engine_error("SnapshotError", "PNG encoding failed"));
+                    return;
+                }
+                let text: Retained<NSString> =
+                    msg_send![png, base64EncodedStringWithOptions: 0usize];
+                done(format!(
+                    "1{SEP}{}",
+                    serde_json::Value::String(text.to_string())
+                ));
+            },
+        );
+        let _: () =
+            msg_send![web, takeSnapshotWithConfiguration: &*config, completionHandler: &*block];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+unsafe extern "C" {
+    /// UIKit's PNG encoder (returns an autoreleased NSData, or nil).
+    fn UIImagePNGRepresentation(image: *mut AnyObject) -> *mut AnyObject;
+}
+
 pub(crate) fn request(web: &AnyObject, request: &str, done: impl Fn(String) + 'static) -> bool {
     let Some(request) = request.strip_prefix(DATA_REQUEST) else {
         return false;
@@ -61,22 +231,13 @@ pub(crate) fn request(web: &AnyObject, request: &str, done: impl Fn(String) + 's
         let jar: Retained<AnyObject> = msg_send![&store, httpCookieStore];
         match operation {
             "navigation" => {
-                let url: Option<Retained<NSURL>> = msg_send![web, URL];
-                let url = url
-                    .map(|url| {
-                        let text: Retained<NSString> = msg_send![&*url, absoluteString];
-                        text.to_string()
-                    })
-                    .unwrap_or_default();
-                let title: Option<Retained<NSString>> = msg_send![web, title];
-                let back: bool = msg_send![web, canGoBack];
-                let forward: bool = msg_send![web, canGoForward];
-                let loading: bool = msg_send![web, isLoading];
+                let state = page_state(web);
                 done(format!(
                     "1{SEP}{}",
-                    serde_json::json!({"url":url,"title":title.map(|s|s.to_string()).unwrap_or_default(),"can_go_back":back,"can_go_forward":forward,"loading":loading})
+                    serde_json::json!({"url":state.url,"title":state.title,"can_go_back":state.can_go_back,"can_go_forward":state.can_go_forward,"loading":state.loading})
                 ));
             }
+            "snapshot" => snapshot(web, data["width"].as_f64().unwrap_or(0.0), done),
             "clear" => {
                 let types: Retained<AnyObject> =
                     msg_send![objc2::class!(WKWebsiteDataStore), allWebsiteDataTypes];

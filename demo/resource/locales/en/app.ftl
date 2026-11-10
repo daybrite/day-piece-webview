@@ -21,6 +21,24 @@ site_unsupported = This build has no web engine to show the site in.
 
 resource_demo = Resource provider
 resource_caption = This page, its styles, script, image, and nested frame are served on demand by the application.
+fixture_demo = Fixture pages
+snapshot = Snapshot
+snapshot_taken = Captured a PNG { $width } pixels wide.
+snapshot_failed = The page could not be captured.
+fixture_caption = The application serves these pages from its own resource namespace, while the view browses as it would on the web.
+fixture_start = Fixture start page
+fixture_next = Fixture second page
+fixture_search = Fixture search results
+fixture_next_link = Next page
+fixture_tab_link = Next page in a new tab
+fixture_search_button = Search
+page_summary = { $progress }% loaded, { $back ->
+        [yes] can go back
+       *[no] cannot go back
+    }, { $forward ->
+        [yes] can go forward
+       *[no] cannot go forward
+    }
 
 browser_settings = Browser Settings
 incognito_mode = Incognito Mode
