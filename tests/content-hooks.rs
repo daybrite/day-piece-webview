@@ -321,7 +321,11 @@ fn provider_sites_skip_the_filter_and_browsing_views_do_not() {
     let own = hooks_of(web_view_resources(site, "index.html"));
     assert!(!own.filters_internal());
     assert_eq!(decide(&own, &ads(&base)), RequestDecision::Allow);
-    for namespace in ["https://day-resource.invalid/1/", "day-resource://p1/"] {
+    for namespace in [
+        "https://day-resource.invalid/1/",
+        "day-resource://p1/",
+        "http://day-resource.p1/",
+    ] {
         assert_eq!(decide(&own, &ads(namespace)), RequestDecision::Allow);
     }
     // Other sites still go to the filter.

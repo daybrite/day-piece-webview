@@ -446,11 +446,12 @@ Every request waits for the answer, on whatever thread the engine calls back on.
 in memory and fast, and never touch signals or other reactive state from it. A filter that panics
 allows the request.
 
-The piece's own resource namespace (`day-resource:` and `https://day-resource.invalid/`) is the
-app's own site in a view made with `web_view_resources` or `web_view_inline`, and the filter never
-sees it there. A view that browses anywhere and borrows a provider for some pages with
-`.resources(provider)` sends those pages through the filter like any other site. Every engine
-with a request filter follows the same rule (`RequestHooks::filters_internal`).
+The piece's own resource namespace (`day-resource:`, `https://day-resource.invalid/`, and
+`http://day-resource.p<id>/` on Windows without WebView2) is the app's own site in a view made with
+`web_view_resources` or `web_view_inline`, and the filter never sees it there. A view that browses
+anywhere and borrows a provider for some pages with `.resources(provider)` sends those pages through
+the filter like any other site. Every engine with a request filter follows the same rule
+(`RequestHooks::filters_internal`).
 
 `.on_blocked(callback)` hears about blocked requests on the UI thread, as a slice of
 `BlockedLoad { url, page_url, kind }`. Blocks are batched: one call every 100 ms at most,

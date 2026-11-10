@@ -394,8 +394,8 @@ impl RequestHooks {
 
     /// Ask the filter about `request`. Safe on any thread.
     ///
-    /// The crate's own resource namespace (`day-resource:` and `https://day-resource.invalid/`)
-    /// is allowed without asking where it is the app's own site ([`Self::filters_internal`]).
+    /// The crate's own resource namespace (every form `ResourceProvider::base_url` gives) is
+    /// allowed without asking where it is the app's own site ([`Self::filters_internal`]).
     /// A filter that panics allows the request rather than unwinding into the engine.
     pub fn decide(&self, request: &RequestInfo<'_>) -> RequestDecision {
         if self.0.exempt_internal && is_internal(request.url) {
@@ -475,9 +475,17 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// URLs in the crate's resource namespace, which a filter never sees.
+/// URLs in the crate's resource namespace, in every form
+/// [`crate::ResourceProvider::base_url`] gives it: `day-resource://p<id>/`,
+/// `https://day-resource.invalid/<id>/`, and `http://day-resource.p<id>/` on Windows without
+/// WebView2.
 fn is_internal(url: &str) -> bool {
-    url.starts_with("day-resource:") || url.starts_with("https://day-resource.invalid/")
+    url.starts_with("day-resource:")
+        || url.starts_with("https://day-resource.invalid/")
+        || url
+            .strip_prefix("http://day-resource.p")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(id, _)| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// The most blocked loads kept between two deliveries. A page that blocks more within one
@@ -935,6 +943,25 @@ impl RuleGate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_namespace_form_is_internal() {
+        for url in [
+            "day-resource://p3/ads.css",
+            "https://day-resource.invalid/3/ads.css",
+            "http://day-resource.p3/ads.css",
+        ] {
+            assert!(is_internal(url), "{url}");
+        }
+        for url in [
+            "http://day-resource.pages.example/ads.css",
+            "http://day-resource.p/ads.css",
+            "https://day-resource.p3/ads.css",
+            "https://news.example/day-resource:",
+        ] {
+            assert!(!is_internal(url), "{url}");
+        }
+    }
 
     #[test]
     fn only_the_newest_rules_release_the_first_load() {
