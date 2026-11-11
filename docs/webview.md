@@ -555,6 +555,156 @@ Engine notes:
 - **WebView2 is unverified**: it compiles only on Windows, and this code has not been built or run
   there yet.
 
+## Browser duties
+
+A view that browses the web is asked for more than a view showing an app's own pages. A page
+opens a dialog, a server asks for a password, a link names a file to save, a load fails, the
+process running the page ends. An engine does not handle these by itself: WKWebView answers a
+`confirm()` nobody implements with `false`, and Android's WebView ends the whole app when its
+renderer goes unhandled. These hooks cover them on WebKit (iOS and macOS) and on Android.
+
+```rust
+web_view(url)
+    .on_dialog(|request, responder| { /* alert, confirm, prompt */ })
+    .on_auth(|request, responder| responder.sign_in("ada", "secret"))
+    .on_download(|request, responder| {
+        responder.save_to_downloads(&request.suggested_name, |event| { /* progress */ });
+    })
+    .on_load_error(|error| show_error_page(error))
+    .on_renderer_gone(|_| rebuild_the_view())
+    .on_app_link(|url| LinkPolicy::OpenSystem)
+    .swipe_navigation(true)
+```
+
+Every question hands the app a responder. Answer it once; a responder dropped unanswered
+cancels what was asked, so a page is never left waiting.
+
+### Script dialogs
+
+`alert()`, `confirm()` and `prompt()` reach `.on_dialog(|request: DialogRequest, responder:
+DialogResponder|)`, with the kind, the page's message, a prompt's default text and the address
+of the frame that asked. The page's script waits until the responder is told `accept()`,
+`accept_with(text)` or `dismiss()`.
+
+Without a handler the view presents Day's own alert, confirm or prompt, titled with the host that
+asked, so every Day app with a web view gets working dialogs. `present_dialog(request,
+responder)` is that default, for a handler that changes the request first or shows only some
+dialogs. On Android, a page's "leave this page?" question (`beforeunload`) keeps WebView's own
+dialog.
+
+### Sign-in
+
+A server or proxy that answers with an HTTP Basic, Digest or NTLM challenge reaches
+`.on_auth(|request: AuthRequest, responder: AuthResponder|)`: the host, the realm the server
+named, whether a proxy is asking, and how many answers were already refused. `sign_in(user,
+password)` sends the credentials, which the engine keeps for the site until the app exits;
+`cancel()` loads the server's own "unauthorized" page. Without a handler every challenge is
+canceled.
+
+### Downloads
+
+A response the engine cannot show, one the server marked `Content-Disposition: attachment`, and
+a link with the `download` attribute are files to save. With `.on_download(|request:
+DownloadRequest, responder: DownloadResponder|)` the app decides each one: the request carries
+the address, a file name safe to join onto a directory, the type and the announced size.
+
+- `responder.save_to(path, on_event)` saves at a path the app chose.
+- `responder.save_to_downloads(name, on_event)` saves where the user looks for downloads: the
+  system's Downloads collection on Android, a `Downloads` folder in the app's documents on iOS
+  (which the Files app shows once the app's `Info.plist` sets `UIFileSharingEnabled` and
+  `LSSupportsOpeningDocumentsInPlace`), and the user's Downloads folder on a desktop. A name
+  already taken becomes `report (2).pdf`.
+- `responder.cancel()` declines it.
+
+`on_event` hears `DownloadEvent::Progress { received, total }`, then `Finished { location }` or
+`Failed(reason)`, on the main thread. It keeps running after the view that started the download
+is gone. `cancel_download(id)` stops one, `open_download(location)` shows a finished file in the
+app the system opens it with (the share sheet on iOS), and `remove_download(location)` deletes
+it. `download_support()` says whether a backend ever asks. Without a handler nothing is
+downloaded.
+
+Android's WebView only announces a download, so the piece fetches the file itself, with the
+page's cookies, user agent and referrer. A `blob:` address exists only inside its page, which
+reads it and hands the bytes over, naming the transfer by a random token only that page was given, and the transfer ends if the page is left (one the app answers after the page was left fails without starting); `data:` addresses are decoded byte for byte. A fetched download sends the Referer a browser's default policy would: the page's address without its fragment to its own origin, the origin alone to another, and none from an HTTPS page to an HTTP address, at every redirect. WebView does not pass along a
+link's `download` attribute, so a page script notes the name as the link is clicked. A file served by the
+view's own [resource provider](resource-provider.md) is saved from the provider on both
+platforms.
+
+### Failed loads and certificates
+
+`.on_load_error(|error: &LoadError|)` hears every main-frame load that fails: `error.kind` is
+`Offline`, `HostNotFound`, `Timeout`, `Connection`, `Certificate`, `Secure`, `Unsupported` or
+`Other`, beside the address, the engine's error number and its description. The view is left on
+whatever the engine shows for a failed load (WebKit keeps the page before it, Android shows a
+page of its own), so a browser covers the view with its own error page until the next load
+starts. Loading the failed address again retries; a reload would reload the page before it on
+WebKit.
+
+A certificate the system does not trust fails with `LoadErrorKind::Certificate`.
+`trust_host(host)` lets pages from that host load despite it, in every view, until the app
+exits; nothing is stored. Call it only after the user has said so, then load the address again.
+
+### A lost page process
+
+The process that runs a page can crash, or be taken back by the system for memory.
+`.on_renderer_gone(|report: &RendererGone|)` hears it. On Android the view is dead from then on
+and ignores every command, so build a new one in its place (rebuild the piece, say under a
+`when`). One renderer serves every view of an Android app, so each view reports. On WebKit the
+view survives and a load brings the page back; without the handler WebKit views reload
+themselves. Android without the handler is left with a blank view, which is still better than
+WebView's default of ending the app.
+
+### File inputs
+
+Android's WebView has no file chooser of its own. The piece shows Day's
+[file picker](https://daybrite.dev/docs/reference/files/) for `<input type=file>`, filtered by the
+input's `accept` list where it names known types, and allowing several files for `multiple`.
+WebKit shows the system's chooser itself. The `capture` attribute is not honored yet.
+
+### Links to other apps
+
+An address no engine loads (`mailto:`, `tel:`, another app's scheme, Android's `intent:`) is
+never loaded in the view. Each is reported like a link out of a bundled site and goes to the
+system unless the app decides otherwise in `.on_app_link(|url| -> LinkPolicy)`. A browser
+answers `LinkPolicy::Ignore` there, asks the user, and then calls `open_app_link(url)`. For an
+`intent:` address with no app to take it, that returns the fallback page the address names, for
+the app to load.
+
+### Gestures and media
+
+`.swipe_navigation(true)` turns on WebKit's swipes back and forward through the view's history,
+from the screen's edges on iOS and with two fingers on a Mac trackpad. A view browsing the web
+on Android pinches to zoom where the page allows it; a bundled site keeps the scale it was
+designed for. Video plays inline on iPhone rather than taking over the screen.
+
+### The user agent
+
+An engine's own user agent says the view is embedded in an app: Android's carries `; wv` and
+`Version/4.0`, and WebKit's stops before Safari's `Version/… Safari/…`. Sites act on it. Some
+refuse sign-in to embedded views, and some push their own app. `.user_agent(UserAgent::Browser)`
+sends what the platform's own browser sends, built from the engine's string on the device, so
+it follows the installed engine and never goes stale: Chrome's on Android, Safari's on iOS and
+macOS. `UserAgent::Custom(text)` sends exactly `text`, and `UserAgent::Engine` (the default)
+leaves the engine's own.
+
+The setting is read when the view is created; build a new view to change it. A view in
+[desktop mode](#zoom-desktop-sites-and-page-scripts) sends the desktop string instead. The
+other engines keep their own string.
+
+### Backends
+
+| Duty | UIKit, AppKit, macOS GTK | Android | Others |
+|---|---|---|---|
+| Script dialogs | `WKUIDelegate` panels | `WebChromeClient.onJsAlert`, `onJsConfirm`, `onJsPrompt` | The engine's own dialogs |
+| Sign-in | `didReceiveAuthenticationChallenge` | `onReceivedHttpAuthRequest` | The engine's default |
+| Downloads | `WKDownload` (iOS 14.5, macOS 11.3) | `DownloadListener`, fetched by the piece | Unsupported |
+| Failed loads | `didFailProvisionalNavigation`, `didFailNavigation` | `onReceivedError`, `onReceivedSslError` | Not reported |
+| Certificate exceptions | `SecTrust` exceptions on the challenge | `SslErrorHandler.proceed` | Unsupported |
+| Lost page process | `webViewWebContentProcessDidTerminate` | `onRenderProcessGone` | Not reported |
+| File inputs | The system's chooser | `onShowFileChooser` and Day's picker | The engine's chooser |
+| Links to other apps | Navigation policy | `shouldOverrideUrlLoading` | The engine's default |
+| User agent | `applicationNameForUserAgent`, `customUserAgent` | `setUserAgentString` | The engine's own |
+
 ## Choose the right data channel
 
 Use [JavaScript evaluation](webview-eval.md) for small commands and structured state, such as a
@@ -562,8 +712,9 @@ chart dataset, selected item, or reader position. Use [resource providers](resou
 for documents and binary resources. For an EPUB, serve one requested chapter or image at a time;
 do not serialize the entire book into a JavaScript call.
 
-The public API does not currently provide a download manager or arbitrary request-header
-injection. Pages reach the app through [page messages](#page-messages).
+The public API does not currently provide arbitrary request-header injection. Files a page
+offers to save reach the app through [downloads](#downloads), and pages reach the app through
+[page messages](#page-messages).
 Build a readiness convention for bundled pages and handle evaluation errors during navigation.
 [Platform notes](platforms.md) describe the remaining differences.
 

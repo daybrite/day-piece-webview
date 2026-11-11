@@ -137,6 +137,14 @@ lifetime and disregard stale results after navigation.
 inspect a particular origin. No backend can make cross-origin browser iframe evaluation work
 by changing this flag.
 
+A page can forbid evaluating text as script: a Content Security Policy without `unsafe-eval`,
+or one that requires Trusted Types (Reddit and YouTube do one or the other). The engine still
+runs what the app sends, but the completion value of a script comes from an `eval` inside the
+page, which such a page refuses. The piece then sends the script once more as part of its own
+source, which works when the script is one expression: `document.title`, a call, or an
+immediately invoked function. Write scripts for pages you do not control that way. A list of
+statements on such a page fails with the engine's syntax error.
+
 ## Test the actual page
 
 Dayscript's `web_eval` uses the same evaluation implementation. It retries the assertion until

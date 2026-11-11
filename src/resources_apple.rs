@@ -70,6 +70,13 @@ pub(crate) fn configuration(id: Option<u64>, mtm: MainThreadMarker) -> Retained<
         if supported {
             let _: () = msg_send![&preferences, setElementFullscreenEnabled: true];
         }
+        // An iPhone plays a page's video where the page put it, as Safari does, instead of
+        // taking over the screen. iOS only: macOS has no such switch and always plays inline.
+        let inline = objc2::sel!(setAllowsInlineMediaPlayback:);
+        let has_inline: bool = msg_send![&config, respondsToSelector: inline];
+        if has_inline {
+            let _: () = msg_send![&config, setAllowsInlineMediaPlayback: true];
+        }
         if let Some(id) = id {
             let handler = Handler::alloc(mtm).set_ivars(Ivars {
                 id,

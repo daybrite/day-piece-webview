@@ -348,7 +348,9 @@ fn update(_backend: &mut Xaml, h: &WinHandle, patch: &WebPatch) {
             }
             // WebKit's rule lists; WebView2 filters through `request_filter`, and asks the user
             // about capture devices itself.
-            WebPatch::ContentRules(_) | WebPatch::MediaDecision { .. } => {}
+            WebPatch::ContentRules(_)
+            | WebPatch::MediaDecision { .. }
+            | WebPatch::PromptAnswer { .. } => {}
         }
     }
 }

@@ -129,7 +129,10 @@ fn update(backend: &mut Dom, h: &DomHandle, patch: &WebPatch) {
         WebPatch::DesktopMode(_) => {}
         // An iframe offers no request hook, no rule lists and no script injection into another
         // origin's document (docs/webview.md), so the content patches change nothing here.
-        WebPatch::ContentRules(_) | WebPatch::ScriptReply { .. } | WebPatch::MediaDecision { .. } => {}
+        WebPatch::ContentRules(_)
+        | WebPatch::ScriptReply { .. }
+        | WebPatch::MediaDecision { .. }
+        | WebPatch::PromptAnswer { .. } => {}
         // The sandbox applies from the next load: load the last URL again under it.
         WebPatch::JavaScript(enabled) => {
             super::browser::scripts(h.0 as i32, *enabled);

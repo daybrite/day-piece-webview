@@ -28,9 +28,16 @@ use day_pieces::{Decorated, IntoReactive, IntoText, Reactive};
 use day_reactive::{AnyBinding, Binding, Signal, Trigger, bind_seeded, watch};
 use day_spec::Event;
 
+mod browsing;
 mod content;
 pub mod renderer;
 mod resources;
+pub use browsing::{
+    AuthRequest, AuthResponder, BrowseProps, DialogKind, DialogRequest, DialogResponder,
+    DownloadEvent, DownloadRequest, DownloadResponder, LoadError, LoadErrorKind, RendererGone,
+    UserAgent, cancel_download, download_support, host_trusted, open_download, present_dialog,
+    remove_download, sanitize_file_name, trust_host, unused_path,
+};
 pub use content::{
     BlockedLoad, ContentRuleList, ContentRulesError, Frames, InjectAt, MediaRequest, PageContent,
     RequestDecision, RequestFilter, RequestHooks, RequestInfo, ResourceKind, ScriptMessage,
@@ -201,6 +208,11 @@ fn cookie_source_valid(source: &str, header: &str) -> bool {
     all(any(feature = "appkit", feature = "gtk"), target_os = "macos"),
     all(feature = "uikit", target_os = "ios")
 ))]
+mod browsing_apple;
+#[cfg(any(
+    all(any(feature = "appkit", feature = "gtk"), target_os = "macos"),
+    all(feature = "uikit", target_os = "ios")
+))]
 mod content_apple;
 #[cfg(any(
     all(any(feature = "appkit", feature = "gtk"), target_os = "macos"),
@@ -302,6 +314,13 @@ pub struct WebProps {
     /// [`WebView::user_script`], [`WebView::on_script_message`]). Rule list changes arrive as
     /// [`WebPatch::ContentRules`].
     pub content: PageContent,
+    /// Which browser duties the app takes on, and edge-swipe navigation
+    /// ([`WebView::on_auth`], [`WebView::on_download`], [`WebView::on_renderer_gone`],
+    /// [`WebView::swipe_navigation`]).
+    pub browse: BrowseProps,
+    /// What the view tells sites it is ([`WebView::user_agent`]), fixed when the view is
+    /// created.
+    pub user_agent: UserAgent,
 }
 
 /// Per-view browsing settings: what [`WebView::zoom`], [`WebView::desktop_mode`] and
@@ -697,6 +716,13 @@ pub enum WebPatch {
         id: u64,
         allow: bool,
     },
+    /// Answer the question the backend reported under `id` (`PAGE_PROMPT`): a script dialog, a
+    /// sign-in, a file choice or a download's destination. `answer` is the JSON of the
+    /// crate's `browsing::Answer`.
+    PromptAnswer {
+        id: u64,
+        answer: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -783,8 +809,15 @@ fn js_string_literal(s: &str) -> String {
 /// a different failure from the script throwing.
 fn wrap_script(script: &str) -> String {
     let src = js_string_literal(script);
+    // A page that refuses `eval` refuses every string, so a harmless one is tried first: its
+    // failure is the refusal, reported under a name no script throws ([`EVAL_REFUSED`]) and
+    // retried in the second form. The script itself then reaches `eval` exactly as written
+    // (a leading directive, its completion value and its own names are all its own), and
+    // whatever it throws, even an `EvalError`, is its error from its one run.
     format!(
         "(function(){{var v;\
+         try{{eval(\"0\");}}\
+         catch(e){{return \"0\\u001f{EVAL_REFUSED}\\u001f\"+((e&&e.message)||String(e));}}\
          try{{v=eval({src});}}\
          catch(e){{return \"0\\u001f\"+((e&&e.name)||\"Error\")+\"\\u001f\"+((e&&e.message)||String(e));}}\
          try{{var s=JSON.stringify(v);return \"1\\u001f\"+(s===undefined?\"null\":s);}}\
@@ -792,6 +825,9 @@ fn wrap_script(script: &str) -> String {
          }})()"
     )
 }
+
+/// The error name [`wrap_script`] reports when the page refused `eval` before the script ran.
+const EVAL_REFUSED: &str = "DayEvalRefused";
 
 /// Build a reply an arm can send when the engine failed rather than the script: a dead content
 /// process, a missing web view, a reply of the wrong type. Shaped like the wrapper's own error arm
@@ -807,6 +843,24 @@ pub(crate) fn engine_error(name: &str, message: &str) -> String {
 /// Decode one reply produced by [`wrap_script`]. `undefined` and values `JSON.stringify` drops
 /// (a function, a symbol) both arrive as `null`; the wrapper normalizes them so the payload is
 /// always valid JSON.
+/// The wrapper for a page that refuses `eval`: the script is part of the wrapper's own source,
+/// as the expression it then has to be. A page's Content Security Policy without `unsafe-eval`,
+/// or with Trusted Types required, stops `eval(text)` inside the page even though the engine
+/// runs the wrapper itself; such a page answers [`wrap_script`]'s form with [`EVAL_REFUSED`],
+/// and the request is sent once more in this form ([`resolve`]). A script that is a list of
+/// statements cannot be written this way and fails to parse, which is the error the caller
+/// then sees. The line breaks keep a trailing `//` comment from swallowing the wrapper.
+fn wrap_expression(script: &str) -> String {
+    format!(
+        "(function(){{var v;\
+         try{{v=(\n{script}\n);}}\
+         catch(e){{return \"0\\u001f\"+((e&&e.name)||\"Error\")+\"\\u001f\"+((e&&e.message)||String(e));}}\
+         try{{var s=JSON.stringify(v);return \"1\\u001f\"+(s===undefined?\"null\":s);}}\
+         catch(e){{return \"0\\u001f\"+((e&&e.name)||\"TypeError\")+\"\\u001f\"+((e&&e.message)||String(e));}}\
+         }})()"
+    )
+}
+
 fn decode(payload: &str) -> Result<String, EvalError> {
     match payload.split_once(SEP) {
         Some(("1", json)) => Ok(json.to_string()),
@@ -837,12 +891,33 @@ day_core::tls_group! {
     /// different completion shape.
     static PENDING_CB: RefCell<HashMap<u64, day_core::PieceOperationDone>> =
         RefCell::new(HashMap::new());
+    /// Each request's second form ([`wrap_expression`]), kept until its first answer.
+    static FALLBACKS: RefCell<HashMap<u64, String>> = RefCell::new(HashMap::new());
 }
 
 /// Deliver a reply to whichever request is waiting on `req`: an awaited [`EvalFuture`] or a
 /// `web_eval` step callback. A reply for a dropped future finds nothing pending and is
 /// discarded.
 fn resolve(req: u64, payload: &str) {
+    // A page that refuses `eval` gets the request once more with the script as source.
+    let fallback = FALLBACKS.with(|f| f.borrow_mut().remove(&req));
+    let refused =
+        matches!(decode(payload), Err(EvalError::Threw { ref name, .. }) if name == EVAL_REFUSED);
+    if refused
+        && let Some(script) = fallback
+        && let Some(node) = REQUEST_NODES.with(|p| p.borrow().get(&req).copied())
+    {
+        renderer::send_patch(node, WebPatch::Eval { req, script });
+        return;
+    }
+    // Refused, with no second form left: the caller hears it under the engine's own name.
+    let renamed;
+    let payload = if refused {
+        renamed = payload.replacen(EVAL_REFUSED, "EvalError", 1);
+        renamed.as_str()
+    } else {
+        payload
+    };
     REQUEST_NODES.with(|p| p.borrow_mut().remove(&req));
     if let Some(done) = PENDING_CB.with(|p| p.borrow_mut().remove(&req)) {
         done(decode(payload).map_err(|e| e.to_string()));
@@ -878,6 +953,7 @@ fn register_script_eval() {
         });
         let wrapped = wrap_script(script);
         REQUEST_NODES.with(|p| p.borrow_mut().insert(req, node));
+        FALLBACKS.with(|f| f.borrow_mut().insert(req, wrap_expression(script)));
         PENDING_CB.with(|p| p.borrow_mut().insert(req, done));
         renderer::send_patch(
             node,
@@ -1179,6 +1255,8 @@ impl JsHandle {
     fn data_request_value(&self, request: serde_json::Value) -> EvalFuture {
         let mut future = self.eval("");
         future.script = Some(format!("{DATA_REQUEST}{request}"));
+        // A request to the backend is no page script and has no second form.
+        future.fallback = None;
         future
     }
     /// Capture the visible page as PNG bytes, at most `max_width_px` physical pixels wide (the
@@ -1243,6 +1321,7 @@ impl JsHandle {
             node: self.node,
             blocked: self.blocked,
             script: Some(wrap_script(script.as_ref())),
+            fallback: Some(wrap_expression(script.as_ref())),
             shared: Rc::new(EvalShared {
                 result: RefCell::new(None),
                 waker: RefCell::new(None),
@@ -1258,6 +1337,8 @@ pub struct EvalFuture {
     req: u64,
     node: Signal<Option<RNode>>,
     script: Option<String>,
+    /// The script in [`wrap_expression`]'s form, for a page that refuses `eval`.
+    fallback: Option<String>,
     shared: Rc<EvalShared>,
     sent: bool,
 }
@@ -1286,6 +1367,9 @@ impl Future for EvalFuture {
             }
             let (req, script) = (self.req, self.script.take().unwrap_or_default());
             REQUEST_NODES.with(|p| p.borrow_mut().insert(req, node));
+            if let Some(fallback) = self.fallback.take() {
+                FALLBACKS.with(|f| f.borrow_mut().insert(req, fallback));
+            }
             PENDING.with(|p| p.borrow_mut().insert(req, self.shared.clone()));
             renderer::send_patch(node, WebPatch::Eval { req, script });
             // An arm that fails a request without reaching the engine replies from inside that
@@ -1305,6 +1389,7 @@ impl Drop for EvalFuture {
     fn drop(&mut self) {
         REQUEST_NODES.with(|p| p.borrow_mut().remove(&self.req));
         PENDING.with(|p| p.borrow_mut().remove(&self.req));
+        FALLBACKS.with(|f| f.borrow_mut().remove(&self.req));
     }
 }
 
@@ -1424,6 +1509,10 @@ pub struct WebView {
     on_blocked: Option<content::BlockedCallback>,
     on_rules_error: Option<RulesErrorHandler>,
     on_media: Option<MediaHandler>,
+    on_app_link: Option<LinkDecider>,
+    browse: browsing::Handlers,
+    swipe_navigation: bool,
+    user_agent: UserAgent,
 }
 
 /// `web_view(url)`: a native web view showing `url`. The initial value loads on creation; call
@@ -1470,6 +1559,10 @@ pub fn web_view(url: impl Binding<String>) -> WebView {
         on_blocked: None,
         on_rules_error: None,
         on_media: None,
+        on_app_link: None,
+        browse: browsing::Handlers::default(),
+        swipe_navigation: false,
+        user_agent: UserAgent::Engine,
     }
 }
 
@@ -1754,6 +1847,87 @@ impl WebView {
         self.on_link = Some(Rc::new(f));
         self
     }
+    /// Decide what happens to a navigation whose address another program opens: `mailto:`,
+    /// `tel:`, an app's own scheme, Android's `intent:`. The view never loads such an address;
+    /// without this (and without [`WebView::on_external_link`]) each goes to the system, which
+    /// is [`LinkPolicy::OpenSystem`]. A browser asks the user here before an unfamiliar scheme
+    /// leaves for another app. [`LinkPolicy::InView`] is treated as [`LinkPolicy::Ignore`].
+    pub fn on_app_link(mut self, f: impl Fn(&str) -> LinkPolicy + 'static) -> Self {
+        self.on_app_link = Some(Rc::new(f));
+        self
+    }
+    /// Answer a page's `alert()`, `confirm()` and `prompt()`. The page's script waits for the
+    /// responder. Without this the view presents Day's own dialogs, titled with the site that
+    /// asked.
+    pub fn on_dialog(mut self, f: impl Fn(DialogRequest, DialogResponder) + 'static) -> Self {
+        self.browse.dialog = Some(Rc::new(f));
+        self
+    }
+    /// Answer a server's or proxy's request for a name and password (HTTP Basic, Digest, NTLM).
+    /// Without this the sign-in is canceled and the server's "unauthorized" page loads.
+    pub fn on_auth(mut self, f: impl Fn(AuthRequest, AuthResponder) + 'static) -> Self {
+        self.browse.auth = Some(Rc::new(f));
+        self
+    }
+    /// Take the files the engine offers to save rather than show. The handler names where a
+    /// file goes ([`DownloadResponder::save_to`]) or declines it; without a handler nothing is
+    /// downloaded. See [`download_support`].
+    pub fn on_download(mut self, f: impl Fn(DownloadRequest, DownloadResponder) + 'static) -> Self {
+        self.browse.download = Some(Rc::new(f));
+        self
+    }
+    /// Hear that a page did not load: no connection, no such server, an untrusted certificate.
+    /// The view is left on whatever the engine shows for a failed load, so a browser covers it
+    /// with its own error page until the next load starts.
+    pub fn on_load_error(mut self, f: impl Fn(&LoadError) + 'static) -> Self {
+        self.browse.load_error = Some(Rc::new(f));
+        self
+    }
+    /// Hear that the process running this view's page is gone. On Android the view is dead from
+    /// then on and ignores every command: build a new one in its place. On Apple platforms the
+    /// view survives and a reload brings the page back; without this handler WebKit views
+    /// reload themselves.
+    pub fn on_renderer_gone(mut self, f: impl Fn(&RendererGone) + 'static) -> Self {
+        self.browse.renderer_gone = Some(Rc::new(f));
+        self
+    }
+    /// What the view tells sites it is: the engine's own string (the default), the platform
+    /// browser's ([`UserAgent::Browser`], which a browser wants), or a string of the app's.
+    /// It is read when the view is created; build a new view to change it. WebKit and Android
+    /// honor it, and a view in [`WebView::desktop_mode`] sends the desktop string instead.
+    pub fn user_agent(mut self, user_agent: UserAgent) -> Self {
+        self.user_agent = user_agent;
+        self
+    }
+    /// Swiping in from a screen edge goes back and forward through the view's history (WebKit).
+    /// Off unless asked for, since an app's own navigation may own those edges.
+    pub fn swipe_navigation(mut self, on: bool) -> Self {
+        self.swipe_navigation = on;
+        self
+    }
+}
+
+/// Hand an address no engine loads to the program that opens it: `mailto:`, `tel:`, an app's
+/// own scheme. Android's `intent:` addresses name an app, a package to install it from and a
+/// web page to fall back to; the backend starts whichever applies, and the fallback page comes
+/// back here for the caller to load. This is what [`LinkPolicy::OpenSystem`] does, for an app
+/// that answers [`WebView::on_app_link`] later than the handler's return (after asking the
+/// user).
+pub fn open_app_link(url: &str) -> Option<String> {
+    #[cfg(all(target_os = "android", feature = "material"))]
+    if url.starts_with("intent:") {
+        return android_impl::open_intent(url);
+    }
+    day_core::open_url(url);
+    None
+}
+
+/// [`LinkPolicy::OpenSystem`]: hand `url` to the system, and load an `intent:` address's
+/// fallback page in the view through `send`.
+fn open_system(url: &str, send: &impl Fn(WebPatch)) {
+    if let Some(fallback) = open_app_link(url) {
+        send(WebPatch::Load(fallback));
+    }
 }
 
 /// What this backend realizes. `Native` is a real embedded browser engine with the full command
@@ -1866,6 +2040,10 @@ impl Piece for WebView {
             on_blocked,
             on_rules_error,
             on_media,
+            on_app_link,
+            browse,
+            swipe_navigation,
+            user_agent,
         } = self;
         let settings = WebSettings {
             zoom: zoom
@@ -1968,6 +2146,8 @@ impl Piece for WebView {
             } else {
                 content
             },
+            browse: browse.props(swipe_navigation),
+            user_agent,
         };
         // A web view has no intrinsic size; it fills whatever space its container offers.
         let surface = renderer::surface::get(renderer);
@@ -2196,6 +2376,15 @@ impl Piece for WebView {
                             allow,
                         });
                     }
+                } else if *num == browsing::PAGE_PROMPT {
+                    browse.prompt(text, move |id, answer| {
+                        send(WebPatch::PromptAnswer {
+                            id,
+                            answer: serde_json::to_string(&answer).unwrap_or_default(),
+                        });
+                    });
+                } else if *num == browsing::PAGE_NOTICE {
+                    browse.notice(text);
                 } else if *num == NEW_TAB_REPORT {
                     if let Some((_, callback)) = &tabs
                         && let Ok(request) = serde_json::from_str::<NewTabRequest>(text)
@@ -2206,16 +2395,21 @@ impl Piece for WebView {
                     // An inline site's navigation left the site: the arm already canceled it
                     // (§8.3 events are enqueue-only, so the native side can't ask), and the
                     // policy runs here. `InView` re-issues the load as a command.
-                    let policy = on_link
+                    // An address no engine loads (`mailto:`, an app's scheme) is reported from
+                    // any page, and `on_app_link` decides it where the app set one.
+                    let app_link = !browsing::engine_scheme(text);
+                    let policy = on_app_link
                         .as_ref()
+                        .filter(|_| app_link)
+                        .or(on_link.as_ref())
                         .map(|f| f(text))
                         .unwrap_or(LinkPolicy::OpenSystem);
                     match policy {
-                        LinkPolicy::OpenSystem => day_core::open_url(text),
-                        LinkPolicy::InView => {
+                        LinkPolicy::OpenSystem => open_system(text, &send),
+                        LinkPolicy::InView if !app_link => {
                             send(WebPatch::Load(text.clone()));
                         }
-                        LinkPolicy::Ignore => {}
+                        LinkPolicy::InView | LinkPolicy::Ignore => {}
                     }
                 } else if *num == 0.0 {
                     url.set(text.clone());
@@ -2352,6 +2546,83 @@ impl std::error::Error for RendererUnavailable {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_expression_form_carries_the_script_as_source() {
+        let wrapped = wrap_expression("document.title // the title");
+        assert!(wrapped.contains("v=(\ndocument.title // the title\n);"));
+        assert!(!wrapped.contains("eval("));
+        // The first form evaluates text, which a page's policy can refuse.
+        assert!(wrap_script("document.title").contains("eval("));
+    }
+
+    /// The wrapper, run for real (with `node`, skipped without it). A script that throws its
+    /// own `EvalError` after a side effect ran once and is reported as thrown, so it is never
+    /// sent again. An `eval` that refuses before anything ran is reported as the refusal.
+    #[test]
+    fn only_a_refused_eval_is_reported_as_one() {
+        let throws = "globalThis.count=(globalThis.count||0)+1; throw new EvalError('mine')";
+        let program = format!(
+            "var first={};\
+             var refused=(function(eval){{return {}}})(function(){{throw new EvalError('refused')}});\
+             console.log(JSON.stringify([first,globalThis.count,refused,globalThis.touched===undefined,{}]))",
+            wrap_script(throws),
+            wrap_script("globalThis.touched=1"),
+            wrap_expression("1+1")
+        );
+        let output = match std::process::Command::new("node")
+            .arg("-e")
+            .arg(&program)
+            .output()
+        {
+            Ok(output) if output.status.success() => output,
+            _ => {
+                eprintln!("node did not run; skipping");
+                return;
+            }
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let values: Vec<serde_json::Value> = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(values[0], format!("0{SEP}EvalError{SEP}mine"));
+        assert_eq!(values[1], 1, "the script ran once");
+        assert_eq!(values[2], format!("0{SEP}{EVAL_REFUSED}{SEP}refused"));
+        assert_eq!(values[3], true, "a refused script did not run");
+        assert_eq!(values[4], format!("1{SEP}2"));
+    }
+
+    /// The wrapper leaves the script's meaning alone (with `node`, skipped without it): a
+    /// leading `"use strict"` still governs it, a script with no value reports null, and the
+    /// script may use any name, the wrapper's own included.
+    #[test]
+    fn the_wrapper_runs_the_script_as_written() {
+        let scripts = [
+            "'use strict'; (function(){ return this === undefined; })()",
+            "",
+            "var declared = 1;",
+            "let ran = 2, v = 3, e = 4, s = 5; ran + v + e + s",
+            "document = undefined; typeof eval",
+        ];
+        let wrapped: Vec<String> = scripts.iter().map(|s| wrap_script(s)).collect();
+        let program = format!("console.log(JSON.stringify([{}]))", wrapped.join(","));
+        let output = match std::process::Command::new("node")
+            .arg("-e")
+            .arg(&program)
+            .output()
+        {
+            Ok(output) if output.status.success() => output,
+            _ => {
+                eprintln!("node did not run; skipping");
+                return;
+            }
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let values: Vec<String> = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(values[0], format!("1{SEP}true"), "strict mode kept");
+        assert_eq!(values[1], format!("1{SEP}null"));
+        assert_eq!(values[2], format!("1{SEP}null"));
+        assert_eq!(values[3], format!("1{SEP}14"));
+        assert_eq!(values[4], format!("1{SEP}\"function\""));
+    }
+
     #[test]
     fn servo_selection_is_explicit_and_does_not_claim_native_profiles() {
         assert_eq!(super::WebRenderer::default(), super::WebRenderer::WebView);

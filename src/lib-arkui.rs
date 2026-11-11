@@ -149,7 +149,9 @@ fn update(_backend: &mut ArkUi, h: &AHandle, patch: &WebPatch) {
         | WebPatch::ScriptReply { .. } => return,
         // WebKit's rule lists; ArkWeb filters through `request_filter`, and denies capture
         // devices to pages by default.
-        WebPatch::ContentRules(_) | WebPatch::MediaDecision { .. } => return,
+        WebPatch::ContentRules(_)
+        | WebPatch::MediaDecision { .. }
+        | WebPatch::PromptAnswer { .. } => return,
         // No retained views: a fresh view reports as its first load proceeds.
         WebPatch::ReportState => return,
     };

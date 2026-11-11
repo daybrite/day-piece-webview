@@ -683,7 +683,7 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
     match patch {
         WebPatch::ContentRules(_) | WebPatch::ScriptReply { .. } => page_content::update(wv, patch),
         // WebKitGTK asks the user itself (`permission-request`'s default prompt).
-        WebPatch::MediaDecision { .. } => {}
+        WebPatch::MediaDecision { .. } | WebPatch::PromptAnswer { .. } => {}
         // While the first page waits for its rule lists, a navigation takes its place.
         WebPatch::Load(url) => {
             let (loader, url) = (wv.clone(), url.clone());

@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 use block2::RcBlock;
 
+use super::browsing_apple as duties;
 use day_spec::NodeId;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObjectProtocol, ProtocolObject};
@@ -43,6 +44,10 @@ struct NavIvars {
     /// `WKWebpagePreferences` as the delegate decides it.
     desktop_mode: Cell<bool>,
     javascript: Cell<bool>,
+    /// Which browser duties the app takes on (`WebProps::browse`).
+    browse: Cell<BrowseProps>,
+    /// The view's resource provider (`0` for none), which serves the app's own namespace.
+    provider: Cell<u64>,
 }
 
 define_class!(
@@ -81,6 +86,56 @@ define_class!(
             }
             std::ptr::null_mut()
         }
+
+        // The browser duties (docs/webview.md), each forwarded to `browsing_apple` with this
+        // view's node: script dialogs, sign-in and certificates, failed loads, a lost page
+        // process, and downloads.
+        #[unsafe(method(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:))]
+        fn js_alert(&self, web: &WKWebView, message: &NSString, frame: &AnyObject, done: &block2::DynBlock<dyn Fn()>) {
+            duties::dialog(self.asking(web), DialogKind::Alert, message, None, frame, duties::Pending::Alert(done.copy()));
+        }
+        #[unsafe(method(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:))]
+        fn js_confirm(&self, web: &WKWebView, message: &NSString, frame: &AnyObject, done: &block2::DynBlock<dyn Fn(objc2::runtime::Bool)>) {
+            duties::dialog(self.asking(web), DialogKind::Confirm, message, None, frame, duties::Pending::Confirm(done.copy()));
+        }
+        #[unsafe(method(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:))]
+        fn js_prompt(&self, web: &WKWebView, message: &NSString, fallback: Option<&NSString>, frame: &AnyObject, done: &block2::DynBlock<dyn Fn(*mut NSString)>) {
+            let fallback = fallback.map(|f| f.to_string()).unwrap_or_default();
+            duties::dialog(self.asking(web), DialogKind::Prompt, message, Some(fallback.clone()), frame, duties::Pending::Prompt(done.copy(), fallback));
+        }
+        #[unsafe(method(webView:didReceiveAuthenticationChallenge:completionHandler:))]
+        fn challenge(&self, web: &WKWebView, challenge: &AnyObject, done: &block2::DynBlock<dyn Fn(isize, *mut AnyObject)>) {
+            duties::challenge(self.asking(web), self.ivars().browse.get().auth, challenge, done);
+        }
+        #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
+        fn failed_provisional(&self, _web: &WKWebView, _navigation: *mut AnyObject, error: &NSError) {
+            duties::navigation_failed(self.emit(), self.ivars().node.get(), error);
+        }
+        #[unsafe(method(webView:didFailNavigation:withError:))]
+        fn failed_navigation(&self, _web: &WKWebView, _navigation: *mut AnyObject, error: &NSError) {
+            duties::navigation_failed(self.emit(), self.ivars().node.get(), error);
+        }
+        #[unsafe(method(webViewWebContentProcessDidTerminate:))]
+        fn process_gone(&self, web: &WKWebView) {
+            let listening = self.ivars().browse.get().renderer_gone;
+            if !duties::process_gone(self.asking(web), listening) {
+                let _: *mut AnyObject = unsafe { msg_send![web, reload] };
+            }
+        }
+        #[unsafe(method(webView:decidePolicyForNavigationResponse:decisionHandler:))]
+        fn decide_response(&self, web: &WKWebView, response: &AnyObject, handler: &block2::DynBlock<dyn Fn(isize)>) {
+            let policy = duties::response_policy(self.asking(web),
+                self.ivars().browse.get().downloads, self.ivars().provider.get(), response);
+            handler.call((policy,));
+        }
+        #[unsafe(method(webView:navigationResponse:didBecomeDownload:))]
+        fn response_became_download(&self, _web: &WKWebView, _response: &AnyObject, download: &AnyObject) {
+            duties::adopt_download(self.emit(), download, self.ivars().node.get());
+        }
+        #[unsafe(method(webView:navigationAction:didBecomeDownload:))]
+        fn action_became_download(&self, _web: &WKWebView, _action: &AnyObject, download: &AnyObject) {
+            duties::adopt_download(self.emit(), download, self.ivars().node.get());
+        }
     }
 
     unsafe impl WKNavigationDelegate for WebNav {
@@ -103,7 +158,13 @@ define_class!(
             preferences: &AnyObject,
             handler: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy, *mut AnyObject)>,
         ) {
-            let policy = self.policy(web_view, action);
+            let mut policy = self.policy(web_view, action);
+            // A link marked `download`: the app takes the file instead of the view.
+            if policy == WKNavigationActionPolicy::Allow
+                && duties::action_downloads(self.ivars().browse.get().downloads, action)
+            {
+                policy = WKNavigationActionPolicy(duties::POLICY_DOWNLOAD);
+            }
             super::storage_apple::webpage_preferences(
                 preferences,
                 self.ivars().desktop_mode.get(),
@@ -180,6 +241,20 @@ impl WebNav {
             (self.ivars().emit)(self.ivars().node.get(), new_tab_event(url, background));
             return WKNavigationActionPolicy::Cancel;
         }
+        // An address no engine loads (mailto:, tel:, an app's scheme) is another program's:
+        // cancel and report it from any page. A bundled site reports every address outside
+        // it below.
+        if self.ivars().inline_base.borrow().is_none() && !super::browsing::engine_scheme(&url) {
+            (self.ivars().emit)(
+                self.ivars().node.get(),
+                Event::Custom {
+                    tag: "webview:link",
+                    num: super::LINK_REPORT,
+                    text: url,
+                },
+            );
+            return WKNavigationActionPolicy::Cancel;
+        }
         let external = match &*self.ivars().inline_base.borrow() {
             Some(base) => !subframe && !url.starts_with(base.as_str()) && url != "about:blank",
             None => {
@@ -225,6 +300,20 @@ impl WebNav {
         );
     }
 
+    /// This toolkit's event sender, for the shared duties.
+    fn emit(&self) -> duties::Emit {
+        self.ivars().emit
+    }
+
+    /// This view, as the shared duties address it.
+    fn asking(&self, web: &WKWebView) -> duties::Asking {
+        duties::Asking {
+            emit: self.emit(),
+            node: self.ivars().node.get(),
+            view: web as *const WKWebView as usize,
+        }
+    }
+
     fn new(mtm: MainThreadMarker, node: NodeId, emit: fn(NodeId, Event)) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(NavIvars {
             node: Cell::new(node),
@@ -237,6 +326,8 @@ impl WebNav {
             last_state: RefCell::new(String::new()),
             desktop_mode: Cell::new(false),
             javascript: Cell::new(true),
+            browse: Cell::new(BrowseProps::default()),
+            provider: Cell::new(0),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -314,6 +405,7 @@ pub(crate) fn make(
             if let Some(nav) = m.borrow().get(&key) {
                 nav.ivars().node.set(id);
                 nav.ivars().external_links.set(p.external_links);
+                nav.ivars().browse.set(p.browse);
                 *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
                 // The node's settings: zoom at once, the rest from the next navigation on.
                 nav.ivars().desktop_mode.set(p.settings.desktop_mode);
@@ -334,11 +426,13 @@ pub(crate) fn make(
     let config =
         super::resources_apple::configuration(p.resources.as_ref().map(ResourceProvider::id), mtm);
     super::storage_apple::configure(&config, &p.profile);
+    duties::configure_user_agent(&config, &p.user_agent);
     let this = TabWebView::alloc(mtm).set_ivars(());
     let web: Retained<TabWebView> = unsafe {
         msg_send![super(this), initWithFrame: objc2_foundation::NSRect::ZERO, configuration: &*config]
     };
     let web: Retained<WKWebView> = web.into_super();
+    duties::apply_user_agent(&web, &p.user_agent);
     if p.transparent {
         // WKWebView paints a white sheet under the page unless told not to. `drawsBackground` is
         // the key Safari's own transparent views set (there is no public setter on macOS), read
@@ -351,6 +445,15 @@ pub(crate) fn make(
     }
     let nav = WebNav::new(mtm, id, emit);
     nav.ivars().external_links.set(p.external_links);
+    nav.ivars().browse.set(p.browse);
+    nav.ivars()
+        .provider
+        .set(p.resources.as_ref().map(ResourceProvider::id).unwrap_or(0));
+    if p.browse.swipe_navigation {
+        // Safari's two-finger swipes through the view's own history
+        // (`WebView::swipe_navigation`).
+        unsafe { web.setAllowsBackForwardNavigationGestures(true) };
+    }
     *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
     // Set before the first load, whose policy decision already reads them.
     nav.ivars().desktop_mode.set(p.settings.desktop_mode);
@@ -507,6 +610,7 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
         | WebPatch::MediaDecision { .. } => {
             super::content_apple::update((&**h as *const NSView) as usize, patch);
         }
+        WebPatch::PromptAnswer { id, answer } => duties::answer_prompt(*id, answer),
         // While the first page waits for its rule lists, a navigation takes its place.
         WebPatch::Load(url) => {
             let (loader, url) = (objc2::Message::retain(web), url.clone());
@@ -586,6 +690,8 @@ pub(crate) fn release(h: &Retained<NSView>) {
         return;
     }
     super::content_apple::release(key);
+    // WebKit is still waiting on whatever this view asked and nobody answered.
+    duties::dismiss_prompts(key);
     let nav = DELEGATES.with(|m| m.borrow_mut().remove(&key));
     if let (Some(nav), Some(web)) = (nav, h.downcast_ref::<WKWebView>()) {
         super::storage_apple::unobserve_state(web, &nav);

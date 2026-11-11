@@ -7,6 +7,25 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 ## Unreleased
 
+- New: `WebView::user_agent(UserAgent::Browser)` sends the platform browser's user agent
+  (Chrome's on Android, Safari's on iOS and macOS), derived on the device from the engine's own,
+  where a view otherwise identifies itself as embedded in an app. `UserAgent::Custom` sends any
+  string.
+- `JsHandle::eval` and the `web_eval` step work on pages that forbid `eval` (a Content Security
+  Policy without `unsafe-eval`, or Trusted Types): the script is sent once more as source when
+  the page refused it before it ran. A script that ran and threw is never sent again.
+- New: the browser duties (docs/webview.md, "Browser duties") on WebKit (iOS and macOS) and
+  Android. `WebView::on_dialog` answers `alert()`, `confirm()` and `prompt()`, which WKWebView
+  otherwise answers itself (confirm as `false`), and every view presents Day's own dialogs
+  without it. `on_auth` answers HTTP sign-in. `on_download` takes files with
+  `DownloadResponder::save_to` or `save_to_downloads`, progress events that outlive the view,
+  `cancel_download`, `open_download` and `remove_download`. `on_load_error` reports failed
+  main-frame loads by kind, and `trust_host` excepts a host's certificate until the app exits.
+  `on_renderer_gone` reports a lost page process; Android no longer ends the app when its
+  renderer dies. Android shows Day's file picker for `<input type=file>`. Addresses no engine
+  loads (`mailto:`, app schemes, `intent:`) go to the system or to `on_app_link`.
+  `swipe_navigation` turns on WebKit's history swipes. A browsing view on Android pinches to
+  zoom, and video plays inline on iPhone.
 - The request filter treats a provider's pages alike on every engine: skipped in a view showing
   the provider's own site (`web_view_resources`, `web_view_inline`), filtered in a browsing view
   that borrows a provider with `.resources(...)`. A view whose rule lists change before its first

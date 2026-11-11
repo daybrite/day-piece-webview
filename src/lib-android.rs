@@ -24,8 +24,15 @@ day_toolkit_material::java_class! {
         static fn supportsDataClearing() -> jboolean,
         static fn makeWebView(id: jlong, url: JString, inline_prefix: JString, provider: jlong,
             profile: JString, zoom: jdouble, desktop: jboolean, javascript: jboolean,
-            hooks: jlong, content: JString, media_handler: jboolean)
+            hooks: jlong, content: JString, media_handler: jboolean, duties: jint,
+            user_agent: JString)
             -> android.view.View,
+        static fn promptAnswer(view: android.view.View, id: jlong, answer: JString),
+        static fn trustHost(host: JString),
+        static fn openIntent(url: JString) -> JString,
+        static fn cancelDownload(id: jlong),
+        static fn openDownload(location: JString) -> jboolean,
+        static fn removeDownload(location: JString),
         static fn scriptReply(view: android.view.View, message: jlong, reply: JString, has_reply: jboolean),
         static fn mediaDecision(view: android.view.View, request: jlong, allow: jboolean),
         static fn supportsDocumentStartScripts() -> jboolean,
@@ -56,7 +63,54 @@ day_toolkit_material::java_class! {
                 -> jboolean,
             error_policy = day_toolkit_material::jni::errors::ThrowRuntimeExAndDefault,
         },
+        // A download's progress (`browsing::download_event`), posted to the UI thread by Java.
+        static fn downloadEvent {
+            sig = (id: jlong, kind: jint, received: jlong, total: jlong, message: JString) -> (),
+            error_policy = day_toolkit_material::jni::errors::ThrowRuntimeExAndDefault,
+        },
     },
+}
+
+/// `cancel_download`: stop the Java fetch; its failure report ends the download.
+pub(crate) fn cancel_download(id: u64) {
+    java(|env| DayWebView::cancelDownload(env, id as i64));
+}
+
+/// `open_download`: ask the system to show a saved file.
+pub(crate) fn open_download(location: &str) -> bool {
+    java(|env| {
+        let location = JString::from_str(env, location)?;
+        DayWebView::openDownload(env, &location)
+    })
+    .unwrap_or(false)
+}
+
+/// `remove_download`: delete a saved file from the Downloads collection or the disk.
+pub(crate) fn remove_download(location: &str) {
+    java(|env| {
+        let location = JString::from_str(env, location)?;
+        DayWebView::removeDownload(env, &location)
+    });
+}
+
+/// `trust_host`: WebView asks about each certificate error on its own thread, so the set of
+/// excepted hosts lives in Java.
+pub(crate) fn trust_host(host: &str) {
+    java(|env| {
+        let host = JString::from_str(env, host)?;
+        DayWebView::trustHost(env, &host)
+    });
+}
+
+/// Start what an `intent:` address names; the page to load instead when no app takes it and
+/// the address carries a fallback.
+pub(crate) fn open_intent(url: &str) -> Option<String> {
+    let fallback = java(|env| {
+        let url = JString::from_str(env, url)?;
+        let fallback = DayWebView::openIntent(env, &url)?;
+        string_of(env, &fallback)
+    })?;
+    (!fallback.is_empty()).then_some(fallback)
 }
 
 /// What `makeWebView` installs before the first load: the page scripts (each composed to run at
@@ -151,6 +205,7 @@ fn make(_backend: &mut Material, p: &WebProps, id: NodeId) -> AHandle {
         let prefix = JString::from_str(env, &prefix)?;
         let profile = JString::from_str(env, &profile)?;
         let content = JString::from_str(env, &content)?;
+        let user_agent = JString::from_str(env, p.user_agent.wire())?;
         DayWebView::makeWebView(
             env,
             id.0 as i64,
@@ -164,6 +219,8 @@ fn make(_backend: &mut Material, p: &WebProps, id: NodeId) -> AHandle {
             hooks as i64,
             &content,
             p.content.media_handler,
+            i32::from(p.browse.auth) | i32::from(p.browse.downloads) << 1,
+            &user_agent,
         )
     });
     if p.scroll_reports {
@@ -207,6 +264,13 @@ fn update(_backend: &mut Material, h: &AHandle, patch: &WebPatch) {
             java(|env| DayWebView::mediaDecision(env, h.0.as_obj(), *id as i64, *allow));
             return;
         }
+        WebPatch::PromptAnswer { id, answer } => {
+            java(|env| {
+                let answer = JString::from_str(env, answer)?;
+                DayWebView::promptAnswer(env, h.0.as_obj(), *id as i64, &answer)
+            });
+            return;
+        }
         // WebKit's rule lists; Android filters through `request_filter` instead.
         WebPatch::ContentRules(_) => return,
         WebPatch::Zoom(zoom) => {
@@ -238,7 +302,8 @@ fn update(_backend: &mut Material, h: &AHandle, patch: &WebPatch) {
         | WebPatch::JavaScript(_)
         | WebPatch::ContentRules(_)
         | WebPatch::ScriptReply { .. }
-        | WebPatch::MediaDecision { .. } => return,
+        | WebPatch::MediaDecision { .. }
+        | WebPatch::PromptAnswer { .. } => return,
         // No retained views: a fresh view reports as its first load proceeds.
         WebPatch::ReportState => return,
     };
@@ -281,6 +346,29 @@ impl DayWebViewNativeInterface for DayWebViewAPI {
                 .collect::<String>(),
         )?;
         DayWebView::response(env, &mime, r.status as i32, &headers, &bytes)
+    }
+
+    fn downloadEvent<'l>(
+        env: &mut Env<'l>,
+        _class: JClass<'l>,
+        id: i64,
+        kind: i32,
+        received: i64,
+        total: i64,
+        message: JString<'l>,
+    ) -> Result<(), Self::Error> {
+        let event = match kind {
+            0 => DownloadEvent::Progress {
+                received: received.max(0) as u64,
+                total: u64::try_from(total).ok().filter(|total| *total > 0),
+            },
+            1 => DownloadEvent::Finished {
+                location: string_of(env, &message)?,
+            },
+            _ => DownloadEvent::Failed(string_of(env, &message)?),
+        };
+        super::browsing::download_event(id as u64, event);
+        Ok(())
     }
 
     fn decide<'l>(

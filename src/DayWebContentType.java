@@ -35,4 +35,51 @@ final class DayWebContentType {
         }
         return new DayWebContentType(mime, encoding);
     }
+
+    /**
+     * The bytes a data: address's payload stands for: each %XX is one byte, and every other
+     * character is itself. URLDecoder is the wrong tool twice over: it turns a literal `+`
+     * (a base64 digit) into a space, and it decodes into text, which mangles any byte that
+     * is not valid UTF-8.
+     */
+    static byte[] percentDecode(String text) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(text.length());
+        byte[] raw = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        for (int i = 0; i < raw.length; i++) {
+            int hi, lo;
+            if (raw[i] == '%' && i + 2 < raw.length && (hi = Character.digit(raw[i + 1], 16)) >= 0 && (lo = Character.digit(raw[i + 2], 16)) >= 0) {
+                out.write(hi << 4 | lo);
+                i += 2;
+            } else {
+                out.write(raw[i]);
+            }
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * The Referer a download's request to `target` carries when `page` asked for it, under the
+     * browsers' default policy (strict-origin-when-cross-origin): the page's address without
+     * its fragment or credentials to its own origin, only the origin to another, and nothing
+     * from an https page to anything less, from a page that is not on the web, or when either
+     * address does not parse. Null means send none.
+     */
+    static String referrer(String page, String target) {
+        try {
+            if (page == null || target == null) return null;
+            java.net.URI from = new java.net.URI(page), to = new java.net.URI(target);
+            if (from.getScheme() == null || to.getScheme() == null || from.getHost() == null || to.getHost() == null) return null;
+            String scheme = from.getScheme().toLowerCase(java.util.Locale.ROOT), other = to.getScheme().toLowerCase(java.util.Locale.ROOT);
+            boolean secure = scheme.equals("https");
+            if (!secure && !scheme.equals("http")) return null;
+            if (secure && !other.equals("https")) return null;
+            String host = from.getHost().toLowerCase(java.util.Locale.ROOT);
+            int port = from.getPort() == (secure ? 443 : 80) ? -1 : from.getPort();
+            int otherPort = to.getPort() == (other.equals("https") ? 443 : 80) ? -1 : to.getPort();
+            String origin = scheme + "://" + host + (port < 0 ? "" : ":" + port);
+            if (!scheme.equals(other) || !host.equalsIgnoreCase(to.getHost()) || port != otherPort) return origin + "/";
+            String path = from.getRawPath(), query = from.getRawQuery();
+            return origin + (path == null || path.isEmpty() ? "/" : path) + (query == null ? "" : "?" + query);
+        } catch (Exception error) { return null; }
+    }
 }

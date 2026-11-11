@@ -314,7 +314,9 @@ fn update(_backend: &mut Qt, h: &QtHandle, patch: &WebPatch) {
             ),
             // WebKit's rule lists; Qt filters through `request_filter`. QtWebEngine asks the
             // user about capture devices through its own permission flow.
-            WebPatch::ContentRules(_) | WebPatch::MediaDecision { .. } => {}
+            WebPatch::ContentRules(_)
+            | WebPatch::MediaDecision { .. }
+            | WebPatch::PromptAnswer { .. } => {}
             WebPatch::Load(url) => day_webview_load(h.0, cstr(url).as_ptr()),
             WebPatch::Back => day_webview_back(h.0),
             WebPatch::Forward => day_webview_forward(h.0),
