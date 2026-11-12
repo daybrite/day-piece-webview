@@ -457,7 +457,8 @@ pub(crate) fn update(state: &Rc<State>, web: &servo::WebView, patch: &WebPatch) 
         // Servo has no rule lists or user scripts; requests are filtered in `load_web_resource`.
         WebPatch::ContentRules(_)
         | WebPatch::ScriptReply { .. }
-        | WebPatch::MediaDecision { .. } => {}
+        | WebPatch::MediaDecision { .. }
+        | WebPatch::PromptAnswer { .. } => {}
         WebPatch::ReportState => {
             state.forget_state();
             state.report_state(web);

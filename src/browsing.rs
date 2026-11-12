@@ -515,11 +515,20 @@ fn downloads_dir() -> Option<PathBuf> {
 /// Show a finished download ([`DownloadEvent::Finished`]'s `location`) in whatever the system
 /// opens it with: the app that handles its type on Android, the share sheet on iOS (which
 /// previews, saves and sends), the default application on a desktop. `false` when nothing
-/// could be asked to open it.
+/// could be asked to open it. The web backend cannot open native downloaded files and returns
+/// `false`.
 pub fn open_download(location: &str) -> bool {
     #[cfg(all(target_os = "android", feature = "material"))]
     return crate::android_impl::open_download(location);
-    #[cfg(not(all(target_os = "android", feature = "material")))]
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = location;
+        false
+    }
+    #[cfg(all(
+        not(target_family = "wasm"),
+        not(all(target_os = "android", feature = "material"))
+    ))]
     {
         let Ok(url) = url::Url::from_file_path(location) else {
             return false;

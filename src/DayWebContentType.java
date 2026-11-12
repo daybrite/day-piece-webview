@@ -82,4 +82,20 @@ final class DayWebContentType {
             return origin + (path == null || path.isEmpty() ? "/" : path) + (query == null ? "" : "?" + query);
         } catch (Exception error) { return null; }
     }
+
+    /**
+     * Chrome's user agent, from WebView's. The two marks of an embedded view go ("; wv" in the
+     * device part and "Version/4.0" before Chrome's own version), and the string is reduced the
+     * way Chrome reduces its own: the system and device become "Android 10; K" and the version
+     * keeps only its major number. What stays is the engine's major version and whether the
+     * device is a phone ("Mobile"), so the string follows the installed WebView and says no
+     * more about the device than Chrome does.
+     */
+    static String browserAgent(String engine) {
+        if (engine == null) return null;
+        return engine
+            .replaceFirst("\\(Linux; Android [^)]*\\)", "(Linux; Android 10; K)")
+            .replace(" Version/4.0 ", " ")
+            .replaceFirst("Chrome/(\\d+)\\.[\\d.]+", "Chrome/$1.0.0.0");
+    }
 }

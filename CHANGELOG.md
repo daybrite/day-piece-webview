@@ -7,6 +7,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 ## Unreleased
 
+- Fix: web builds exclude native file-URL conversion in `open_download`, which returns `false`
+  on the web where opening native downloaded files is unsupported.
 - New: `WebView::user_agent(UserAgent::Browser)` sends the platform browser's user agent
   (Chrome's on Android, Safari's on iOS and macOS), derived on the device from the engine's own,
   where a view otherwise identifies itself as embedded in an app. `UserAgent::Custom` sends any

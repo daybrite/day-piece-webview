@@ -889,19 +889,11 @@ public final class DayWebView {
     /** What each view was asked to tell sites it is (WebView::user_agent), where not the engine's own. */
     private static final Map<WebView, String> USER_AGENTS = new WeakHashMap<>();
 
-    /**
-     * Chrome's user agent, from WebView's: the same string without the two marks of an
-     * embedded view, "; wv" in the device part and "Version/4.0" before Chrome's own version.
-     */
-    static String browserAgent(String engine) {
-        return engine == null ? null : engine.replace("; wv)", ")").replace(" Version/4.0 ", " ");
-    }
-
     /** The view's user agent outside desktop mode; null is the engine's own. */
     private static String userAgent(WebView web) {
         String asked = USER_AGENTS.get(web);
         if (asked == null || asked.isEmpty()) return null;
-        if (asked.equals("\u0001")) return browserAgent(android.webkit.WebSettings.getDefaultUserAgent(web.getContext()));
+        if (asked.equals("\u0001")) return DayWebContentType.browserAgent(android.webkit.WebSettings.getDefaultUserAgent(web.getContext()));
         return asked;
     }
 

@@ -621,7 +621,8 @@ the address, a file name safe to join onto a directory, the type and the announc
 is gone. `cancel_download(id)` stops one, `open_download(location)` shows a finished file in the
 app the system opens it with (the share sheet on iOS), and `remove_download(location)` deletes
 it. `download_support()` says whether a backend ever asks. Without a handler nothing is
-downloaded.
+downloaded. On the web, `open_download` returns `false`: the page cannot open a native
+downloaded file.
 
 Android's WebView only announces a download, so the piece fetches the file itself, with the
 page's cookies, user agent and referrer. A `blob:` address exists only inside its page, which
@@ -683,7 +684,7 @@ An engine's own user agent says the view is embedded in an app: Android's carrie
 `Version/4.0`, and WebKit's stops before Safari's `Version/… Safari/…`. Sites act on it. Some
 refuse sign-in to embedded views, and some push their own app. `.user_agent(UserAgent::Browser)`
 sends what the platform's own browser sends, built from the engine's string on the device, so
-it follows the installed engine and never goes stale: Chrome's on Android, Safari's on iOS and
+it follows the installed engine and never goes stale: Chrome's on Android (reduced as Chrome reduces it, to `Android 10; K` and the major version), Safari's on iOS and
 macOS. `UserAgent::Custom(text)` sends exactly `text`, and `UserAgent::Engine` (the default)
 leaves the engine's own.
 

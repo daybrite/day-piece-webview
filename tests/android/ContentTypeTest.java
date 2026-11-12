@@ -25,6 +25,11 @@ public final class ContentTypeTest {
         }
     }
 
+    private static void checkAgent(String engine, String expected) {
+        String actual = DayWebContentType.browserAgent(engine);
+        if (!expected.equals(actual)) throw new AssertionError(engine + " => " + actual);
+    }
+
     public static void main(String[] args) {
         // Day-News' actual content-type spelling previously rendered HTML as literal source.
         check("text/html; charset=utf-8", "text/html", "utf-8");
@@ -55,6 +60,13 @@ public final class ContentTypeTest {
         checkReferrer("about:blank", "https://a.example/f", null);
         checkReferrer("https://a.example/a b", "https://a.example/f", null);
         checkReferrer(null, "https://a.example/f", null);
+        // WebView's user agent becomes Chrome's reduced one; tablets keep having no "Mobile".
+        checkAgent("Mozilla/5.0 (Linux; Android 16; sdk_gphone64_arm64 Build/BE2A.250530.026.F3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/133.0.6943.137 Mobile Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36");
+        checkAgent("Mozilla/5.0 (Linux; Android 14; Pixel Tablet Build/UP1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/142.0.7444.10 Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36");
+        checkAgent("Mozilla/5.0 (Linux; Android 10; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/156.0.0.0 Mobile Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Mobile Safari/537.36");
         System.out.println("Android resource content-type regressions passed");
     }
 }
