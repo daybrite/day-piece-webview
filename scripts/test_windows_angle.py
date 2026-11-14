@@ -78,6 +78,20 @@ class WindowsAngle(unittest.TestCase):
                     self.assertEqual((profile / name).read_bytes(), name.encode() + b'current')
                     self.assertEqual((cached / name).read_bytes(), name.encode() + b'cached')
 
+    def test_finds_the_per_package_layout_of_cargo_1_100(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory)
+            current = self.make_pair(profile, 'mozangle/0123abcd', suffix=b'current')
+            cached = self.make_pair(profile, 'mozangle-cached', suffix=b'cached')
+            for name in angle.DLLS:
+                os.utime(current / name, (2000, 2000))
+                os.utime(cached / name, (1000, 1000))
+
+            angle.stage(profile)
+
+            for name in angle.DLLS:
+                self.assertEqual((profile / name).read_bytes(), name.encode() + b'current')
+
     def test_selection_keeps_both_dlls_from_the_same_build(self):
         with tempfile.TemporaryDirectory() as directory:
             profile = Path(directory)

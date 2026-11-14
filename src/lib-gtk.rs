@@ -21,8 +21,8 @@ day_core::tls_group! {
     static NODE_IDS: RefCell<HashMap<usize, NodeId>> = RefCell::new(HashMap::new());
 }
 
-/// Extract an inline site's tree from the GResource blob to the user cache dir, once per
-/// process per root (docs/webview.md): WebKitGTK cannot browse a GResource, so the site becomes
+/// Extract an inline site's tree from the `GResource` blob to the user cache dir, once per
+/// process per root (docs/webview.md): WebKitGTK cannot browse a `GResource`, so the site becomes
 /// loose files and the view loads a `file://` URL. Returns the extracted site root.
 ///
 /// Called from `prepare_site()` (the checked, pre-warming route) and lazily from `make` (the
@@ -55,7 +55,7 @@ pub(crate) fn extract_site(root: &str) -> Result<std::path::PathBuf, String> {
     Ok(dest)
 }
 
-/// Recursively copy one GResource directory (`res_dir`, absolute resource path) into `dest`.
+/// Recursively copy one `GResource` directory (`res_dir`, absolute resource path) into `dest`.
 fn extract_tree(res_dir: &str, dest: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
     let children =
@@ -90,8 +90,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             let uri = request.uri().map(|u| u.to_string()).unwrap_or_default();
             let method = request
                 .http_method()
-                .map(|u| u.to_string())
-                .unwrap_or_else(|| "GET".into());
+                .map_or_else(|| "GET".into(), |u| u.to_string());
             let range = request
                 .http_headers()
                 .and_then(|h| h.one("Range"))
@@ -100,7 +99,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             let request = request.clone();
             let (tx, rx) = day_async::oneshot();
             super::resources::background(move || {
-                tx.send(super::resources::respond(provider, &uri, &method, &range))
+                tx.send(super::resources::respond(provider, &uri, &method, &range));
             });
             gtk4::glib::MainContext::default().spawn_local(async move {
                 let Ok(r) = rx.await else { return };
@@ -132,12 +131,8 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
         let network = if p.profile.private {
             webkit6::NetworkSession::new_ephemeral()
         } else {
-            let root = p
-                .profile
-                .directory
-                .as_ref()
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| {
+            let root = p.profile.directory.as_ref().map_or_else(
+                || {
                     gtk4::glib::user_data_dir()
                         .join(
                             gtk4::glib::prgname()
@@ -145,7 +140,9 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                                 .as_str(),
                         )
                         .join("day-web-profiles")
-                });
+                },
+                std::path::PathBuf::from,
+            );
             let root = root.join(&key);
             let data = root.join("data");
             if let Err(error) = std::fs::create_dir_all(&data) {
@@ -209,7 +206,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                 can_go_forward: wv.can_go_forward(),
             });
             if *last_state.borrow() != text {
-                *last_state.borrow_mut() = text.clone();
+                last_state.borrow_mut().clone_from(&text);
                 day_toolkit_gtk::emit(
                     id,
                     Event::Custom {
@@ -263,7 +260,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
         wv.connect_decide_policy(move |_, decision, kind| {
             let Some(action) = decision
                 .downcast_ref::<webkit6::NavigationPolicyDecision>()
-                .and_then(|d| d.navigation_action())
+                .and_then(webkit6::NavigationPolicyDecision::navigation_action)
             else {
                 return false;
             };
@@ -309,7 +306,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                     let action = gtk4::gio::SimpleAction::new(name, None);
                     let url = url.to_string();
                     action.connect_activate(move |_, _| {
-                        day_toolkit_gtk::emit(id, new_tab_event(url.clone(), background))
+                        day_toolkit_gtk::emit(id, new_tab_event(url.clone(), background));
                     });
                     menu.prepend(&webkit6::ContextMenuItem::from_gaction(
                         &action, label, None,
@@ -344,7 +341,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                     let uri = match dtype {
                         PolicyDecisionType::NavigationAction => decision
                             .downcast_ref::<webkit6::NavigationPolicyDecision>()
-                            .and_then(|d| d.navigation_action())
+                            .and_then(webkit6::NavigationPolicyDecision::navigation_action)
                             .and_then(|a| a.request())
                             .and_then(|r| r.uri())
                             .map(|u| u.to_string()),
@@ -352,7 +349,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                         // the request is external by definition.
                         PolicyDecisionType::NewWindowAction => decision
                             .downcast_ref::<webkit6::NavigationPolicyDecision>()
-                            .and_then(|d| d.navigation_action())
+                            .and_then(webkit6::NavigationPolicyDecision::navigation_action)
                             .and_then(|a| a.request())
                             .and_then(|r| r.uri())
                             .map(|u| u.to_string()),
@@ -388,7 +385,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                 }
                 let uri = decision
                     .downcast_ref::<webkit6::NavigationPolicyDecision>()
-                    .and_then(|d| d.navigation_action())
+                    .and_then(webkit6::NavigationPolicyDecision::navigation_action)
                     .and_then(|a| a.request())
                     .and_then(|r| r.uri());
                 let Some(uri) = uri else { return false };

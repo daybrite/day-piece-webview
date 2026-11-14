@@ -235,7 +235,7 @@ fn inline_dir(p: &WebProps) -> String {
     // with its own path taken back off: one parent per segment of `inline_root`.
     let mut base = site;
     for _ in p.inline_root.split('/').filter(|seg| !seg.is_empty()) {
-        let Some(parent) = base.parent().map(|dir| dir.to_path_buf()) else {
+        let Some(parent) = base.parent().map(std::path::Path::to_path_buf) else {
             return String::new();
         };
         base = parent;
@@ -308,8 +308,8 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
         .map_or(0, super::content::register);
     if hooks != 0 || p.content.has_scripts() {
         unsafe {
-            day_webview_xaml_content(handle.0, hooks, cstr(&scripts_json(&p.content)).as_ptr())
-        };
+            day_webview_xaml_content(handle.0, hooks, cstr(&scripts_json(&p.content)).as_ptr());
+        }
     }
     if let Some(labels) = &p.tabs {
         unsafe {
