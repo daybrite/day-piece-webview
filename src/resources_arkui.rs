@@ -90,7 +90,7 @@ unsafe fn take(s: *mut c_char) -> String {
 unsafe extern "C" fn start(scheme: P, request: P, handler: P, intercept: *mut bool) {
     unsafe {
         let mut url = std::ptr::null_mut();
-        OH_ArkWebResourceRequest_GetUrl(request, &mut url);
+        OH_ArkWebResourceRequest_GetUrl(request, &raw mut url);
         let url = take(url);
         let token = OH_ArkWebSchemeHandler_GetUserData(scheme) as usize;
         let Some((id, hooks)) = handlers().lock().ok().and_then(|h| h.get(&token).cloned()) else {
@@ -114,15 +114,15 @@ unsafe extern "C" fn start(scheme: P, request: P, handler: P, intercept: *mut bo
         }
         *intercept = true;
         let mut method = std::ptr::null_mut();
-        OH_ArkWebResourceRequest_GetMethod(request, &mut method);
+        OH_ArkWebResourceRequest_GetMethod(request, &raw mut method);
         let method = take(method);
         let mut headers = std::ptr::null_mut();
-        OH_ArkWebResourceRequest_GetRequestHeaders(request, &mut headers);
+        OH_ArkWebResourceRequest_GetRequestHeaders(request, &raw mut headers);
         let mut range = String::new();
         if !headers.is_null() {
             for i in 0..OH_ArkWebRequestHeaderList_GetSize(headers) {
                 let (mut k, mut v) = (std::ptr::null_mut(), std::ptr::null_mut());
-                OH_ArkWebRequestHeaderList_GetHeader(headers, i, &mut k, &mut v);
+                OH_ArkWebRequestHeaderList_GetHeader(headers, i, &raw mut k, &raw mut v);
                 let (k, v) = (take(k), take(v));
                 if k.eq_ignore_ascii_case("range") {
                     range = v;
@@ -148,8 +148,8 @@ unsafe extern "C" fn start(scheme: P, request: P, handler: P, intercept: *mut bo
             }
             let h = pending.handler as P;
             let mut response = std::ptr::null_mut();
-            OH_ArkWeb_CreateResponse(&mut response);
-            OH_ArkWebResponse_SetStatus(response, r.status as i32);
+            OH_ArkWeb_CreateResponse(&raw mut response);
+            OH_ArkWebResponse_SetStatus(response, i32::from(r.status));
             // ArkWeb expects a bare MIME type, not an HTTP Content-Type value. Passing
             // "text/html; charset=utf-8" here makes the reader display literal HTML.
             let (mime, charset) = super::resource_content_type::parse(&r.mime);
@@ -185,16 +185,16 @@ unsafe extern "C" fn start(scheme: P, request: P, handler: P, intercept: *mut bo
         });
     }
 }
-/// WebView::request_filter, on ArkWeb's IO thread: `true` when the request was blocked and
+/// `WebView::request_filter`, on ArkWeb's IO thread: `true` when the request was blocked and
 /// answered here with an empty 403. ArkWeb names the resource type (Chromium's numbering) and the
 /// requesting frame.
 unsafe fn filter(hooks: &crate::RequestHooks, request: P, handler: P, url: &str) -> bool {
     unsafe {
         let mut method = std::ptr::null_mut();
-        OH_ArkWebResourceRequest_GetMethod(request, &mut method);
+        OH_ArkWebResourceRequest_GetMethod(request, &raw mut method);
         let method = take(method);
         let mut frame = std::ptr::null_mut();
-        OH_ArkWebResourceRequest_GetFrameUrl(request, &mut frame);
+        OH_ArkWebResourceRequest_GetFrameUrl(request, &raw mut frame);
         let frame = take(frame);
         let main_frame = OH_ArkWebResourceRequest_IsMainFrame(request);
         let kind =
@@ -219,7 +219,7 @@ unsafe fn filter(hooks: &crate::RequestHooks, request: P, handler: P, url: &str)
             }),
         );
         let mut response = std::ptr::null_mut();
-        OH_ArkWeb_CreateResponse(&mut response);
+        OH_ArkWeb_CreateResponse(&raw mut response);
         OH_ArkWebResponse_SetStatus(response, 403);
         OH_ArkWebResponse_SetMimeType(response, c"text/plain".as_ptr());
         OH_ArkWebResourceHandler_DidReceiveResponse(handler, response);
@@ -268,7 +268,7 @@ pub(crate) fn install(
         let filtered = hooks.is_some();
         handlers().lock().ok()?.insert(token, (id, hooks));
         let mut handler = std::ptr::null_mut();
-        OH_ArkWeb_CreateSchemeHandler(&mut handler);
+        OH_ArkWeb_CreateSchemeHandler(&raw mut handler);
         OH_ArkWebSchemeHandler_SetUserData(handler, token as P);
         OH_ArkWebSchemeHandler_SetOnRequestStart(handler, start);
         OH_ArkWebSchemeHandler_SetOnRequestStop(handler, stop);

@@ -1,4 +1,4 @@
-//! Public WKWebsiteDataStore profiles, shared by macOS WK hosts and UIKit.
+//! Public `WKWebsiteDataStore` profiles, shared by macOS WK hosts and UIKit.
 use super::*;
 use block2::RcBlock;
 use objc2::{msg_send, rc::Retained, runtime::AnyObject};
@@ -44,7 +44,7 @@ pub(crate) fn configure(config: &AnyObject, profile: &WebProfile) {
         let _: () = msg_send![config, setWebsiteDataStore: &*store];
     }
 }
-/// The WKWebView properties [`page_state`] reads, each KVO-observable. `URL` follows
+/// The `WKWebView` properties [`page_state`] reads, each KVO-observable. `URL` follows
 /// same-document changes (pushState, fragments) as well as committed navigations.
 const STATE_KEYS: [&str; 6] = [
     "URL",
@@ -97,7 +97,7 @@ pub(crate) fn set_page_zoom(web: &AnyObject, zoom: f64) {
 ///   engine's recommendation (`WKContentModeRecommended`, 0), which is already the desktop site on
 ///   a Mac and an iPad. WebKit sends a desktop user agent and lays the page out at desktop width.
 /// - `allowsContentJavaScript` stops the scripts the page brings. It does not stop the app's:
-///   `evaluateJavaScript` and user scripts still run (WWDC 2020, "Discover WKWebView
+///   `evaluateJavaScript` and user scripts still run (WWDC 2020, "Discover `WKWebView`
 ///   enhancements"), so `JsHandle::eval`, page state and the tab script keep working. Public from
 ///   macOS 11 and iOS 14; an older WebKit keeps scripts on.
 pub(crate) fn webpage_preferences(preferences: &AnyObject, desktop: bool, javascript: bool) {
@@ -112,7 +112,7 @@ pub(crate) fn webpage_preferences(preferences: &AnyObject, desktop: bool, javasc
     }
 }
 
-/// The page state WKWebView holds right now: shared by the KVO reports and the
+/// The page state `WKWebView` holds right now: shared by the KVO reports and the
 /// `navigation_state` data request.
 pub(crate) fn page_state(web: &AnyObject) -> PageState {
     unsafe {
@@ -210,7 +210,7 @@ fn snapshot(web: &AnyObject, width: f64, done: Rc<dyn Fn(String)>) {
 
 #[cfg(not(target_os = "macos"))]
 unsafe extern "C" {
-    /// UIKit's PNG encoder (returns an autoreleased NSData, or nil).
+    /// UIKit's PNG encoder (returns an autoreleased `NSData`, or nil).
     fn UIImagePNGRepresentation(image: *mut AnyObject) -> *mut AnyObject;
 }
 

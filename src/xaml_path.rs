@@ -5,7 +5,7 @@ use std::path::Path;
 
 /// WebView2's folder mapping needs a DOS/UNC path, not the extended-length spelling returned
 /// by Windows `canonicalize`. Passing `\\?\D:\...` through to its local-content loader gives
-/// the page ERR_INVALID_URL even though the directory exists and the mapping call can succeed.
+/// the page `ERR_INVALID_URL` even though the directory exists and the mapping call can succeed.
 pub(crate) fn mapping_folder(path: &Path) -> String {
     let text = path.to_string_lossy();
     if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {

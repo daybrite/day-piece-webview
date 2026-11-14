@@ -69,7 +69,7 @@ fn text(s: *const c_char) -> String {
     }
 }
 
-/// WebView::request_filter, from `WebResourceRequested` on the UI thread: `true` blocks.
+/// `WebView::request_filter`, from `WebResourceRequested` on the UI thread: `true` blocks.
 /// WebView2 names the resource context but not the page, which the hooks track.
 extern "C" fn on_filter(
     hooks: u64,
@@ -180,8 +180,8 @@ extern "C" fn on_url(id: u64, url: *const c_char) {
     day_toolkit_winui::emit(NodeId(id), Event::custom("webview:url", s));
 }
 
-/// An inline site's navigation left the site: the shim CANCELLED it (NavigationStarting /
-/// NewWindowRequested) and reports it here; the front-end runs the app's `LinkPolicy`.
+/// An inline site's navigation left the site: the shim CANCELLED it (`NavigationStarting` /
+/// `NewWindowRequested`) and reports it here; the front-end runs the app's `LinkPolicy`.
 extern "C" fn on_link(id: u64, url: *const c_char) {
     if url.is_null() {
         return;
@@ -270,7 +270,7 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
         );
     }
     // A provider's requests are intercepted by id; only its own site is policed (by its base).
-    let provider = p.resources.as_ref().map(ResourceProvider::id).unwrap_or(0);
+    let provider = p.resources.as_ref().map_or(0, ResourceProvider::id);
     let resource_prefix = p
         .resources
         .as_ref()
@@ -305,8 +305,7 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
         .content
         .requests
         .as_ref()
-        .map(super::content::register)
-        .unwrap_or(0);
+        .map_or(0, super::content::register);
     if hooks != 0 || p.content.has_scripts() {
         unsafe {
             day_webview_xaml_content(handle.0, hooks, cstr(&scripts_json(&p.content)).as_ptr())
@@ -325,6 +324,10 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
     handle
 }
 
+#[expect(
+    clippy::match_same_arms,
+    reason = "the arms carry separate comments on why each patch does nothing here"
+)]
 fn update(_backend: &mut Xaml, h: &WinHandle, patch: &WebPatch) {
     unsafe {
         match patch {
@@ -336,7 +339,7 @@ fn update(_backend: &mut Xaml, h: &WinHandle, patch: &WebPatch) {
             WebPatch::ForceReload => day_webview_xaml_force_reload(h.0),
             WebPatch::ReportState => day_webview_xaml_report_state(h.0),
             WebPatch::Eval { req, script } => {
-                day_webview_xaml_eval(h.0, *req, cstr(script).as_ptr())
+                day_webview_xaml_eval(h.0, *req, cstr(script).as_ptr());
             }
             WebPatch::Zoom(zoom) => day_webview_xaml_set_zoom(h.0, *zoom),
             // WebView2 already presents itself as desktop Edge.

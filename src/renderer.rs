@@ -83,6 +83,12 @@ pub mod surface {
 
     /// Register on the running Day UI thread, before building webviews. Re-registering the
     /// same descriptor is harmless; replacing an active renderer is rejected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError::WrongThread`] off the UI thread,
+    /// [`RegistrationError::ReservedRenderer`] for the toolkit's own renderer, and
+    /// [`RegistrationError::AlreadyRegistered`] when another host holds the renderer.
     pub fn register(renderer: WebRenderer, host: &'static Host) -> Result<(), RegistrationError> {
         if !day_core::has_tree() {
             return Err(RegistrationError::WrongThread);
@@ -171,6 +177,11 @@ pub mod appkit {
 
     /// Register once before creating views. Re-registering the same static host is harmless;
     /// replacing it is rejected so existing views retain their dispatch and capability contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError::ReservedRenderer`] for the toolkit's own renderer, and
+    /// [`RegistrationError::AlreadyRegistered`] when another host holds the renderer.
     pub fn register(
         _mtm: MainThreadMarker,
         renderer: WebRenderer,
@@ -224,7 +235,7 @@ pub mod appkit {
                 install(&slot, &SECOND),
                 Err(RegistrationError::AlreadyRegistered)
             );
-            assert!(std::ptr::eq(*slot.get().unwrap(), &FIRST));
+            assert!(std::ptr::eq(*slot.get().unwrap(), &raw const FIRST));
             assert_eq!(slot.get().unwrap().capabilities, CAPS);
         }
     }
@@ -285,6 +296,10 @@ pub fn data_request(script: &str) -> Option<serde_json::Value> {
         .map(|request| serde_json::from_str(request).unwrap_or_default())
 }
 /// Encode a successful structured data response.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "callers pass the `json!` value they build in place"
+)]
 pub fn success_json(value: serde_json::Value) -> String {
     format!("1{}{value}", crate::SEP)
 }

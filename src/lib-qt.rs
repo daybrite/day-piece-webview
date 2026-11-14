@@ -146,7 +146,7 @@ fn text(s: *const c_char) -> String {
     }
 }
 
-/// WebView::request_filter, from the page's `QWebEngineUrlRequestInterceptor` on the UI thread:
+/// `WebView::request_filter`, from the page's `QWebEngineUrlRequestInterceptor` on the UI thread:
 /// `true` blocks. Qt names the resource type (Chromium's numbering) and the page that issued
 /// the request (`firstPartyUrl`).
 extern "C" fn on_filter(
@@ -250,8 +250,7 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
         .content
         .requests
         .as_ref()
-        .map(super::content::register)
-        .unwrap_or(0);
+        .map_or(0, super::content::register);
     let has_content = hooks != 0 || p.content.has_scripts();
     let handle = QtHandle(unsafe {
         day_webview_new(
@@ -290,7 +289,7 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
                 cstr(&labels.foreground).as_ptr(),
                 cstr(&labels.background).as_ptr(),
                 on_tab,
-            )
+            );
         };
     }
     if p.transparent {
@@ -305,6 +304,10 @@ day_core::tls_group! {
         std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
+#[expect(
+    clippy::match_same_arms,
+    reason = "the arms carry separate comments on why each patch does nothing here"
+)]
 fn update(_backend: &mut Qt, h: &QtHandle, patch: &WebPatch) {
     unsafe {
         match patch {

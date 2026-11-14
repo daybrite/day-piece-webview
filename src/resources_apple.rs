@@ -1,6 +1,6 @@
 // Copyright © The Daybrite Project
 // SPDX-License-Identifier: MPL-2.0
-//! WKURLSchemeHandler shared by AppKit, UIKit and macOS GTK.
+//! `WKURLSchemeHandler` shared by AppKit, UIKit and macOS GTK.
 use super::resources;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
@@ -24,10 +24,10 @@ define_class!(
             let request:Retained<NSURLRequest> = unsafe {msg_send![task, request]};
             let Some(url)=request.URL() else {return};
             let text=url.absoluteString().map(|s|s.to_string()).unwrap_or_default();
-            let method=request.HTTPMethod().map(|s|s.to_string()).unwrap_or_else(||"GET".into());
+            let method=request.HTTPMethod().map_or_else(||"GET".into(), |s|s.to_string());
             let range=request.valueForHTTPHeaderField(&NSString::from_str("Range")).map(|s|s.to_string()).unwrap_or_default();
-            let key=task as *const _ as usize;
-            let task=unsafe { Retained::retain(task as *const _ as *mut AnyObject) }.unwrap();
+            let key=std::ptr::from_ref(task) as usize;
+            let task=unsafe { Retained::retain(std::ptr::from_ref::<objc2::runtime::AnyObject>(task).cast_mut()) }.unwrap();
             let id=self.ivars().id;
             let (tx,rx)=day_async::oneshot();
             resources::background(move ||tx.send(resources::respond(id,&text,&method,&range)));
@@ -55,7 +55,7 @@ define_class!(
         }
         #[unsafe(method(webView:stopURLSchemeTask:))]
         fn stop(&self,_web:&AnyObject,task:&AnyObject) {
-            let handle=self.ivars().tasks.borrow_mut().remove(&(task as *const _ as usize));
+            let handle=self.ivars().tasks.borrow_mut().remove(&(std::ptr::from_ref(task) as usize));
             if let Some(handle)=handle { handle.abort(); }
         }
     }

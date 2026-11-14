@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The browser duties (docs/webview.md) on WebKit, shared by the UIKit and macOS backends: the
-//! questions WKWebView asks its delegates, each held until the app answers
+//! questions `WKWebView` asks its delegates, each held until the app answers
 //! (`WebPatch::PromptAnswer`), failed loads, and downloads.
 //!
-//! A backend's delegate class forwards its WKUIDelegate and WKNavigationDelegate methods here
+//! A backend's delegate class forwards its `WKUIDelegate` and `WKNavigationDelegate` methods here
 //! with its toolkit's event sender. Everything runs on the main thread.
 
 use std::cell::{Cell, RefCell};
@@ -33,13 +33,13 @@ pub(crate) struct Asking {
     pub view: usize,
 }
 
-/// WKNavigationActionPolicy and WKNavigationResponsePolicy: Cancel = 0, Allow = 1, and
+/// `WKNavigationActionPolicy` and `WKNavigationResponsePolicy`: Cancel = 0, Allow = 1, and
 /// Download = 2 (iOS 14.5, macOS 11.3).
 pub(crate) const POLICY_CANCEL: isize = 0;
 pub(crate) const POLICY_ALLOW: isize = 1;
 pub(crate) const POLICY_DOWNLOAD: isize = 2;
 
-/// NSURLSessionAuthChallengeDisposition.
+/// `NSURLSessionAuthChallengeDisposition`.
 const CHALLENGE_USE_CREDENTIAL: isize = 0;
 const CHALLENGE_DEFAULT: isize = 1;
 
@@ -92,7 +92,7 @@ impl Pending {
             Pending::Prompt(done, fallback) => {
                 if answer.ok {
                     let text = NSString::from_str(answer.text.as_deref().unwrap_or(&fallback));
-                    done.call((Retained::as_ptr(&text) as *mut NSString,));
+                    done.call((Retained::as_ptr(&text).cast_mut(),));
                 } else {
                     done.call((std::ptr::null_mut(),));
                 }
@@ -108,29 +108,28 @@ impl Pending {
                     };
                     done.call((
                         CHALLENGE_USE_CREDENTIAL,
-                        Retained::as_ptr(&credential) as *mut AnyObject,
+                        Retained::as_ptr(&credential).cast_mut(),
                     ));
                 }
                 // Going on without a credential loads the server's own "unauthorized" page.
                 _ => done.call((CHALLENGE_DEFAULT, std::ptr::null_mut())),
             },
-            Pending::Destination(done) => match answer.paths.first().filter(|_| answer.ok) {
-                Some(path) => {
+            Pending::Destination(done) => {
+                if let Some(path) = answer.paths.first().filter(|_| answer.ok) {
                     let url = NSURL::fileURLWithPath(&NSString::from_str(path));
                     DOWNLOADS.with(|d| {
                         if let Some(download) = d.borrow_mut().iter_mut().find(|x| x.id == id) {
                             download.path = Some(path.clone());
                         }
                     });
-                    done.call((Retained::as_ptr(&url) as *mut NSURL,));
+                    done.call((Retained::as_ptr(&url).cast_mut(),));
                     watch_downloads();
-                }
-                None => {
+                } else {
                     // A nil destination cancels the download, which reports nothing further.
                     DOWNLOADS.with(|d| d.borrow_mut().retain(|x| x.id != id));
                     done.call((std::ptr::null_mut(),));
                 }
-            },
+            }
             Pending::ProviderFile { provider, url } => {
                 let Some(path) = answer.paths.first().filter(|_| answer.ok) else {
                     return;
@@ -177,6 +176,10 @@ thread_local! {
 struct Download {
     /// `0` until WebKit asks where the file goes, which is when the app first hears of it.
     id: u64,
+    #[expect(
+        clippy::struct_field_names,
+        reason = "the field holds the `WKDownload` this record tracks"
+    )]
     download: Retained<AnyObject>,
     /// The node whose view started it, which is asked for the destination, and its toolkit's
     /// event sender.
@@ -280,7 +283,7 @@ define_class!(
     impl DownloadDelegate {
         #[unsafe(method(download:decideDestinationUsingResponse:suggestedFilename:completionHandler:))]
         fn destination(&self, download: &AnyObject, response: &AnyObject, name: &NSString, done: &block2::DynBlock<dyn Fn(*mut NSURL)>) {
-            let key = download as *const AnyObject;
+            let key = std::ptr::from_ref::<AnyObject>(download);
             let node = DOWNLOADS.with(|d| d.borrow().iter().find(|x| Retained::as_ptr(&x.download) == key).map(|x| (x.node, x.emit)));
             let Some((node, emit)) = node else { done.call((std::ptr::null_mut(),)); return; };
             let url: Option<Retained<NSURL>> = unsafe { msg_send![response, URL] };
@@ -305,7 +308,7 @@ define_class!(
 
         #[unsafe(method(downloadDidFinish:))]
         fn finished(&self, download: &AnyObject) {
-            let key = download as *const AnyObject;
+            let key = std::ptr::from_ref::<AnyObject>(download);
             let location = DOWNLOADS
                 .with(|d| d.borrow().iter().find(|x| Retained::as_ptr(&x.download) == key).and_then(|x| x.path.clone()))
                 .unwrap_or_default();
@@ -343,7 +346,8 @@ pub(crate) fn adopt_download(emit: Emit, download: &AnyObject, node: NodeId) {
     });
     let _: () = unsafe { msg_send![download, setDelegate: &*delegate] };
     // SAFETY: a live WKDownload handed to its delegate callback.
-    let download = unsafe { Retained::retain(download as *const AnyObject as *mut AnyObject) };
+    let download =
+        unsafe { Retained::retain(std::ptr::from_ref::<AnyObject>(download).cast_mut()) };
     if let Some(download) = download {
         DOWNLOADS.with(|d| {
             d.borrow_mut().push(Download {
@@ -352,14 +356,14 @@ pub(crate) fn adopt_download(emit: Emit, download: &AnyObject, node: NodeId) {
                 node,
                 emit,
                 path: None,
-            })
+            });
         });
     }
 }
 
 /// A download ended: tell its callback, forget it, and remove what a failure left behind.
 fn end_download(download: &AnyObject, event: super::DownloadEvent) {
-    let key = download as *const AnyObject;
+    let key = std::ptr::from_ref::<AnyObject>(download);
     let ended = DOWNLOADS.with(|d| {
         let mut all = d.borrow_mut();
         all.iter()
@@ -379,7 +383,7 @@ fn end_download(download: &AnyObject, event: super::DownloadEvent) {
     }
 }
 
-/// Report each running download's progress five times a second while any runs. NSProgress
+/// Report each running download's progress five times a second while any runs. `NSProgress`
 /// changes on WebKit's own threads; reading it from a main-thread timer keeps every callback on
 /// the main thread.
 fn watch_downloads() {
@@ -436,7 +440,7 @@ pub(crate) fn cancel_download(id: u64) {
     let _: () = unsafe { msg_send![&download, cancel: &*done] };
 }
 
-/// Whether this system has WKDownload (iOS 14.5, macOS 11.3).
+/// Whether this system has `WKDownload` (iOS 14.5, macOS 11.3).
 pub(crate) fn downloads_available() -> bool {
     objc2::runtime::AnyClass::get(c"WKDownload").is_some()
 }
@@ -503,7 +507,7 @@ pub(crate) fn challenge(
                 unsafe { msg_send![objc2::class!(NSURLCredential), credentialForTrust: trust] };
             done.call((
                 CHALLENGE_USE_CREDENTIAL,
-                Retained::as_ptr(&credential) as *mut AnyObject,
+                Retained::as_ptr(&credential).cast_mut(),
             ));
         } else {
             done.call((CHALLENGE_DEFAULT, std::ptr::null_mut()));

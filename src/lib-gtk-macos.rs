@@ -1,6 +1,6 @@
 // Copyright © The Daybrite Project
 // SPDX-License-Identifier: MPL-2.0
-//! WKWebView hosted in the GTK window's Cocoa content view. A GTK allocation anchor owns
+//! `WKWebView` hosted in the GTK window's Cocoa content view. A GTK allocation anchor owns
 //! its lifetime; frame-clock ticks align the native child with that anchor, and unmap detaches it.
 use super::*;
 use day_spec::NodeId;
@@ -62,17 +62,17 @@ fn make(_: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                 && let Some(content) = window.contentView()
             {
                 if unsafe { native.superview() }.is_none() {
-                    content.addSubview(&native)
+                    content.addSubview(&native);
                 }
                 let height = content.bounds().size.height;
                 let y = if content.isFlipped() {
-                    bounds.y() as f64
+                    f64::from(bounds.y())
                 } else {
-                    height - bounds.y() as f64 - bounds.height() as f64
+                    height - f64::from(bounds.y()) - f64::from(bounds.height())
                 };
                 native.setFrame(NSRect::new(
-                    NSPoint::new(bounds.x() as f64, y),
-                    NSSize::new(bounds.width() as f64, bounds.height() as f64),
+                    NSPoint::new(f64::from(bounds.x()), y),
+                    NSSize::new(f64::from(bounds.width()), f64::from(bounds.height())),
                 ));
             }
         }
@@ -223,13 +223,13 @@ fn install_scroll_bridge(anchor: &gtk4::DrawingArea, view: Retained<NSView>) {
 
 fn update(_: &mut Gtk, w: &gtk4::Widget, p: &WebPatch) {
     if let Some(v) = VIEWS.with(|m| m.borrow().get(&key(w)).cloned()) {
-        super::macos_web::update(&v, p)
+        super::macos_web::update(&v, p);
     }
 }
 fn release(_: &mut Gtk, w: &gtk4::Widget) {
     if let Some(v) = VIEWS.with(|m| m.borrow_mut().remove(&key(w))) {
         v.removeFromSuperview();
-        super::macos_web::release(&v)
+        super::macos_web::release(&v);
     }
 }
 day_pieces::renderer!(day_toolkit_gtk::RENDERERS,Gtk,kind:KIND,props:WebProps,patch:WebPatch,make:make,update:update,measure:day_pieces::fill_measure,release:release);

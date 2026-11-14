@@ -27,7 +27,7 @@ pub(crate) fn extract_site(root: &str) -> Result<std::path::PathBuf, String> {
     Ok(dest)
 }
 
-/// Recursively copy one GResource directory (`res_dir`, absolute resource path) into `dest`.
+/// Recursively copy one `GResource` directory (`res_dir`, absolute resource path) into `dest`.
 fn extract_tree(res_dir: &str, dest: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
     let children =

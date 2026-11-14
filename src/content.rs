@@ -16,10 +16,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use day_spec::Support;
 
 /// Decides whether a web view may load a request. Engines with a per-request hook (Android
-/// WebView, WebView2, QtWebEngine, ArkWeb) call it for every request a page makes, before the
+/// `WebView`, WebView2, QtWebEngine, ArkWeb) call it for every request a page makes, before the
 /// request leaves the device.
 ///
-/// It runs on whatever thread the engine calls back on: a WebView background thread on
+/// It runs on whatever thread the engine calls back on: a `WebView` background thread on
 /// Android, the UI thread on WebView2 and Qt, ArkWeb's IO thread. Keep it fast, in memory and
 /// free of locks the UI thread holds, and never touch Day's reactive graph from it. Every
 /// request of every page waits for the answer.
@@ -94,7 +94,7 @@ pub enum ResourceKind {
 }
 
 impl ResourceKind {
-    /// The kind an engine without request types (Android WebView) implies, from the request's
+    /// The kind an engine without request types (Android `WebView`) implies, from the request's
     /// `Accept` header and the URL's extension. The header wins where it is specific: browsers
     /// send `text/html` for documents, `text/css` for style sheets and `image/…` for images,
     /// while scripts and `fetch` both send `*/*`, so those fall back to the extension.
@@ -131,10 +131,9 @@ impl ResourceKind {
     /// The kind a URL's file extension suggests, or [`ResourceKind::Unknown`].
     fn from_extension(url: &str) -> ResourceKind {
         let path = url.split(['?', '#']).next().unwrap_or_default();
-        let path = path
-            .split_once("://")
-            .map(|(_, rest)| rest.split_once('/').map(|(_, p)| p).unwrap_or(""))
-            .unwrap_or(path);
+        let path = path.split_once("://").map_or(path, |(_, rest)| {
+            rest.split_once('/').map_or("", |(_, p)| p)
+        });
         let last = path.rsplit('/').next().unwrap_or_default();
         let Some((_, ext)) = last.rsplit_once('.') else {
             return ResourceKind::Unknown;
@@ -179,6 +178,10 @@ impl ResourceKind {
 
     /// The kind a WebView2 `COREWEBVIEW2_WEB_RESOURCE_CONTEXT` names.
     #[allow(dead_code)]
+    #[expect(
+        clippy::match_same_arms,
+        reason = "one arm per WebView2 context value, in numeric order"
+    )]
     pub(crate) fn from_webview2(context: i32) -> ResourceKind {
         match context {
             1 => ResourceKind::Document,
@@ -289,6 +292,7 @@ pub enum Frames {
 /// A script the view runs in every page it loads ([`crate::WebView::user_script`]), in the
 /// page's own JavaScript world.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use]
 pub struct UserScript {
     /// The script.
     pub source: Arc<str>,
@@ -472,7 +476,7 @@ impl std::fmt::Debug for RequestHooks {
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// URLs in the crate's resource namespace, in every form
@@ -809,7 +813,7 @@ pub(crate) fn parse_envelope(text: &str) -> Option<(String, u64, String)> {
 }
 
 /// Whether [`crate::WebView::request_filter`] runs on this build's engine. `Native` where the
-/// engine calls the app for each request (Android WebView, WebView2, QtWebEngine, ArkWeb);
+/// engine calls the app for each request (Android `WebView`, WebView2, QtWebEngine, ArkWeb);
 /// WebKit has no such hook (use [`content_rules_support`]), and an iframe sees nothing.
 pub fn request_filter_support() -> Support {
     if cfg!(any(
@@ -830,7 +834,7 @@ pub fn blocked_report_support() -> Support {
 }
 
 /// Whether [`crate::WebView::content_rules`] applies: the WebKit engines (AppKit, UIKit, GTK on
-/// macOS through WKWebView, WebKitGTK on Linux).
+/// macOS through `WKWebView`, WebKitGTK on Linux).
 pub fn content_rules_support() -> Support {
     if cfg!(any(
         all(
@@ -1087,6 +1091,10 @@ mod tests {
         };
         let sink = Arc::new(BlockedSink::default());
         let hooks = RequestHooks::new(Arc::new(filter), Some(sink.clone()), true);
+        #[expect(
+            clippy::items_after_statements,
+            reason = "the helper sits beside the test steps that use it"
+        )]
         fn request(url: &str, kind: ResourceKind, main_frame: bool) -> RequestInfo<'_> {
             RequestInfo {
                 url,

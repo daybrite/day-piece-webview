@@ -108,6 +108,11 @@ fn zoom_percent(zoom: f64) -> u32 {
     (zoom * 100.0).round() as u32
 }
 
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "the renderer table fixes this signature")]
+#[expect(
+    clippy::match_same_arms,
+    reason = "the arms carry separate comments on why each patch has no command here"
+)]
 fn update(_backend: &mut ArkUi, h: &AHandle, patch: &WebPatch) {
     // Evaluation (docs/webview-eval.md): `req` rides in front of the script, 0x1F-separated;
     // the ArkTS side runs `runJavaScript`, normalizes the reply, and answers on `pieceEvent`

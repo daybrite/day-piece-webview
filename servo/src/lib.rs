@@ -55,6 +55,11 @@ mod surface;
 
 /// Register the adapter without initializing Servo. Repeated calls are harmless.
 /// Returns an error on unsupported builds or if another adapter has claimed the renderer.
+///
+/// # Errors
+///
+/// Returns [`RegistrationError::Unsupported`] on a build without a supported host, or the error of
+/// the host's own registration.
 pub fn register() -> Result<(), RegistrationError> {
     #[cfg(all(feature = "servo", feature = "appkit", target_os = "macos"))]
     {

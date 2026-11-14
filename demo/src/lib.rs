@@ -201,10 +201,10 @@ struct BrowserTabs {
 }
 impl BrowserTabs {
     fn open(self, url: String, foreground: bool) {
-        let private = self
-            .active()
-            .map(|view| view.private.get_untracked())
-            .unwrap_or_else(|| day::prefs::get("demo.web.incognito").as_deref() == Some("true"));
+        let private = self.active().map_or_else(
+            || day::prefs::get("demo.web.incognito").as_deref() == Some("true"),
+            |view| view.private.get_untracked(),
+        );
         self.open_profile(url, foreground, private);
     }
     fn open_profile(self, url: String, foreground: bool, private: bool) {
@@ -277,6 +277,10 @@ impl BrowserTabs {
         }
     }
 }
+#[allow(
+    clippy::large_types_passed_by_value,
+    reason = "a `Copy` bundle of signal handles, which is under the size limit on wasm32"
+)]
 fn canonical_tab_url(browser: Browser, url: &str) -> String {
     let source = browser.source.get_untracked();
     if source == Source::Home
@@ -314,8 +318,8 @@ fn canonical_tab_url(browser: Browser, url: &str) -> String {
 fn fixture_path(url: &str) -> Option<String> {
     let url = url::Url::parse(url).ok()?;
     let host = url.host_str()?;
-    let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
-    let query = url.query().map(|q| format!("?{q}")).unwrap_or_default();
+    let port = url.port().map_or_default(|p| format!(":{p}"));
+    let query = url.query().map_or_default(|q| format!("?{q}"));
     Some(format!(
         "{}/{host}{port}{}{query}",
         url.scheme(),
@@ -328,6 +332,10 @@ fn fixture_address(base: &str, url: &str) -> Option<String> {
     let (scheme, rest) = url.strip_prefix(base)?.split_once('/')?;
     matches!(scheme, "http" | "https").then(|| format!("{scheme}://{rest}"))
 }
+#[allow(
+    clippy::large_types_passed_by_value,
+    reason = "a `Copy` bundle of signal handles, which is under the size limit on wasm32"
+)]
 fn tab_url(browser: Browser) -> String {
     let location = browser.location.get_untracked();
     if location.is_empty() {
@@ -342,7 +350,7 @@ fn resource_page_path(url: &str) -> Option<String> {
     percent_encoding::percent_decode_str(path)
         .decode_utf8()
         .ok()
-        .map(|path| path.into_owned())
+        .map(std::borrow::Cow::into_owned)
 }
 /// One widget's id per tab: the first tab keeps the plain family, every other tab names
 /// the same control through its keyed sibling (`webview_settings` / `webview_settings_tab:2`).
@@ -387,8 +395,7 @@ pub fn root() -> impl Piece {
     tabs.open(String::new(), true);
     app_menu(move || {
         tabs.active()
-            .map(|commands| browser_menus(tabs, commands))
-            .unwrap_or_default()
+            .map_or_default(|commands| browser_menus(tabs, commands))
     });
     column((document_tabs(
         tabs.tabs,
@@ -483,6 +490,10 @@ fn tab_controls(tabs: BrowserTabs, tab_number: u64) -> impl Piece {
     .spacing(6.0)
     .padding(6.0)
 }
+#[expect(
+    clippy::large_types_passed_by_value,
+    reason = "a `Copy` bundle of signal handles, passed the way the handles are"
+)]
 fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry> {
     let BrowserCommands {
         renderer,
@@ -603,6 +614,10 @@ fn browser_menus(tabs: BrowserTabs, commands: BrowserCommands) -> Vec<MenuEntry>
         ),
     ]
 }
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the keyed builder hands each page its own key"
+)]
 fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
     let tab_number = tab_key.parse::<u64>().unwrap_or(1);
     let initial = tabs
@@ -674,8 +689,8 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
     );
     let commands = BrowserCommands {
         renderer,
-        private,
         browser,
+        private,
         generation,
         tools,
         address_focus,
@@ -687,7 +702,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
     Scope::current().on_cleanup(move || {
         tabs.views.update(|views| {
             views.remove(&cleanup_key);
-        })
+        });
     });
     let title_key = tab_key.clone();
     watch(
@@ -973,7 +988,7 @@ fn browser_page(tabs: BrowserTabs, tab_key: String) -> impl Piece {
                                 canonical_tab_url(browser, &request.url),
                                 !request.background,
                                 private,
-                            )
+                            );
                         },
                     )
                     .js(browser.js)
@@ -1242,7 +1257,7 @@ fn preferences(tabs: BrowserTabs, native_tabs: Signal<bool>) -> impl Piece {
             );
         },
     );
-    let active_renderer = move || tabs.active().map(|c| c.renderer.get()).unwrap_or_default();
+    let active_renderer = move || tabs.active().map_or_default(|c| c.renderer.get());
     let clearing = Signal::new(false);
     let result = Signal::new(String::new());
     watch(
@@ -1344,6 +1359,14 @@ fn support_label(answer: Support, id: day::ElementId) -> impl Piece {
     .id(id)
 }
 
+#[allow(
+    clippy::large_types_passed_by_value,
+    reason = "a `Copy` bundle of signal handles, which is under the size limit on wasm32"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the caller hands over the start address it has just built"
+)]
 fn resource_site(
     browser: Browser,
     private: bool,
@@ -1389,7 +1412,7 @@ fn resource_site(
                 canonical_tab_url(browser, &request.url),
                 !request.background,
                 private,
-            )
+            );
         },
     )
     .profile(renderer_profile(renderer, private))

@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MPL-2.0
 //! WebKit content rule lists end to end on macOS: a list compiles into its own store (never the
 //! user's default one), a second request finds the compiled list instead of compiling again, a
-//! broken list reports its error, a real WKWebView with the list attached loads one image and is
+//! broken list reports its error, a real `WKWebView` with the list attached loads one image and is
 //! refused the other, and a navigation that arrives while a view's first page waits for its lists
 //! replaces that page and loads under the lists.
 //!
-//! WKWebView and the rule list store answer on the main thread's run loop, which a test thread
+//! `WKWebView` and the rule list store answer on the main thread's run loop, which a test thread
 //! never runs, so this test has its own `main` (`harness = false` in Cargo.toml).
 
 #[cfg(target_os = "macos")]
@@ -40,6 +40,10 @@ fn main() {
     std::fs::create_dir_all(&store).unwrap();
     std::fs::create_dir_all(&site).unwrap();
     // A 1×1 transparent PNG, served twice under two names.
+    #[expect(
+        clippy::items_after_statements,
+        reason = "the fixture bytes sit beside the comment that explains them"
+    )]
     const PIXEL: &[u8] = &[
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
         0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
@@ -66,7 +70,7 @@ fn main() {
     // Compile, attach, load: WebKit refuses the blocked image and loads the other.
     let first = probe::start(&store, &lists, &site.join("index.html"));
     let loaded = spin_until(&|| !first.borrow().title.is_empty(), &|| {
-        probe::read_title(&first)
+        probe::read_title(&first);
     });
     let compiled = first.borrow().compiled.clone();
     assert_eq!(compiled, Some(Ok(1)), "the list compiles");
@@ -88,7 +92,7 @@ fn main() {
         Some(Err(errors)) => {
             assert_eq!(errors.len(), 1);
             assert_eq!(errors[0].id, "broken");
-            assert!(!errors[0].message.is_empty());
+            assert_ne!(errors[0].message, "");
         }
         other => panic!("a broken list compiled: {other:?}"),
     }
@@ -115,7 +119,7 @@ fn main() {
         "the navigation arrived after the first page was released"
     );
     let finished = spin_until(&|| navigated.borrow().title.starts_with("ok:"), &|| {
-        probe::read_title(&navigated)
+        probe::read_title(&navigated);
     });
     assert!(
         finished,
@@ -125,7 +129,7 @@ fn main() {
     // Nothing loads over it afterwards.
     let settle = Instant::now() + Duration::from_millis(1500);
     spin_until(&|| Instant::now() >= settle, &|| {
-        probe::read_title(&navigated)
+        probe::read_title(&navigated);
     });
     assert_eq!(navigated.borrow().title, "ok:load blocked:error");
 

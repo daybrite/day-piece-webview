@@ -401,7 +401,7 @@ fn choose_files(accept: Vec<String>, multiple: bool, mut reply: Reply) {
         };
         let paths: Vec<String> = picked
             .iter()
-            .filter_map(|file| file.local_path())
+            .filter_map(day_pieces::FileUrl::local_path)
             .map(|path| path.display().to_string())
             .collect();
         reply.answer(Answer {
@@ -487,7 +487,7 @@ impl DownloadResponder {
         }
         match downloads_dir() {
             Some(dir) if std::fs::create_dir_all(&dir).is_ok() => {
-                self.save_to(unused_path(&dir, &name), on_event)
+                self.save_to(unused_path(&dir, &name), on_event);
             }
             _ => {
                 on_event(&DownloadEvent::Failed("no Downloads folder".into()));
@@ -562,6 +562,10 @@ thread_local! {
 
 /// A download's progress, from its backend, on the main thread.
 #[allow(dead_code)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "each backend hands over the event it has just built"
+)]
 pub(crate) fn download_event(id: u64, event: DownloadEvent) {
     let callback = DOWNLOADS.with(|d| {
         if event.is_terminal() {
@@ -635,6 +639,10 @@ pub fn sanitize_file_name(suggested: &str, fallback: &str) -> String {
 
 /// `dir/name`, or `dir/stem (2).ext` and so on for the first name not taken: where a browser
 /// saves a second file of the same name.
+#[expect(
+    clippy::maybe_infinite_iter,
+    reason = "the search ends at the first name that is not taken"
+)]
 pub fn unused_path(dir: &Path, name: &str) -> PathBuf {
     let first = dir.join(name);
     if !first.exists() {
@@ -1049,7 +1057,7 @@ mod tests {
                 assert_eq!(request.size, None);
                 let heard = heard.clone();
                 responder.save_to("/tmp/report.pdf", move |event| {
-                    heard.borrow_mut().push(event.clone())
+                    heard.borrow_mut().push(event.clone());
                 });
             })),
             ..Handlers::default()
@@ -1060,20 +1068,20 @@ mod tests {
         );
         assert_eq!(seen.borrow()[0].1.paths, vec!["/tmp/report.pdf"]);
         download_event(
-            900001,
+            900_001,
             DownloadEvent::Progress {
                 received: 10,
                 total: Some(20),
             },
         );
         download_event(
-            900001,
+            900_001,
             DownloadEvent::Finished {
                 location: "/tmp/report.pdf".into(),
             },
         );
         // Nothing is kept for a finished download.
-        download_event(900001, DownloadEvent::Failed("late".into()));
+        download_event(900_001, DownloadEvent::Failed("late".into()));
         assert_eq!(
             *events.borrow(),
             vec![
@@ -1118,7 +1126,7 @@ mod tests {
         let (f, g) = (failed.clone(), gone.clone());
         let handlers = Handlers {
             load_error: Some(Rc::new(move |error| {
-                f.set(Some((error.kind, error.host())))
+                f.set(Some((error.kind, error.host())));
             })),
             renderer_gone: Some(Rc::new(move |report| g.set(Some(report.crashed)))),
             ..Handlers::default()
@@ -1142,8 +1150,8 @@ mod tests {
         assert!(accept_extensions(&list("image/*")).contains(&"jpg"));
         assert_eq!(accept_extensions(&list("application/pdf")), vec!["pdf"]);
         // Anything the table cannot name means every file.
-        assert!(accept_extensions(&list("image/*,.xyz")).is_empty());
-        assert!(accept_extensions(&[]).is_empty());
+        assert_eq!(accept_extensions(&list("image/*,.xyz")), [] as [&str; 0]);
+        assert_eq!(accept_extensions(&[]), [] as [&str; 0]);
     }
 
     #[test]

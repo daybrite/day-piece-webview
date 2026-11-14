@@ -171,6 +171,10 @@ fn content_hooks_pass_through_and_blocked_reports_coalesce() {
     // their own threads; the hooks are `Send + Sync`, and the crate's unit tests block from
     // worker threads. The mock toolkit runs timers and wakes at once on the calling thread, so
     // the burst is staged inside the callback.)
+    #[expect(
+        clippy::items_after_statements,
+        reason = "the assertion helper sits beside the one call that uses it"
+    )]
     fn send_sync<T: Send + Sync>(_: &T) {}
     send_sync(&hooks);
     // A view that browses anywhere filters the resource namespace like any other site

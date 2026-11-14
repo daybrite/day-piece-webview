@@ -110,7 +110,7 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
                 );
                 let response = webkit6::URISchemeResponse::new(&stream, length);
                 response.set_content_type(&r.mime);
-                response.set_status(r.status as u32, Some("Resource"));
+                response.set_status(u32::from(r.status), Some("Resource"));
                 let headers =
                     webkit6::soup::MessageHeaders::new(webkit6::soup::MessageHeadersType::Response);
                 // nosniff checks inspect the HTTP Content-Type header, not only the
@@ -676,6 +676,10 @@ mod page_content {
     }
 }
 
+#[expect(
+    clippy::match_same_arms,
+    reason = "the arms carry separate comments on why each patch does nothing here"
+)]
 fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
     let Some(wv) = h.downcast_ref::<webkit6::WebView>() else {
         return;
@@ -859,7 +863,7 @@ fn snapshot_png(texture: &gtk4::gdk::Texture, width: i32) -> Vec<u8> {
     texture.download(&mut pixels, stride);
     let (tw, th) = (
         width as usize,
-        ((h as i64 * width as i64) / w as i64).max(1) as usize,
+        ((i64::from(h) * i64::from(width)) / i64::from(w)).max(1) as usize,
     );
     let mut out = vec![0u8; tw * th * 4];
     for ty in 0..th {

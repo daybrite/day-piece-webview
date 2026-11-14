@@ -242,7 +242,7 @@ pub unsafe extern "C" fn day_web_resource_browser(
     let bytes = unsafe { day_bridge::__take_wasm(ptr, len) };
     let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
     let r = crate::resources::respond(
-        provider as u64,
+        u64::from(provider),
         value["url"].as_str().unwrap_or(""),
         value["method"].as_str().unwrap_or(""),
         value["range"].as_str().unwrap_or(""),
@@ -251,7 +251,7 @@ pub unsafe extern "C" fn day_web_resource_browser(
     headers.push(("Content-Type".into(), r.mime.clone()));
     resource_reply(
         token,
-        r.status as i32,
+        i32::from(r.status),
         &serde_json::to_string(&headers).unwrap(),
         &r.body,
     );

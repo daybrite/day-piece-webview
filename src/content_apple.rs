@@ -1,10 +1,10 @@
 // Copyright © The Daybrite Project
 // SPDX-License-Identifier: MPL-2.0
 
-//! Content rule lists, user scripts and page messages on WKWebView, shared by AppKit, UIKit and
+//! Content rule lists, user scripts and page messages on `WKWebView`, shared by AppKit, UIKit and
 //! GTK on macOS (docs/webview.md, "Content blocking and page scripts").
 //!
-//! Every view is created with its own `WKWebViewConfiguration` (resources_apple.rs), and so its
+//! Every view is created with its own `WKWebViewConfiguration` (`resources_apple.rs`), and so its
 //! own `WKUserContentController`: one view's lists, scripts and handlers never reach another.
 //! Compiled rule lists live in `WKContentRuleListStore.defaultStore` under
 //! `ContentRuleList::store_identifier`, shared by every view and kept across launches.
@@ -60,7 +60,7 @@ define_class!(
             // SAFETY: WebKit hands over a heap block it expects called exactly once; copying it
             // keeps it alive until the app answers.
             let reply = unsafe {
-                RcBlock::copy(reply as *const _ as *mut block2::DynBlock<dyn Fn(*mut AnyObject, *mut NSString)>)
+                RcBlock::copy(std::ptr::from_ref(reply) as *mut block2::DynBlock<dyn Fn(*mut AnyObject, *mut NSString)>)
             };
             let id = self.ivars().next.get();
             self.ivars().next.set(id + 1);
@@ -97,9 +97,10 @@ impl Messages {
             let body: *mut AnyObject = msg_send![message, body];
             let payload = body
                 .as_ref()
-                .map(|body| match body.downcast_ref::<NSString>() {
-                    Some(text) => text.to_string(),
-                    None => {
+                .map(|body| {
+                    if let Some(text) = body.downcast_ref::<NSString>() {
+                        text.to_string()
+                    } else {
                         let text: Retained<NSString> = msg_send![body, description];
                         text.to_string()
                     }
@@ -147,7 +148,7 @@ impl Messages {
     }
 }
 
-/// `scheme://host[:port]` from a WKSecurityOrigin.
+/// `scheme://host[:port]` from a `WKSecurityOrigin`.
 fn origin_text(origin: &AnyObject) -> String {
     // SAFETY: WKSecurityOrigin's properties.
     unsafe {
@@ -390,17 +391,21 @@ fn apply_rules(
 /// to `done`, in order. Lookups are keyed by id and version, so a list compiled by an earlier
 /// launch loads without its JSON being read; a list compiled afresh removes the versions of the
 /// same id it replaces. Everything completes on the main thread, and nothing waits on it.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "each caller builds the shared callback for this call"
+)]
 fn prepare(
     store: &Retained<AnyObject>,
     lists: &[ContentRuleList],
     on_error: OnError,
     done: impl FnOnce(Vec<Retained<AnyObject>>) + 'static,
 ) {
+    type Slots = Rc<RefCell<Vec<Option<Retained<AnyObject>>>>>;
     if lists.is_empty() {
         done(Vec::new());
         return;
     }
-    type Slots = Rc<RefCell<Vec<Option<Retained<AnyObject>>>>>;
     let slots: Slots = Rc::new(RefCell::new(vec![None; lists.len()]));
     let remaining = Rc::new(Cell::new(lists.len()));
     let done: Prepared = Rc::new(RefCell::new(Some(Box::new(done))));
@@ -461,20 +466,16 @@ fn compile(
     let keep = identifier.clone();
     let compiled = RcBlock::new(move |compiled: *mut AnyObject, error: *mut NSError| {
         // SAFETY: the compiled list, or the NSError explaining why there is none.
-        match unsafe { Retained::retain(compiled) } {
-            Some(compiled) => {
-                slots.borrow_mut()[index] = Some(compiled);
-                remove_stale(&store2, &id, &keep);
-            }
-            None => {
-                let message = unsafe { error.as_ref() }
-                    .map(|error| error.localizedDescription().to_string())
-                    .unwrap_or_else(|| "compilation failed".into());
-                log::warn!(
-                    "day-piece-webview: content rule list {id:?} did not compile: {message}"
-                );
-                on_error(&id, &message);
-            }
+        if let Some(compiled) = unsafe { Retained::retain(compiled) } {
+            slots.borrow_mut()[index] = Some(compiled);
+            remove_stale(&store2, &id, &keep);
+        } else {
+            let message = unsafe { error.as_ref() }.map_or_else(
+                || "compilation failed".into(),
+                |error| error.localizedDescription().to_string(),
+            );
+            log::warn!("day-piece-webview: content rule list {id:?} did not compile: {message}");
+            on_error(&id, &message);
         }
         finish_one();
     });
@@ -510,7 +511,7 @@ fn remove_stale(store: &Retained<AnyObject>, id: &str, keep: &str) {
     }
 }
 
-/// An end-to-end check of rule lists on a real WKWebView, for `tests/content-rules-macos.rs`
+/// An end-to-end check of rule lists on a real `WKWebView`, for `tests/content-rules-macos.rs`
 /// alone (it must run on the main thread with a run loop, which a library test cannot). It
 /// compiles `lists` into its own store at `directory`, keeping the user's default store clean,
 /// attaches them to a fresh view and loads `page`; the test spins the run loop and reads back
@@ -640,6 +641,10 @@ pub mod probe {
             rules: lists.to_vec(),
             ..PageContent::default()
         };
+        #[expect(
+            clippy::items_after_statements,
+            reason = "the no-op sender sits beside the one call that takes it"
+        )]
         fn ignore(_: NodeId, _: Event) {}
         attach(
             mtm,

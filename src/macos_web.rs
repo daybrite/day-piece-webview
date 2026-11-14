@@ -100,7 +100,7 @@ define_class!(
         }
         #[unsafe(method(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:))]
         fn js_prompt(&self, web: &WKWebView, message: &NSString, fallback: Option<&NSString>, frame: &AnyObject, done: &block2::DynBlock<dyn Fn(*mut NSString)>) {
-            let fallback = fallback.map(|f| f.to_string()).unwrap_or_default();
+            let fallback = fallback.map(std::string::ToString::to_string).unwrap_or_default();
             duties::dialog(self.asking(web), DialogKind::Prompt, message, Some(fallback.clone()), frame, duties::Pending::Prompt(done.copy(), fallback));
         }
         #[unsafe(method(webView:didReceiveAuthenticationChallenge:completionHandler:))]
@@ -170,7 +170,7 @@ define_class!(
                 self.ivars().desktop_mode.get(),
                 self.ivars().javascript.get(),
             );
-            handler.call((policy, preferences as *const AnyObject as *mut AnyObject));
+            handler.call((policy, std::ptr::from_ref::<AnyObject>(preferences).cast_mut()));
         }
     }
 );
@@ -185,13 +185,13 @@ define_class!(
         #[unsafe(method(willOpenMenu:withEvent:))]
         fn will_open_menu(&self, menu: &NSMenu, event: &NSEvent) {
             unsafe { let _: () = msg_send![super(self), willOpenMenu: menu, withEvent: event]; }
-            let delegate = DELEGATES.with(|m|m.borrow().get(&(self as *const Self as usize)).cloned());
+            let delegate = DELEGATES.with(|m|m.borrow().get(&(std::ptr::from_ref::<Self>(self) as usize)).cloned());
             let Some(nav) = delegate else { return; };
             let labels = nav.ivars().tabs.borrow().clone();
             let Some(labels) = labels else { return; };
             // WebKit assigns its public context-menu tags to the native menu. Preserve
             // the engine-owned action and represented object so it resolves the link.
-            for item in menu.itemArray().iter() {
+            for item in &menu.itemArray() {
                 if item.tag() == 1 {
                     item.setTitle(&NSString::from_str(&labels.foreground));
                     *nav.ivars().link_item.borrow_mut() = Some(item.clone());
@@ -289,7 +289,7 @@ impl WebNav {
         if *self.ivars().last_state.borrow() == text {
             return;
         }
-        *self.ivars().last_state.borrow_mut() = text.clone();
+        (*self.ivars().last_state.borrow_mut()).clone_from(&text);
         (self.ivars().emit)(
             self.ivars().node.get(),
             Event::Custom {
@@ -310,7 +310,7 @@ impl WebNav {
         duties::Asking {
             emit: self.emit(),
             node: self.ivars().node.get(),
-            view: web as *const WKWebView as usize,
+            view: std::ptr::from_ref::<WKWebView>(web) as usize,
         }
     }
 
@@ -346,7 +346,7 @@ day_core::tls_group! {
 /// The node a realized view belongs to. `update` is handed only the native handle, so the id is
 /// recovered from the navigation delegate kept alive alongside it.
 fn node_of(view: &Retained<NSView>) -> Option<NodeId> {
-    let key = (&**view as *const NSView) as usize;
+    let key = (&raw const **view) as usize;
     DELEGATES.with(|m| m.borrow().get(&key).map(|nav| nav.ivars().node.get()))
 }
 
@@ -387,11 +387,19 @@ enum First {
     None,
 }
 
+#[expect(
+    clippy::float_cmp,
+    reason = "a zoom of exactly 1 is the default that needs no call"
+)]
 pub(crate) fn make(
     mtm: MainThreadMarker,
     p: &WebProps,
     id: NodeId,
     emit: fn(NodeId, Event),
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "each toolkit arm passes the assets directory it has just resolved"
+    )]
     assets: Option<std::path::PathBuf>,
 ) -> Retained<NSView> {
     // A session already holding a view: re-attach it rather than build a new one. Only the node
@@ -400,13 +408,13 @@ pub(crate) fn make(
     if p.session != 0
         && let Some(view) = SESSIONS.with(|m| m.borrow().get(&p.session).cloned())
     {
-        let key = (&*view as *const NSView) as usize;
+        let key = (&raw const *view) as usize;
         DELEGATES.with(|m| {
             if let Some(nav) = m.borrow().get(&key) {
                 nav.ivars().node.set(id);
                 nav.ivars().external_links.set(p.external_links);
                 nav.ivars().browse.set(p.browse);
-                *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
+                (*nav.ivars().tabs.borrow_mut()).clone_from(&p.tabs);
                 // The node's settings: zoom at once, the rest from the next navigation on.
                 nav.ivars().desktop_mode.set(p.settings.desktop_mode);
                 nav.ivars().javascript.set(p.settings.javascript);
@@ -448,13 +456,13 @@ pub(crate) fn make(
     nav.ivars().browse.set(p.browse);
     nav.ivars()
         .provider
-        .set(p.resources.as_ref().map(ResourceProvider::id).unwrap_or(0));
+        .set(p.resources.as_ref().map_or(0, ResourceProvider::id));
     if p.browse.swipe_navigation {
         // Safari's two-finger swipes through the view's own history
         // (`WebView::swipe_navigation`).
         unsafe { web.setAllowsBackForwardNavigationGestures(true) };
     }
-    *nav.ivars().tabs.borrow_mut() = p.tabs.clone();
+    (*nav.ivars().tabs.borrow_mut()).clone_from(&p.tabs);
     // Set before the first load, whose policy decision already reads them.
     nav.ivars().desktop_mode.set(p.settings.desktop_mode);
     nav.ivars().javascript.set(p.settings.javascript);
@@ -513,7 +521,7 @@ pub(crate) fn make(
     }
     // Scripts, message handlers and rule lists (`WebView::content_rules` and friends). The first
     // page waits for the rule lists, so it never loads unfiltered.
-    let key = (&*web as *const WKWebView) as usize;
+    let key = (&raw const *web) as usize;
     let loader = web.clone();
     super::content_apple::attach(
         mtm,
@@ -533,7 +541,7 @@ pub(crate) fn make(
     let view: Retained<NSView> = Retained::from(<WKWebView as AsRef<NSView>>::as_ref(&web));
     DELEGATES.with(|m| {
         m.borrow_mut()
-            .insert((view.as_ref() as *const NSView) as usize, nav)
+            .insert(std::ptr::from_ref::<NSView>(view.as_ref()) as usize, nav)
     });
     if p.session != 0 {
         SESSIONS.with(|m| m.borrow_mut().insert(p.session, view.clone()));
@@ -559,7 +567,7 @@ fn eval(web: &WKWebView, node: NodeId, req: u64, script: &str, emit: fn(NodeId, 
                 num: req as f64,
                 text,
             },
-        )
+        );
     }) {
         return;
     }
@@ -568,9 +576,10 @@ fn eval(web: &WKWebView, node: NodeId, req: u64, script: &str, emit: fn(NodeId, 
         let payload = if !result.is_null() {
             // SAFETY: non-null result from WebKit; the wrapper guarantees it is an NSString.
             let obj = unsafe { &*result };
-            obj.downcast_ref::<NSString>()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| engine_error("WebKitError", "non-string reply"))
+            obj.downcast_ref::<NSString>().map_or_else(
+                || engine_error("WebKitError", "non-string reply"),
+                std::string::ToString::to_string,
+            )
         } else if !error.is_null() {
             // SAFETY: non-null NSError from WebKit.
             let msg = unsafe { (*error).localizedDescription() }.to_string();
@@ -598,7 +607,7 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
     match patch {
         WebPatch::Eval { req, script } => {
             if let Some(node) = node_of(h) {
-                let key = (&**h as *const NSView) as usize;
+                let key = (&raw const **h) as usize;
                 if let Some(emit) = DELEGATES.with(|m| m.borrow().get(&key).map(|n| n.ivars().emit))
                 {
                     eval(web, node, *req, script, emit);
@@ -608,14 +617,14 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
         WebPatch::ContentRules(_)
         | WebPatch::ScriptReply { .. }
         | WebPatch::MediaDecision { .. } => {
-            super::content_apple::update((&**h as *const NSView) as usize, patch);
+            super::content_apple::update((&raw const **h) as usize, patch);
         }
         WebPatch::PromptAnswer { id, answer } => duties::answer_prompt(*id, answer),
         // While the first page waits for its rule lists, a navigation takes its place.
         WebPatch::Load(url) => {
             let (loader, url) = (objc2::Message::retain(web), url.clone());
-            super::content_apple::navigate((&**h as *const NSView) as usize, move || {
-                load_url(&loader, &url)
+            super::content_apple::navigate((&raw const **h) as usize, move || {
+                load_url(&loader, &url);
             });
         }
         WebPatch::Back => {
@@ -627,7 +636,7 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
         WebPatch::Stop => unsafe { web.stopLoading() },
         // Nothing has loaded while the first page waits for its rules; it loads when they do.
         WebPatch::Reload | WebPatch::ForceReload
-            if super::content_apple::holding((&**h as *const NSView) as usize) => {}
+            if super::content_apple::holding((&raw const **h) as usize) => {}
         WebPatch::ForceReload => {
             let _ = unsafe { web.reloadFromOrigin() };
         }
@@ -635,7 +644,7 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
             let _ = unsafe { web.reload() };
         }
         WebPatch::ReportState => {
-            let key = (&**h as *const NSView) as usize;
+            let key = (&raw const **h) as usize;
             DELEGATES.with(|m| {
                 if let Some(nav) = m.borrow().get(&key) {
                     nav.ivars().last_state.borrow_mut().clear();
@@ -648,7 +657,7 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
         // (`WKContentModeRecommended` is the desktop layout here), so desktop mode changes
         // nothing and needs no reload.
         WebPatch::DesktopMode(desktop) => {
-            let key = (&**h as *const NSView) as usize;
+            let key = (&raw const **h) as usize;
             DELEGATES.with(|m| {
                 if let Some(nav) = m.borrow().get(&key) {
                     nav.ivars().desktop_mode.set(*desktop);
@@ -658,7 +667,7 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
         // A page cannot gain or lose its scripts while it runs: reload it under the new
         // preferences.
         WebPatch::JavaScript(enabled) => {
-            let key = (&**h as *const NSView) as usize;
+            let key = (&raw const **h) as usize;
             let changed = DELEGATES.with(|m| {
                 m.borrow()
                     .get(&key)
@@ -677,14 +686,14 @@ pub(crate) fn update(h: &Retained<NSView>, patch: &WebPatch) {
 /// view's address, which the allocator reuses: a later view landing on a freed address would
 /// inherit the dead node's id and misroute its events.
 pub(crate) fn release(h: &Retained<NSView>) {
-    let key = (&**h as *const NSView) as usize;
+    let key = (&raw const **h) as usize;
     // A session-retained view is not going away; day is only detaching it from the page being
     // torn down, and the next visit re-attaches it. Its delegate has to outlive this node too, or
     // the returning view would report navigations to nobody.
     let retained = SESSIONS.with(|m| {
         m.borrow()
             .values()
-            .any(|v| (&**v as *const NSView) as usize == key)
+            .any(|v| (&raw const **v) as usize == key)
     });
     if retained {
         return;

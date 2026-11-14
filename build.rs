@@ -3,7 +3,7 @@
 
 //! Compiles this piece's native shims per feature: a standalone Day Piece carrying native C++
 //! without touching Day's toolkit crates (like day-piece-picker). Qt uses `cc` + pkg-config, and
-//! (unlike the picker) links Qt6WebEngineWidgets, which day-toolkit-qt-sys does not link. XAML uses `cc`
+//! (unlike the picker) links `Qt6WebEngineWidgets`, which day-toolkit-qt-sys does not link. XAML uses `cc`
 //! (MSVC) + the Windows SDK cppwinrt projection, mirroring day-toolkit-xaml-sys.
 
 fn main() {
@@ -201,14 +201,13 @@ fn run(cmd: &str, args: &[&str]) {
         String::from_utf8_lossy(&out.stderr)
     );
 }
-/// True if pkg-config knows the module (used to pick the real QWebEngineView shim vs. the label
+/// True if pkg-config knows the module (used to pick the real `QWebEngineView` shim vs. the label
 /// fallback). `--exists` is the standard availability probe; a missing pkg-config counts as absent.
 fn pkg_config_exists(pkg: &str) -> bool {
     std::process::Command::new("pkg-config")
         .args(["--exists", pkg])
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
 
 fn pkg_config(args: &[&str]) -> String {
@@ -216,12 +215,11 @@ fn pkg_config(args: &[&str]) -> String {
         .args(args)
         .output()
         .unwrap_or_else(|e| panic!("pkg-config {args:?}: {e}"));
-    if !out.status.success() {
-        panic!(
-            "pkg-config {args:?} failed — is Qt6WebEngineWidgets installed?\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
+    assert!(
+        out.status.success(),
+        "pkg-config {args:?} failed — is Qt6WebEngineWidgets installed?\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 

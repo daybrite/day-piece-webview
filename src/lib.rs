@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! day-piece-webview, an external Day Piece (DESIGN.md §15) wrapping each toolkit's native web
-//! view: WKWebView on AppKit/UIKit, QWebEngineView on Qt, `android.webkit.WebView` on Android. One
+//! view: `WKWebView` on AppKit/UIKit, `QWebEngineView` on Qt, `android.webkit.WebView` on Android. One
 //! Rust API registered link-time into each backend's renderer slice without touching day. Alongside
 //! the picker it's a reference for pieces that carry both a front-end and their own native backend,
 //! here including an Android manifest permission contribution (INTERNET), see docs/extending.md.
@@ -78,7 +78,7 @@ fn external_document_link(
         return false;
     }
     let without_fragment = |url: &str| url.split('#').next().unwrap_or("").to_owned();
-    !current.is_some_and(|url| without_fragment(url) == without_fragment(target))
+    current.is_none_or(|url| without_fragment(url) != without_fragment(target))
 }
 
 pub const KIND: &str = "day.piece.webview";
@@ -87,6 +87,7 @@ pub const KIND: &str = "day.piece.webview";
 /// Configure before creating views. Directory is honored where the engine exposes a public
 /// storage-path API; Apple uses an identifier-backed, system-managed location instead.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[must_use]
 pub struct WebProfile {
     pub name: String,
     pub directory: Option<String>,
@@ -113,8 +114,8 @@ impl WebProfile {
     /// Stable, filesystem-safe identity. Includes privacy mode and requested directory.
     pub fn storage_key(&self) -> String {
         let text = format!("{}:{:?}:{}", self.name, self.directory, self.private);
-        let hash = text.bytes().fold(14695981039346656037u64, |h, b| {
-            (h ^ u64::from(b)).wrapping_mul(1099511628211)
+        let hash = text.bytes().fold(14_695_981_039_346_656_037_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(1_099_511_628_211)
         });
         format!("day-{hash:016x}")
     }
@@ -363,7 +364,7 @@ impl Default for WebSettings {
     }
 }
 
-/// A desktop browser's user agent for a Chromium engine (Android WebView, ArkWeb) whose user
+/// A desktop browser's user agent for a Chromium engine (Android `WebView`, ArkWeb) whose user
 /// agent is `mobile`: Chrome's "Request desktop site" string, at the engine's major version.
 /// The Java (`DayWebView.desktopAgent`) and ArkTS (`desktopAgent`) arms compose this text
 /// themselves; this is the reference their format is pinned against.
@@ -509,7 +510,7 @@ impl std::fmt::Display for PrepareError {
 
 /// The future [`AssetDirSiteExt::prepare_site`] returns. Today every v1 backend serves the site
 /// from where it already lives, so this resolves on first poll; the shape is a future because
-/// backends whose engine cannot read embedded stores in place (GTK's GResource, HarmonyOS
+/// backends whose engine cannot read embedded stores in place (GTK's `GResource`, HarmonyOS
 /// rawfile) will extract to the platform cache here, and a large site should not block the UI
 /// thread when they land.
 pub struct PrepareSite {
@@ -557,6 +558,10 @@ impl AssetDirSiteExt for day_core::AssetDir {
 /// The per-backend half of `prepare_site`: where a backend whose engine cannot read the
 /// embedded store in place gets the site onto loose files ahead of the view (docs/webview.md).
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the Linux GTK arm returns an error when extraction fails"
+)]
 fn prepare_backend(root: String) -> Result<InlineSite, PrepareError> {
     // GTK: the assets live in a GResource blob WebKitGTK cannot browse; extract to the user
     // cache now so `make` finds it warm. The lazy `web_view_inline(dir)` route extracts at
@@ -765,6 +770,7 @@ impl std::fmt::Display for EvalError {
 /// would end the string; everything below U+0020 goes to `\uXXXX` because a raw control character
 /// is not legal inside a literal either.
 fn js_string_literal(s: &str) -> String {
+    use std::fmt::Write as _;
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
@@ -776,7 +782,9 @@ fn js_string_literal(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             '\u{2028}' => out.push_str("\\u2028"),
             '\u{2029}' => out.push_str("\\u2029"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
             c => out.push(c),
         }
     }
@@ -1249,10 +1257,10 @@ impl JsHandle {
 
     fn data_request(&self, operation: &str, url: &str, cookie: &str) -> EvalFuture {
         self.data_request_value(
-            serde_json::json!({"operation":operation,"url":url,"cookie":cookie}),
+            &serde_json::json!({"operation":operation,"url":url,"cookie":cookie}),
         )
     }
-    fn data_request_value(&self, request: serde_json::Value) -> EvalFuture {
+    fn data_request_value(&self, request: &serde_json::Value) -> EvalFuture {
         let mut future = self.eval("");
         future.script = Some(format!("{DATA_REQUEST}{request}"));
         // A request to the backend is no page script and has no second form.
@@ -1266,9 +1274,15 @@ impl JsHandle {
     /// document. A view that is not on screen (a background tab) may capture blank or fail with
     /// [`EvalError::Threw`], depending on the engine. Engines without a capture API (ArkWeb,
     /// web-dom's iframe) fail with [`EvalError::Unsupported`]; see docs/webview.md.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EvalError::Unsupported`] on an engine without a capture API, [`EvalError::Threw`]
+    /// when the engine cannot capture the view, and [`EvalError::Engine`] when its reply is not PNG
+    /// data.
     pub async fn snapshot(&self, max_width_px: u32) -> Result<Vec<u8>, EvalError> {
         let reply = self
-            .data_request_value(serde_json::json!({"operation":"snapshot","width":max_width_px}))
+            .data_request_value(&serde_json::json!({"operation":"snapshot","width":max_width_px}))
             .await
             .map_err(|error| match error {
                 EvalError::Threw { name, .. } if name == "Unsupported" => EvalError::Unsupported,
@@ -1280,12 +1294,22 @@ impl JsHandle {
     }
     /// Read URL, title, loading status and actual native history availability.
     /// Emulated iframe hosts return Unsupported rather than guessing browser history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EvalError::Unsupported`] on an emulated iframe host, or the error of the request
+    /// to the backend.
     pub async fn navigation_state(&self) -> Result<NavigationState, EvalError> {
         let reply = self.data_request("navigation", "", "").await?;
         serde_json::from_str(&reply).map_err(|_| EvalError::Unsupported)
     }
-    /// Read cookies (including HttpOnly) eligible for this URL from the bound view's profile.
+    /// Read cookies (including `HttpOnly`) eligible for this URL from the bound view's profile.
     /// Treat the returned header as a credential; never log it or send it to a different origin.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EvalError::Unsupported`] when `url` is not an HTTP or HTTPS URL or the backend
+    /// cannot read cookies, or the error of the request to the backend.
     pub async fn cookie_header(&self, url: &str) -> Result<String, EvalError> {
         if !url::Url::parse(url).is_ok_and(|url| matches!(url.scheme(), "http" | "https")) {
             return Err(EvalError::Unsupported);
@@ -1446,7 +1470,7 @@ fn new_tab_event(url: String, background: bool) -> Event {
 // A document-start fallback for engines that don't expose pointer modifiers in
 // navigation requests. It carries only link intent; normal navigation remains native.
 #[cfg(all(target_os = "ios", feature = "uikit"))]
-const TAB_MODIFIER_SCRIPT: &str = r#"(() => {
+const TAB_MODIFIER_SCRIPT: &str = r"(() => {
   const click = e => {
     const a = e.composedPath().find(n => n?.tagName === 'A' && n.href);
     if (!a || !(e.metaKey || e.ctrlKey || e.button === 1)) return;
@@ -1454,7 +1478,7 @@ const TAB_MODIFIER_SCRIPT: &str = r#"(() => {
     location.href = 'day-tab://open?url=' + encodeURIComponent(a.href) + '&background=' + (e.shiftKey ? '0' : '1');
   };
   addEventListener('click', click, true); addEventListener('auxclick', click, true);
-})();"#;
+})();";
 #[cfg(all(target_os = "ios", feature = "uikit"))]
 fn tab_scheme_request(input: &str) -> Option<NewTabRequest> {
     let url = url::Url::parse(input).ok()?;
@@ -1475,6 +1499,7 @@ type MessageHandler = Rc<dyn Fn(ScriptMessage) -> Option<String>>;
 type RulesErrorHandler = Rc<dyn Fn(&ContentRulesError)>;
 type MediaHandler = Rc<dyn Fn(&MediaRequest) -> bool>;
 
+#[must_use]
 pub struct WebView {
     renderer: WebRenderer,
     profile: WebProfile,
@@ -1593,6 +1618,10 @@ pub fn web_view_resources(provider: ResourceProvider, page: &str) -> WebView {
 impl WebView {
     /// Select an engine for this context, failing instead of falling back silently.
     /// Rebuild the piece at its current URL to switch an existing page's renderer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RendererUnavailable`] when this build does not include `renderer`.
     pub fn renderer(mut self, renderer: WebRenderer) -> Result<Self, RendererUnavailable> {
         if !renderer.available() {
             return Err(RendererUnavailable(renderer));
@@ -1747,7 +1776,7 @@ impl WebView {
     /// the view reloads its page, because a page cannot lose or gain its scripts while it runs.
     ///
     /// The app's own evaluation ([`JsHandle::eval`]) keeps working with page scripts off on the
-    /// WebKit, WebKitGTK, Qt, WebView2 and ArkWeb engines. Android WebView and web-dom have no
+    /// WebKit, WebKitGTK, Qt, WebView2 and ArkWeb engines. Android `WebView` and web-dom have no
     /// such split: there, evaluation fails until scripts are on again. Check
     /// [`javascript_support`] and docs/webview.md.
     pub fn javascript<M>(mut self, enabled: impl IntoReactive<bool, M>) -> Self {
@@ -1758,7 +1787,7 @@ impl WebView {
     /// (docs/webview.md, "Content blocking and page scripts"). A [`RequestDecision::Block`]
     /// fails the request; [`WebView::on_blocked`] hears about it.
     ///
-    /// Runs on the engine's own thread: a WebView worker on Android, the UI thread on WebView2
+    /// Runs on the engine's own thread: a `WebView` worker on Android, the UI thread on WebView2
     /// and Qt, ArkWeb's IO thread. Check [`request_filter_support`]: WebKit engines have no
     /// per-request hook and take [`WebView::content_rules`] instead.
     pub fn request_filter(mut self, filter: Arc<dyn RequestFilter>) -> Self {
@@ -2051,10 +2080,10 @@ impl Piece for WebView {
                 .map_or(1.0, |zoom| WebSettings::clamp_zoom(zoom.get_untracked())),
             desktop_mode: desktop_mode
                 .as_ref()
-                .is_some_and(|desktop| desktop.get_untracked()),
+                .is_some_and(day_pieces::Reactive::get_untracked),
             javascript: javascript
                 .as_ref()
-                .is_none_or(|javascript| javascript.get_untracked()),
+                .is_none_or(day_pieces::Reactive::get_untracked),
         };
         // Blocked loads reach `on_blocked` through this sink, from whichever thread the engine
         // filters on (`RequestHooks::decide`) or from the event channel (`BLOCKED_REPORT`).
@@ -2073,19 +2102,19 @@ impl Piece for WebView {
             }),
             rules: content_rules
                 .as_ref()
-                .map(|rules| rules.get_untracked())
+                .map(day_pieces::Reactive::get_untracked)
                 .unwrap_or_default(),
             scripts: user_scripts,
             styles: user_styles,
             messages: messages.iter().map(|(name, _)| name.clone()).collect(),
             media_handler: on_media.is_some(),
         };
-        let session_id = session.map(WebSession::id).unwrap_or(0);
+        let session_id = session.map_or(0, WebSession::id);
         let session_id = if session_id == 0 || profile == WebProfile::default() {
             session_id
         } else {
             profile.storage_key().bytes().fold(session_id, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(1099511628211)
+                (h ^ u64::from(b)).wrapping_mul(1_099_511_628_211)
             })
         };
         let mut initial_url = url.get_untracked();
@@ -2214,26 +2243,29 @@ impl Piece for WebView {
         if let Some(go) = go {
             watch(
                 move || go.track(),
-                move |_, _| send(WebPatch::Load(url.get_untracked())),
+                move |(), _| send(WebPatch::Load(url.get_untracked())),
             );
         }
         if let Some(back) = back {
-            watch(move || back.track(), move |_, _| send(WebPatch::Back));
+            watch(move || back.track(), move |(), _| send(WebPatch::Back));
         }
         if let Some(forward) = forward {
-            watch(move || forward.track(), move |_, _| send(WebPatch::Forward));
+            watch(
+                move || forward.track(),
+                move |(), _| send(WebPatch::Forward),
+            );
         }
         if let Some(stop) = stop {
-            watch(move || stop.track(), move |_, _| send(WebPatch::Stop));
+            watch(move || stop.track(), move |(), _| send(WebPatch::Stop));
         }
         if let Some(reload) = reload {
-            watch(move || reload.track(), move |_, _| send(WebPatch::Reload));
+            watch(move || reload.track(), move |(), _| send(WebPatch::Reload));
         }
 
         if let Some(force_reload) = force_reload {
             watch(
                 move || force_reload.track(),
-                move |_, _| send(WebPatch::ForceReload),
+                move |(), _| send(WebPatch::ForceReload),
             );
         }
 
@@ -2309,11 +2341,12 @@ impl Piece for WebView {
             let _keep_hooks_alive = &keep_hooks;
             if let Event::Custom { num, text, .. } = ev {
                 #[cfg(all(feature = "arkui", target_env = "ohos"))]
+                #[expect(clippy::float_cmp, reason = "report codes are small integers carried in a float")]
                 if *num == -3.0 {
                     // The controller is attached: install the scheme handler that serves the
                     // provider and asks the request filter, then load the first page, which
                     // waited for it.
-                    let provider = resources.as_ref().map(ResourceProvider::id).unwrap_or(0);
+                    let provider = resources.as_ref().map_or(0, ResourceProvider::id);
                     *registration.borrow_mut() =
                         resources_arkui::install(provider, keep_hooks.clone(), text);
                     if provider != 0 {
@@ -2402,8 +2435,7 @@ impl Piece for WebView {
                         .as_ref()
                         .filter(|_| app_link)
                         .or(on_link.as_ref())
-                        .map(|f| f(text))
-                        .unwrap_or(LinkPolicy::OpenSystem);
+                        .map_or(LinkPolicy::OpenSystem, |f| f(text));
                     match policy {
                         LinkPolicy::OpenSystem => open_system(text, &send),
                         LinkPolicy::InView if !app_link => {
@@ -2832,7 +2864,7 @@ mod tests {
                 "wrapper not closed for {hostile:?}: {js}"
             );
             assert!(
-                !js.contains("\n"),
+                !js.contains('\n'),
                 "raw newline leaked for {hostile:?}: {js}"
             );
         }

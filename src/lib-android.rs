@@ -93,7 +93,7 @@ pub(crate) fn remove_download(location: &str) {
     });
 }
 
-/// `trust_host`: WebView asks about each certificate error on its own thread, so the set of
+/// `trust_host`: `WebView` asks about each certificate error on its own thread, so the set of
 /// excepted hosts lives in Java.
 pub(crate) fn trust_host(host: &str) {
     java(|env| {
@@ -140,12 +140,12 @@ fn content_json(content: &PageContent) -> String {
     .to_string()
 }
 
-/// Whether document-start scripts run natively on this device's WebView.
+/// Whether document-start scripts run natively on this device's `WebView`.
 pub(crate) fn document_start_scripts() -> bool {
     java(|env| DayWebView::supportsDocumentStartScripts(env)).unwrap_or(false)
 }
 
-/// One of DayWebView's capability probes (`supportsProfiles`, `supportsDataClearing`).
+/// One of `DayWebView`'s capability probes (`supportsProfiles`, `supportsDataClearing`).
 pub(crate) fn capability(method: &str) -> day_spec::Support {
     let supported = java(|env| match method {
         "supportsProfiles" => DayWebView::supportsProfiles(env),
@@ -185,7 +185,7 @@ fn make(_backend: &mut Material, p: &WebProps, id: NodeId) -> AHandle {
             format!("file:///android_asset/{}/", p.inline_root),
         )
     };
-    let provider = p.resources.as_ref().map(ResourceProvider::id).unwrap_or(0) as i64;
+    let provider = p.resources.as_ref().map_or(0, ResourceProvider::id) as i64;
     let profile = if p.profile == WebProfile::default() {
         String::new()
     } else {
@@ -197,8 +197,7 @@ fn make(_backend: &mut Material, p: &WebProps, id: NodeId) -> AHandle {
         .content
         .requests
         .as_ref()
-        .map(super::content::register)
-        .unwrap_or(0);
+        .map_or(0, super::content::register);
     let content = content_json(&p.content);
     let view = day_toolkit_material::realize("web_view", |env| {
         let url = JString::from_str(env, &url)?;
@@ -239,6 +238,10 @@ fn make(_backend: &mut Material, p: &WebProps, id: NodeId) -> AHandle {
     view
 }
 
+#[expect(
+    clippy::match_same_arms,
+    reason = "the arms carry separate comments on why each patch has no command here"
+)]
 fn update(_backend: &mut Material, h: &AHandle, patch: &WebPatch) {
     // Evaluation (docs/webview-eval.md): `evaluateJavascript` plus the outer-JSON unquote and
     // the null/empty→engine-error mapping live in DayWebView.evalJs; the reply rides the
@@ -332,20 +335,19 @@ impl DayWebViewNativeInterface for DayWebViewAPI {
         method: JString<'l>,
         range: JString<'l>,
     ) -> Result<JObject<'l>, Self::Error> {
+        use std::fmt::Write as _;
         let url = string_of(env, &url)?;
         let method = string_of(env, &method)?;
         let range = string_of(env, &range)?;
         let r = super::resources::respond(provider as u64, &url, &method, &range);
         let bytes = env.byte_array_from_slice(&r.body)?;
         let mime = JString::from_str(env, &r.mime)?;
-        let headers = JString::from_str(
-            env,
-            r.headers
-                .iter()
-                .map(|(k, v)| format!("{k}: {v}\n"))
-                .collect::<String>(),
-        )?;
-        DayWebView::response(env, &mime, r.status as i32, &headers, &bytes)
+        let mut header_text = String::new();
+        for (k, v) in &r.headers {
+            let _ = writeln!(header_text, "{k}: {v}");
+        }
+        let headers = JString::from_str(env, header_text)?;
+        DayWebView::response(env, &mime, i32::from(r.status), &headers, &bytes)
     }
 
     fn downloadEvent<'l>(

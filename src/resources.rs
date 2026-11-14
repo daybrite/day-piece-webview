@@ -74,6 +74,9 @@ fn registry() -> &'static Mutex<HashMap<u64, Weak<Provider>>> {
     REG.get_or_init(Default::default)
 }
 impl ResourceProvider {
+    /// # Panics
+    ///
+    /// Panics when the provider registry's lock is poisoned.
     pub fn new(
         handler: impl Fn(ResourceRequest) -> ResourceResponse + Send + Sync + 'static,
     ) -> Self {
@@ -270,12 +273,16 @@ pub(crate) struct WireResponse {
     pub headers: std::ffi::CString,
     pub response: ResourceResponse,
 }
+#[expect(
+    clippy::unnecessary_box_returns,
+    reason = "every backend turns the box into a raw pointer for its engine"
+)]
 pub(crate) fn wire(r: ResourceResponse) -> Box<WireResponse> {
-    let headers = r
-        .headers
-        .iter()
-        .map(|(k, v)| format!("{k}: {v}\r\n"))
-        .collect::<String>();
+    use std::fmt::Write as _;
+    let mut headers = String::new();
+    for (k, v) in &r.headers {
+        let _ = write!(headers, "{k}: {v}\r\n");
+    }
     Box::new(WireResponse {
         status: r.status,
         mime: std::ffi::CString::new(r.mime.as_str()).unwrap_or_default(),
@@ -309,7 +316,7 @@ pub unsafe extern "C" fn day_web_resource_read(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn day_web_resource_free(r: *mut WireResponse) {
     if !r.is_null() {
-        drop(unsafe { Box::from_raw(r) })
+        drop(unsafe { Box::from_raw(r) });
     }
 }
 #[unsafe(no_mangle)]

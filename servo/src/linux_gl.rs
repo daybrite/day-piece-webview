@@ -3,7 +3,7 @@
 //! Preserve the toolkit's thread-local graphics binding around Servo calls.
 //!
 //! Qt can leave GLX current when invoking Day. libglvnd rejects binding Servo's EGL
-//! context while GLX is current (EGL_BAD_ACCESS), and rejects the reverse transition
+//! context while GLX is current (`EGL_BAD_ACCESS`), and rejects the reverse transition
 //! too. GTK may instead leave an EGL context current. Restore both APIs and EGL's
 //! selected client API before returning to the toolkit, including during unwinding.
 use std::{ffi::c_void, marker::PhantomData, os::raw::c_ulong, ptr, rc::Rc};
