@@ -722,6 +722,6 @@ fn release(_backend: &mut Uikit, h: &Retained<UIView>) {
     }
 }
 
-day_pieces::renderer!(day_toolkit_uikit::RENDERERS, Uikit,
+day_spec::renderer!(day_toolkit_uikit::RENDERERS, Uikit,
     kind: KIND, props: WebProps, patch: WebPatch,
-    make: make, update: update, measure: day_pieces::fill_measure, release: release);
+    make: make, update: update, measure: day_spec::fill_measure, release: release);

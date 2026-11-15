@@ -167,6 +167,6 @@ fn release(_backend: &mut Dom, h: &DomHandle) {
 
 // Defines `register()`, which `web_view()` calls: web-dom's registry is populated at runtime,
 // unlike the link-time `renderer!` the native arms use (wasm has no `linkme` slice).
-day_pieces::dom_renderer!(day_toolkit_dom::register_renderer, Dom,
+day_spec::dom_renderer!(day_toolkit_dom::register_renderer, Dom,
     kind: KIND, props: WebProps, patch: WebPatch,
     make: make, update: update, measure: measure, release: release);

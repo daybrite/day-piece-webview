@@ -28,6 +28,6 @@ fn release(_: &mut AppKit, h: &Retained<NSView>) {
     }
     super::macos_web::release(h);
 }
-day_pieces::renderer!(day_toolkit_appkit::RENDERERS, AppKit,
+day_spec::renderer!(day_toolkit_appkit::RENDERERS, AppKit,
  kind: KIND, props: WebProps, patch: WebPatch,
- make: make, update: update, measure: day_pieces::fill_measure, release: release);
+ make: make, update: update, measure: day_spec::fill_measure, release: release);

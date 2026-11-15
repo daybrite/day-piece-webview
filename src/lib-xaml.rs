@@ -361,6 +361,6 @@ fn release(_backend: &mut Xaml, h: &WinHandle) {
     unsafe { day_webview_xaml_release(h.0) };
 }
 
-day_pieces::renderer!(day_toolkit_winui::RENDERERS, Xaml,
+day_spec::renderer!(day_toolkit_winui::RENDERERS, Xaml,
     kind: KIND, props: WebProps, patch: WebPatch,
-    make: make, update: update, measure: day_pieces::fill_measure, release: release);
+    make: make, update: update, measure: day_spec::fill_measure, release: release);

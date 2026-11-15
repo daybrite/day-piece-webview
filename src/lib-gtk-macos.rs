@@ -232,4 +232,4 @@ fn release(_: &mut Gtk, w: &gtk4::Widget) {
         super::macos_web::release(&v);
     }
 }
-day_pieces::renderer!(day_toolkit_gtk::RENDERERS,Gtk,kind:KIND,props:WebProps,patch:WebPatch,make:make,update:update,measure:day_pieces::fill_measure,release:release);
+day_spec::renderer!(day_toolkit_gtk::RENDERERS,Gtk,kind:KIND,props:WebProps,patch:WebPatch,make:make,update:update,measure:day_spec::fill_measure,release:release);

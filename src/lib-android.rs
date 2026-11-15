@@ -319,9 +319,9 @@ fn release(_backend: &mut Material, handle: &AHandle) {
     java(|env| DayWebView::release(env, handle.0.as_obj()));
 }
 
-day_pieces::renderer!(day_toolkit_material::RENDERERS, Material,
+day_spec::renderer!(day_toolkit_material::RENDERERS, Material,
     kind: KIND, props: WebProps, patch: WebPatch,
-    make: make, update: update, measure: day_pieces::fill_measure, release: release);
+    make: make, update: update, measure: day_spec::fill_measure, release: release);
 
 impl DayWebViewNativeInterface for DayWebViewAPI {
     type Error = day_toolkit_material::jni::errors::Error;

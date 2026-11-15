@@ -35,7 +35,7 @@ arkui = ["dep:day-toolkit-arkui"]        # + [package.metadata.day.ohos]
 # Web: an <iframe>. Registered at runtime rather than link-time: wasm has no `linkme` distributed
 # slice (see lib-dom.rs), so the piece registers itself from its constructor. The same-origin policy
 # makes history and URL readback unreachable, so this arm is Emulated, not Native (docs/webview.md).
-dom = ["dep:day-toolkit-dom"]
+dom = ["dep:day-toolkit-dom", "dep:day-bridge"]
 
 [package.metadata.day]
 # Accept the pre-1.0 series; source compatibility between releases is not guaranteed.
@@ -55,7 +55,8 @@ day-async = "0.*"
 url = "2"
 percent-encoding = "2"
 serde_json = "1"
-day-bridge = "0.*"
+# The web arm's JavaScript bridge (src/browser.rs).
+day-bridge = { version = "0.*", optional = true }
 log = "0.4"
 day-spec = "0.*"
 day-core = "0.*"

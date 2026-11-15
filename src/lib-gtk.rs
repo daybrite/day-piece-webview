@@ -905,6 +905,6 @@ fn release(_backend: &mut Gtk, h: &gtk4::Widget) {
     page_content::release(h.as_ptr() as usize);
 }
 
-day_pieces::renderer!(day_toolkit_gtk::RENDERERS, Gtk,
+day_spec::renderer!(day_toolkit_gtk::RENDERERS, Gtk,
     kind: KIND, props: WebProps, patch: WebPatch,
-    make: make, update: update, measure: day_pieces::fill_measure, release: release);
+    make: make, update: update, measure: day_spec::fill_measure, release: release);

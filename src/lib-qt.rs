@@ -336,6 +336,6 @@ fn update(_backend: &mut Qt, h: &QtHandle, patch: &WebPatch) {
     }
 }
 
-day_pieces::renderer!(day_toolkit_qt::RENDERERS, Qt,
+day_spec::renderer!(day_toolkit_qt::RENDERERS, Qt,
     kind: KIND, props: WebProps, patch: WebPatch,
-    make: make, update: update, measure: day_pieces::fill_measure);
+    make: make, update: update, measure: day_spec::fill_measure);

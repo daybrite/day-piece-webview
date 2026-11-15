@@ -163,6 +163,6 @@ fn update(_backend: &mut ArkUi, h: &AHandle, patch: &WebPatch) {
     piece::update(h, cmd, arg);
 }
 
-day_pieces::renderer!(day_toolkit_arkui::RENDERERS, ArkUi,
+day_spec::renderer!(day_toolkit_arkui::RENDERERS, ArkUi,
     kind: KIND, props: WebProps, patch: WebPatch,
-    make: make, update: update, measure: day_pieces::fill_measure);
+    make: make, update: update, measure: day_spec::fill_measure);
