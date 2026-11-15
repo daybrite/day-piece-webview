@@ -229,8 +229,7 @@ fn frame_url(frame: &AnyObject) -> String {
     request
         .and_then(|r| r.URL())
         .and_then(|u| u.absoluteString())
-        .map(|s| s.to_string())
-        .unwrap_or_default()
+        .map_or_default(|s| s.to_string())
 }
 
 /// Why a navigation failed, in the front-end's terms, or `None` for the failures that are not
@@ -260,8 +259,7 @@ fn load_error(error: &NSError) -> Option<super::browsing::Notice> {
     };
     let url = failing
         .and_then(|value| value.downcast::<NSString>().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+        .map_or_default(|s| s.to_string());
     Some(super::browsing::Notice::LoadError {
         url,
         error: kind,
@@ -298,9 +296,9 @@ define_class!(
                 });
                 super::browsing::PromptReport::Download {
                     id,
-                    url: url.and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default(),
+                    url: url.and_then(|u| u.absoluteString()).map_or_default(|s| s.to_string()),
                     name,
-                    mime: mime.map(|m| m.to_string()).unwrap_or_default(),
+                    mime: mime.map_or_default(|m| m.to_string()),
                     size,
                 }
             });
@@ -527,7 +525,7 @@ pub(crate) fn challenge(
     let realm: Option<Retained<NSString>> = unsafe { msg_send![&space, realm] };
     let proxy: bool = unsafe { msg_send![&space, isProxy] };
     let failures: isize = unsafe { msg_send![&challenge, previousFailureCount] };
-    let realm = realm.map(|r| r.to_string()).unwrap_or_default();
+    let realm = realm.map_or_default(|r| r.to_string());
     ask(
         at.emit,
         at.node,
@@ -597,8 +595,7 @@ pub(crate) fn response_policy(
     let url: Option<Retained<NSURL>> = unsafe { msg_send![&inner, URL] };
     let url = url
         .and_then(|u| u.absoluteString())
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+        .map_or_default(|s| s.to_string());
     if provider == 0 || !url.starts_with("day-resource:") {
         return POLICY_DOWNLOAD;
     }
@@ -620,7 +617,7 @@ pub(crate) fn response_policy(
             id,
             url,
             name,
-            mime: mime.map(|m| m.to_string()).unwrap_or_default(),
+            mime: mime.map_or_default(|m| m.to_string()),
             size: -1,
         }
     });

@@ -948,8 +948,7 @@ impl Handlers {
 pub(crate) fn engine_scheme(url: &str) -> bool {
     let scheme = url
         .split_once(':')
-        .map(|(scheme, _)| scheme.to_ascii_lowercase())
-        .unwrap_or_default();
+        .map_or_default(|(scheme, _)| scheme.to_ascii_lowercase());
     matches!(
         scheme.as_str(),
         "http"

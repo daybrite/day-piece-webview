@@ -87,15 +87,14 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             security.register_uri_scheme_as_cors_enabled("day-resource");
         }
         context.register_uri_scheme("day-resource", move |request| {
-            let uri = request.uri().map(|u| u.to_string()).unwrap_or_default();
+            let uri = request.uri().map_or_default(|u| u.to_string());
             let method = request
                 .http_method()
                 .map_or_else(|| "GET".into(), |u| u.to_string());
             let range = request
                 .http_headers()
                 .and_then(|h| h.one("Range"))
-                .map(|s| s.to_string())
-                .unwrap_or_default();
+                .map_or_default(|s| s.to_string());
             let request = request.clone();
             let (tx, rx) = day_async::oneshot();
             super::resources::background(move || {
@@ -194,8 +193,8 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
         move |wv: &webkit6::WebView| {
             let loading = wv.is_loading();
             let text = super::encode_page_state(&PageState {
-                url: wv.uri().map(|s| s.to_string()).unwrap_or_default(),
-                title: wv.title().map(|s| s.to_string()).unwrap_or_default(),
+                url: wv.uri().map_or_default(|s| s.to_string()),
+                title: wv.title().map_or_default(|s| s.to_string()),
                 loading,
                 progress: if loading {
                     wv.estimated_load_progress()
@@ -750,7 +749,7 @@ fn update(_backend: &mut Gtk, h: &gtk4::Widget, patch: &WebPatch) {
                             .to_string());
                         }
                         if request["operation"].as_str() == Some("navigation") {
-                            return Ok(serde_json::json!({"url":wv.uri().map(|s|s.to_string()).unwrap_or_default(),"title":wv.title().map(|s|s.to_string()).unwrap_or_default(),"can_go_back":wv.can_go_back(),"can_go_forward":wv.can_go_forward(),"loading":wv.is_loading()}).to_string());
+                            return Ok(serde_json::json!({"url":wv.uri().map_or_default(|s|s.to_string()),"title":wv.title().map_or_default(|s|s.to_string()),"can_go_back":wv.can_go_back(),"can_go_forward":wv.can_go_forward(),"loading":wv.is_loading()}).to_string());
                         }
                         let network = wv.network_session().ok_or("profile unavailable")?;
                         let jar = network.cookie_manager().ok_or("cookies unavailable")?;

@@ -4,7 +4,7 @@
 name = "day-piece-webview-servo"
 version = "0.4.3"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.100"
 description = "Experimental Servo renderer for day-piece-webview"
 repository = "https://github.com/daybrite/day-piece-webview"
 license = "MPL-2.0"

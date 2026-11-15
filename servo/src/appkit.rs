@@ -243,12 +243,7 @@ impl ServoView {
             _ => None,
         };
         let key = named.map(servo::Key::Named).unwrap_or_else(|| {
-            servo::Key::Character(
-                event
-                    .characters()
-                    .map(|s| s.to_string())
-                    .unwrap_or_default(),
-            )
+            servo::Key::Character(event.characters().map_or_default(|s| s.to_string()))
         });
         let flags = event.modifierFlags();
         let mut modifiers = servo::Modifiers::empty();

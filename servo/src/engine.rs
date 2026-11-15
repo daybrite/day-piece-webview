@@ -151,10 +151,7 @@ impl State {
         let status = web.load_status();
         let loading = status != servo::LoadStatus::Complete;
         let state = PageState {
-            url: web
-                .url()
-                .map(|u| self.external_url(u.as_str()))
-                .unwrap_or_default(),
+            url: web.url().map_or_default(|u| self.external_url(u.as_str())),
             title: web.page_title().unwrap_or_default(),
             loading,
             progress: match status {
@@ -468,7 +465,7 @@ pub(crate) fn update(state: &Rc<State>, web: &servo::WebView, patch: &WebPatch) 
             if let Some(request) = data_request(script) {
                 let reply = if request["operation"] == "navigation" {
                     success_json(serde_json::json!({
-                        "url": web.url().map(|u| state.external_url(u.as_str())).unwrap_or_default(),
+                        "url": web.url().map_or_default(|u| state.external_url(u.as_str())),
                         "title": web.page_title().unwrap_or_default(), "can_go_back": web.can_go_back(),
                         "can_go_forward": web.can_go_forward(), "loading": web.load_status() != servo::LoadStatus::Complete,
                     }))

@@ -95,23 +95,20 @@ impl Messages {
         let (name, payload, origin, main_frame) = unsafe {
             let name: Retained<NSString> = msg_send![message, name];
             let body: *mut AnyObject = msg_send![message, body];
-            let payload = body
-                .as_ref()
-                .map(|body| {
-                    if let Some(text) = body.downcast_ref::<NSString>() {
-                        text.to_string()
-                    } else {
-                        let text: Retained<NSString> = msg_send![body, description];
-                        text.to_string()
-                    }
-                })
-                .unwrap_or_default();
+            let payload = body.as_ref().map_or_default(|body| {
+                if let Some(text) = body.downcast_ref::<NSString>() {
+                    text.to_string()
+                } else {
+                    let text: Retained<NSString> = msg_send![body, description];
+                    text.to_string()
+                }
+            });
             let frame: *mut AnyObject = msg_send![message, frameInfo];
             let (origin, main_frame) = match frame.as_ref() {
                 Some(frame) => {
                     let main: bool = msg_send![frame, isMainFrame];
                     let security: *mut AnyObject = msg_send![frame, securityOrigin];
-                    (security.as_ref().map(origin_text).unwrap_or_default(), main)
+                    (security.as_ref().map_or_default(origin_text), main)
                 }
                 None => (String::new(), false),
             };

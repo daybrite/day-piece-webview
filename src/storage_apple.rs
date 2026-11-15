@@ -119,14 +119,13 @@ pub(crate) fn page_state(web: &AnyObject) -> PageState {
         let url: Option<Retained<NSURL>> = msg_send![web, URL];
         let url = url
             .and_then(|url| url.absoluteString())
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+            .map_or_default(|s| s.to_string());
         let title: Option<Retained<NSString>> = msg_send![web, title];
         let loading: bool = msg_send![web, isLoading];
         let progress: f64 = msg_send![web, estimatedProgress];
         PageState {
             url,
-            title: title.map(|s| s.to_string()).unwrap_or_default(),
+            title: title.map_or_default(|s| s.to_string()),
             loading,
             // WebKit leaves the last load's estimate behind once it finishes; a finished page
             // reads as complete.

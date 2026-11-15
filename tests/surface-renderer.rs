@@ -6,6 +6,7 @@ use day_piece_webview::{JsHandle, WebPatch, WebProps, WebRenderer, renderer, web
 use day_pieces::Decorate;
 use day_reactive::{Scope, Signal};
 use day_spec::Support;
+use std::assert_matches;
 use std::{
     cell::{Cell, RefCell},
     future::Future,
@@ -112,9 +113,9 @@ fn surface_routes_eval_and_disposes_only_its_own_nodes() {
         ["attach", "eval", "release"]
     );
     let mut after_close = handle.eval("42");
-    assert!(matches!(
+    assert_matches!(
         Pin::new(&mut after_close).poll(&mut cx),
         Poll::Ready(Err(day_piece_webview::EvalError::ViewGone))
-    ));
+    );
     day_core::uninstall_tree();
 }

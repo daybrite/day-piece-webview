@@ -23,9 +23,9 @@ define_class!(
         fn start(&self, _web:&AnyObject, task:&AnyObject) {
             let request:Retained<NSURLRequest> = unsafe {msg_send![task, request]};
             let Some(url)=request.URL() else {return};
-            let text=url.absoluteString().map(|s|s.to_string()).unwrap_or_default();
+            let text=url.absoluteString().map_or_default(|s|s.to_string());
             let method=request.HTTPMethod().map_or_else(||"GET".into(), |s|s.to_string());
-            let range=request.valueForHTTPHeaderField(&NSString::from_str("Range")).map(|s|s.to_string()).unwrap_or_default();
+            let range=request.valueForHTTPHeaderField(&NSString::from_str("Range")).map_or_default(|s|s.to_string());
             let key=std::ptr::from_ref(task) as usize;
             let task=unsafe { Retained::retain(std::ptr::from_ref::<objc2::runtime::AnyObject>(task).cast_mut()) }.unwrap();
             let id=self.ivars().id;

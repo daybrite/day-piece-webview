@@ -2102,8 +2102,7 @@ impl Piece for WebView {
             }),
             rules: content_rules
                 .as_ref()
-                .map(day_pieces::Reactive::get_untracked)
-                .unwrap_or_default(),
+                .map_or_default(day_pieces::Reactive::get_untracked),
             scripts: user_scripts,
             styles: user_styles,
             messages: messages.iter().map(|(name, _)| name.clone()).collect(),
@@ -2159,7 +2158,7 @@ impl Piece for WebView {
             inline_root: if blocked_private {
                 String::new()
             } else {
-                inline.as_ref().map(|s| s.root.clone()).unwrap_or_default()
+                inline.as_ref().map_or_default(|s| s.root.clone())
             },
             inline_start: if inline.is_some() {
                 inline_start
@@ -2677,10 +2676,10 @@ mod tests {
         let mut future = scope.enter(|| JsHandle::new().eval("1 + 1"));
         scope.dispose();
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-        assert!(matches!(
+        std::assert_matches!(
             Pin::new(&mut future).poll(&mut context),
             Poll::Ready(Err(EvalError::ViewGone))
-        ));
+        );
     }
 
     #[test]

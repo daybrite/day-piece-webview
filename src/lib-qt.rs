@@ -237,8 +237,7 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
             p.resources
                 .as_ref()
                 .filter(|_| p.resource_site)
-                .map(ResourceProvider::base_url)
-                .unwrap_or_default(),
+                .map_or_default(ResourceProvider::base_url),
         )
     } else {
         (

@@ -104,8 +104,7 @@ extern "C" fn on_message(id: u64, envelope: *const c_char, source: *const c_char
         return;
     };
     let origin = url::Url::parse(&text(source))
-        .map(|url| url.origin().ascii_serialization())
-        .unwrap_or_default();
+        .map_or_default(|url| url.origin().ascii_serialization());
     day_toolkit_winui::emit(
         NodeId(id),
         super::script_message_event(
@@ -275,8 +274,7 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
         .resources
         .as_ref()
         .filter(|_| p.resource_site)
-        .map(ResourceProvider::base_url)
-        .unwrap_or_default();
+        .map_or_default(ResourceProvider::base_url);
     let handle = WinHandle(unsafe {
         day_webview_xaml_new(
             cstr(&p.url).as_ptr(),

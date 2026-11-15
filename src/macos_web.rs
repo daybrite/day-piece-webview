@@ -100,7 +100,7 @@ define_class!(
         }
         #[unsafe(method(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:))]
         fn js_prompt(&self, web: &WKWebView, message: &NSString, fallback: Option<&NSString>, frame: &AnyObject, done: &block2::DynBlock<dyn Fn(*mut NSString)>) {
-            let fallback = fallback.map(std::string::ToString::to_string).unwrap_or_default();
+            let fallback = fallback.map_or_default(std::string::ToString::to_string);
             duties::dialog(self.asking(web), DialogKind::Prompt, message, Some(fallback.clone()), frame, duties::Pending::Prompt(done.copy(), fallback));
         }
         #[unsafe(method(webView:didReceiveAuthenticationChallenge:completionHandler:))]
@@ -224,8 +224,7 @@ impl WebNav {
         let url = unsafe { action.request() }
             .URL()
             .and_then(|u| u.absoluteString())
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+            .map_or_default(|s| s.to_string());
         let activated =
             unsafe { action.navigationType() } == objc2_web_kit::WKNavigationType::LinkActivated;
         let modifiers: usize = unsafe { msg_send![action, modifierFlags] };

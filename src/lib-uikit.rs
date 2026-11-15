@@ -164,7 +164,7 @@ define_class!(
         }
         #[unsafe(method(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:))]
         fn js_prompt(&self, web: &WKWebView, message: &NSString, fallback: Option<&NSString>, frame: &AnyObject, done: &block2::DynBlock<dyn Fn(*mut NSString)>) {
-            let fallback = fallback.map(std::string::ToString::to_string).unwrap_or_default();
+            let fallback = fallback.map_or_default(std::string::ToString::to_string);
             duties::dialog(self.asking(web), DialogKind::Prompt, message, Some(fallback.clone()), frame, duties::Pending::Prompt(done.copy(), fallback));
         }
         #[unsafe(method(webView:didReceiveAuthenticationChallenge:completionHandler:))]
@@ -254,7 +254,7 @@ impl WebNav {
         let frame: *mut AnyObject = unsafe { msg_send![action, targetFrame] };
         let subframe = !frame.is_null() && !unsafe { msg_send![&*frame, isMainFrame] };
         let req: Retained<NSURLRequest> = unsafe { msg_send![action, request] };
-        let url = req.URL().and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default();
+        let url = req.URL().and_then(|u| u.absoluteString()).map_or_default(|s| s.to_string());
         if self.ivars().tabs.borrow().is_some() && let Some(request)=tab_scheme_request(&url) {
             day_toolkit_uikit::emit(self.ivars().node.get(), new_tab_event(request.url,request.background));
             return POLICY_CANCEL;
