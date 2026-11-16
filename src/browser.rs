@@ -144,7 +144,6 @@ day_bridge::bridge! {
         }
         function attach_browser(id, base) {
             const frame = dayHost.dom.element(id);
-            const site = new URL(base, document.baseURI);
             let current = null;
             function clicked(event) {
                 const anchor = event.target?.closest?.('a[href]');
@@ -152,6 +151,7 @@ day_bridge::bridge! {
                 let url;
                 try { url = new URL(anchor.getAttribute('href'), current.baseURI); }
                 catch { return; }
+                const site = new URL(dayHost.resources.siteUrl(base), document.baseURI);
                 if ((url.origin === site.origin && url.pathname.startsWith(site.pathname))
                     || url.href === 'about:blank') return;
                 event.preventDefault();

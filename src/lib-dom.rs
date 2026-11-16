@@ -84,6 +84,13 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
         // same-origin click hook before the first load: links leaving the site are cancelled
         // in-frame and reported (num -1), and the front-end runs the app's LinkPolicy.
         let base = format!("assets/data/{}/", p.inline_root);
+        // Preserve the declared AssetDir boundary, including a start page in a nested folder.
+        // app_assets explicitly allows the document to address the app's entire data tree.
+        backend.set_attr(
+            &h,
+            "data-day-site-root",
+            if p.inline_assets { "assets/data/" } else { &base },
+        );
         super::browser::attach(h.0 as i32, &base);
         load(backend, &h, &format!("{base}{}", p.inline_start));
     } else if !p.url.is_empty() {
