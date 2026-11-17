@@ -11,7 +11,7 @@ import { runInNewContext } from 'node:vm';
 const source = readFileSync(new URL('../src/browser.rs', import.meta.url), 'utf8');
 const arm = source.match(/js!\(r#"([\s\S]*?)"#\);/)[1];
 
-function setup() {
+function setup(siteRoot = 'assets/data/site/') {
     const events = [];
     const frame = new EventTarget();
     let release;
@@ -21,7 +21,12 @@ function setup() {
         Uint32Array,
         navigator: {},
         document: { baseURI: 'https://example.test/app/' },
-        dayHost: { dom: {
+        dayHost: { resources: {
+            siteUrl: base => {
+                assert.equal(base, 'assets/data/site/');
+                return siteRoot;
+            },
+        }, dom: {
             element: () => frame,
             emit: (...args) => events.push(args),
             onRelease: (_id, dispose) => { release = dispose; },
@@ -30,7 +35,7 @@ function setup() {
     attach(7, 'assets/data/site/');
     function load(path = 'index.html') {
         const doc = new EventTarget();
-        doc.baseURI = `https://example.test/app/assets/data/site/${path}`;
+        doc.baseURI = new URL(path, new URL(siteRoot, 'https://example.test/app/')).href;
         frame.contentDocument = doc;
         frame.dispatchEvent(new Event('load'));
         return doc;
@@ -47,17 +52,19 @@ function click(doc, href) {
     return event.defaultPrevented;
 }
 
-test('bundled links navigate; outside links become app events', () => {
-    const s = setup();
-    const doc = s.load();
-    for (const href of ['next.html', '#anchor', '?query=1', 'about:blank']) {
-        assert.equal(click(doc, href), false, href);
-    }
-    for (const href of ['webviewdemo://greeting', 'https://elsewhere.test/', '../site-other/index.html']) {
-        assert.equal(click(doc, href), true, href);
-        assert.deepEqual(s.events.at(-1), [7, -1, new URL(href, doc.baseURI).href]);
-    }
-});
+for (const siteRoot of ['assets/data/site/', '__day_bundle/test-version/assets/data/site/']) {
+    test(`bundled links navigate; outside links become app events (${siteRoot})`, () => {
+        const s = setup(siteRoot);
+        const doc = s.load();
+        for (const href of ['next.html', '#anchor', '?query=1', 'about:blank']) {
+            assert.equal(click(doc, href), false, href);
+        }
+        for (const href of ['webviewdemo://greeting', 'https://elsewhere.test/', '../site-other/index.html']) {
+            assert.equal(click(doc, href), true, href);
+            assert.deepEqual(s.events.at(-1), [7, -1, new URL(href, doc.baseURI).href]);
+        }
+    });
+}
 
 test('navigation replaces listeners and release removes document and frame hooks', () => {
     const s = setup();
