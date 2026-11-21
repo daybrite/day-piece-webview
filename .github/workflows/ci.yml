@@ -237,6 +237,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # The image's Visual Studio 18 STL refuses Clang older than 22 (STL1000), and mozangle's
+          # bindgen parses those headers with the image's preinstalled LLVM, which trails it
+          # (`choco install llvm` above keeps what is installed). Upgrade it, and say so plainly
+          # if the package still lags.
+          choco upgrade -y --no-progress llvm
+          if ($LASTEXITCODE -ne 0) { throw 'Upgrading LLVM failed' }
+          $clangMajor = [int]((& 'C:/Program Files/LLVM/bin/clang.exe' --version | Select-Object -First 1) -replace '.*version (\d+)\..*', '$1')
+          if ($clangMajor -lt 22) { throw "Clang $clangMajor is older than the 22 that MSVC's STL requires" }
           'C:/Program Files/LLVM/bin' >> $env:GITHUB_PATH
           'LIBCLANG_PATH=C:/Program Files/LLVM/bin' >> $env:GITHUB_ENV
           # Git Bash prepends its own link.exe, even after msvc-dev-cmd sets PATH.
