@@ -157,7 +157,10 @@ impl ResourceKind {
     /// The kind a Chromium `ResourceType` names (QtWebEngine's `ResourceType`, ArkWeb's
     /// `ArkWeb_ResourceType`: the same numbering, 0 = main frame … 20). Qt's later additions
     /// (21 = WebSocket, 22 = JSON) follow it.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "only the Qt and ArkUI arms see Chromium resource types"
+    )]
     pub(crate) fn from_chromium(code: i32) -> ResourceKind {
         match code {
             0 | 19 => ResourceKind::Document,
@@ -177,7 +180,10 @@ impl ResourceKind {
     }
 
     /// The kind a WebView2 `COREWEBVIEW2_WEB_RESOURCE_CONTEXT` names.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "only the WinUI arm sees WebView2 resource contexts"
+    )]
     #[expect(
         clippy::match_same_arms,
         reason = "one arm per WebView2 context value, in numeric order"
@@ -254,7 +260,10 @@ impl ContentRuleList {
 
     /// The identifier the compiled list is stored under: the id and version together, so a
     /// relaunch finds the compiled list for this version and a new version compiles afresh.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "only the Apple arms keep compiled rule lists in a store"
+    )]
     pub(crate) fn store_identifier(&self) -> String {
         format!("{}@{}", self.id, self.version)
     }
@@ -594,7 +603,10 @@ pub(crate) fn deliver_blocked(
 static TOKENS: Mutex<BTreeMap<u64, std::sync::Weak<Hooks>>> = Mutex::new(BTreeMap::new());
 
 /// Register `hooks` and return the token that finds them again (never 0).
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the Android, Qt, WinUI and ArkUI arms reach their hooks by token"
+)]
 pub(crate) fn register(hooks: &RequestHooks) -> u64 {
     let token = day_async::next_token();
     let mut tokens = lock(&TOKENS);
@@ -604,13 +616,16 @@ pub(crate) fn register(hooks: &RequestHooks) -> u64 {
 }
 
 /// Forget a [`register`]ed token at once.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn unregister(token: u64) {
     lock(&TOKENS).remove(&token);
 }
 
 /// The hooks a token names, while their view lives.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the Android, Qt, WinUI and ArkUI arms reach their hooks by token"
+)]
 pub(crate) fn hooks(token: u64) -> Option<RequestHooks> {
     if token == 0 {
         return None;
@@ -644,7 +659,10 @@ pub struct PageContent {
 
 impl PageContent {
     /// Whether the view has page scripts of any kind to install.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "only the Android, Qt, WinUI and ArkUI arms ask before injecting the bridge"
+    )]
     pub(crate) fn has_scripts(&self) -> bool {
         !self.scripts.is_empty() || !self.styles.is_empty() || !self.messages.is_empty()
     }
@@ -652,7 +670,10 @@ impl PageContent {
     /// The scripts a backend installs, in order: the message shim (for `transport`, when pages
     /// may post messages), each user style as a script that adds a `<style>` (unless the engine
     /// has native user style sheets), then the app's scripts.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "every native arm injects scripts; the web arm and a build with none do not"
+    )]
     pub(crate) fn page_scripts(
         &self,
         transport: Transport,
@@ -675,7 +696,10 @@ impl PageContent {
 }
 
 /// How a backend's message shim reaches the app.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "each arm builds its own transport, so the others' variants are never built"
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Transport {
     /// WebKit: `webkit.messageHandlers[name]`, a handler with replies, so `postMessage` itself
@@ -758,7 +782,10 @@ pub(crate) fn style_script(css: &str) -> String {
 /// (Android's `addDocumentStartJavaScript`, WebView2, ArkWeb) run with its own timing and frames:
 /// a main-frame script returns early in iframes, and a document-end script waits for
 /// `DOMContentLoaded`.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the Android, WinUI and ArkUI arms lack a native document-start injection"
+)]
 pub(crate) fn document_start_everywhere(script: &UserScript) -> String {
     let mut source = script.source.to_string();
     if script.at == InjectAt::DocumentEnd {
@@ -774,7 +801,10 @@ pub(crate) fn document_start_everywhere(script: &UserScript) -> String {
 
 /// The JavaScript that settles request `id` in the top-level document with `reply`, for the
 /// envelope transports.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the Qt and ArkUI arms answer the page through a script"
+)]
 pub(crate) fn reply_script(id: u64, reply: Option<&str>) -> String {
     let value = reply.map_or_else(|| "null".to_owned(), crate::js_string_literal);
     format!("window.__dayMessageReply&&window.__dayMessageReply({id},{value})")
@@ -798,7 +828,10 @@ pub(crate) struct MediaReport {
 }
 
 /// Split an envelope a shim posted (`{"dayMessage":name,"id":n,"payload":text}`).
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the Qt and WinUI arms receive messages in an envelope"
+)]
 pub(crate) fn parse_envelope(text: &str) -> Option<(String, u64, String)> {
     #[derive(serde::Deserialize)]
     struct Envelope {
@@ -888,13 +921,19 @@ pub fn script_message_support() -> Support {
 /// that are about to be replaced, or none.
 #[derive(Default)]
 // Only the WebKit backends compile rule lists; other builds keep it for its tests.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the Apple and Linux GTK arms hold loads while rules compile"
+)]
 pub(crate) struct RuleGate {
     generation: std::cell::Cell<u64>,
     pending_load: std::cell::RefCell<Option<Box<dyn FnOnce()>>>,
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the Apple and Linux GTK arms hold loads while rules compile"
+)]
 impl RuleGate {
     /// Start a generation for a new set of lists, holding `load` (the first page load) when
     /// there is one. Returns the generation to hand to [`RuleGate::finish`].

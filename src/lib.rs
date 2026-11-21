@@ -133,7 +133,10 @@ pub fn private_browsing_support() -> day_spec::Support {
     }
 }
 /// Native cookie URL filtering, shared by engines that expose a whole cookie jar.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "the Apple cookie store (storage_apple.rs) is its only caller"
+)]
 pub(crate) fn cookie_matches(url: &str, domain: &str, path: &str, secure: bool) -> bool {
     let Ok(url) = url::Url::parse(url) else {
         return false;
@@ -465,7 +468,10 @@ pub enum LinkPolicy {
 /// the two that build a file URL from a path need the tail back, because `fileURLWithPath:`
 /// would percent-encode `?` and `#` into the file name.
 // Only the two file-URL arms call this; the test below covers it in every build.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the AppKit and UIKit arms load bundled pages through it"
+)]
 pub(crate) fn split_page(page: &str) -> (&str, &str) {
     match page.find(['?', '#']) {
         Some(i) => page.split_at(i),
@@ -843,7 +849,6 @@ const EVAL_REFUSED: &str = "DayEvalRefused";
 // Used by the per-backend arms, each of which is `#[cfg]`-gated to one toolkit, so on any single
 // build all but one caller is compiled out, and on a build whose backend has no eval arm yet there
 // are none. Which callers exist is a build-configuration accident, not a sign this is unused.
-#[allow(dead_code)]
 pub(crate) fn engine_error(name: &str, message: &str) -> String {
     format!("0{SEP}{name}{SEP}{message}")
 }
@@ -1025,7 +1030,6 @@ const PAGE_STATE_REPORT: f64 = -5.0;
 /// the separator still decodes; a URL never holds a raw control character. Java, C++ and ArkTS
 /// compose the same text, so the format stays this plain.
 // The Rust arms call this; a build whose arm composes the text natively compiles it out.
-#[allow(dead_code)]
 pub(crate) fn encode_page_state(state: &PageState) -> String {
     let flag = |b: bool| if b { '1' } else { '0' };
     format!(
@@ -1040,7 +1044,6 @@ pub(crate) fn encode_page_state(state: &PageState) -> String {
 }
 
 /// A page-state report as an event, for the arms that emit from Rust.
-#[allow(dead_code)]
 pub(crate) fn page_state_event(state: &PageState) -> Event {
     Event::Custom {
         tag: "webview:state",
@@ -1091,7 +1094,6 @@ const CONTENT_RULES_ERROR: f64 = -9.0;
 const MEDIA_REPORT: f64 = -10.0;
 
 /// A blocked-load report as an event, for arms that report through the event channel.
-#[allow(dead_code)]
 pub(crate) fn blocked_event(loads: &[BlockedLoad]) -> Event {
     Event::Custom {
         tag: "webview:blocked",
@@ -1101,7 +1103,6 @@ pub(crate) fn blocked_event(loads: &[BlockedLoad]) -> Event {
 }
 
 /// A page message as an event: its reply goes back as [`WebPatch::ScriptReply`] with `id`.
-#[allow(dead_code)]
 pub(crate) fn script_message_event(id: u64, message: ScriptMessage) -> Event {
     Event::Custom {
         tag: "webview:message",
@@ -1111,7 +1112,6 @@ pub(crate) fn script_message_event(id: u64, message: ScriptMessage) -> Event {
 }
 
 /// A content rule list compile failure as an event.
-#[allow(dead_code)]
 pub(crate) fn content_rules_error_event(id: &str, message: &str) -> Event {
     Event::Custom {
         tag: "webview:rules",
@@ -1126,7 +1126,6 @@ pub(crate) fn content_rules_error_event(id: &str, message: &str) -> Event {
 
 /// A camera or microphone request as an event: the answer goes back as
 /// [`WebPatch::MediaDecision`] with `id`.
-#[allow(dead_code)]
 pub(crate) fn media_event(id: u64, request: MediaRequest) -> Event {
     Event::Custom {
         tag: "webview:media",
@@ -1137,7 +1136,7 @@ pub(crate) fn media_event(id: u64, request: MediaRequest) -> Event {
 
 /// Encode a scroll report: `<offset>␟<content height>␟<viewport height>␟<dragging>`, in points
 /// rounded to tenths, the flag a `0`/`1` digit. Java composes the same text.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "only the UIKit arm reports its scroll position")]
 pub(crate) fn encode_scroll_state(state: &ScrollState) -> String {
     format!(
         "{:.1}{SEP}{:.1}{SEP}{:.1}{SEP}{}",
@@ -1149,7 +1148,7 @@ pub(crate) fn encode_scroll_state(state: &ScrollState) -> String {
 }
 
 /// A scroll report as an event, for the arms that emit from Rust.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "only the UIKit arm reports its scroll position")]
 pub(crate) fn scroll_state_event(state: &ScrollState) -> Event {
     Event::Custom {
         tag: "webview:scroll",

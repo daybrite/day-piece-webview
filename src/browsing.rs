@@ -102,7 +102,10 @@ pub(crate) enum Notice {
 }
 
 /// A prompt as an event, for the arms that emit from Rust.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the Apple arms emit prompts from Rust; the others emit from Java, C++ or JS"
+)]
 pub(crate) fn prompt_event(report: &PromptReport) -> day_spec::Event {
     day_spec::Event::Custom {
         tag: "webview:prompt",
@@ -112,7 +115,10 @@ pub(crate) fn prompt_event(report: &PromptReport) -> day_spec::Event {
 }
 
 /// A notice as an event, for the arms that emit from Rust.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the Apple arms emit notices from Rust; the others emit from Java, C++ or JS"
+)]
 pub(crate) fn notice_event(notice: &Notice) -> day_spec::Event {
     day_spec::Event::Custom {
         tag: "webview:notice",
@@ -142,7 +148,10 @@ pub(crate) struct Answer {
 
 impl Answer {
     /// Read an answer a backend received; anything unreadable cancels.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "only the Apple arms read an answer in Rust; the others read it in Java, C++ or JS"
+    )]
     pub(crate) fn parse(json: &str) -> Answer {
         serde_json::from_str(json).unwrap_or_default()
     }
@@ -561,7 +570,10 @@ thread_local! {
 }
 
 /// A download's progress, from its backend, on the main thread.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "only the Apple and Android arms report downloads through Rust"
+)]
 #[expect(
     clippy::needless_pass_by_value,
     reason = "each backend hands over the event it has just built"
@@ -757,7 +769,10 @@ pub enum UserAgent {
 impl UserAgent {
     /// The form a backend receives at creation: empty for the engine's own, `\u{1}` for the
     /// platform browser's, or the custom string.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "only the Android arm hands the user agent over in this form"
+    )]
     pub(crate) fn wire(&self) -> &str {
         match self {
             UserAgent::Engine => "",
@@ -771,7 +786,7 @@ impl UserAgent {
 /// for `WKWebViewConfiguration.applicationNameForUserAgent`. WebKit writes everything before
 /// it, so the device and its content mode stay the engine's to describe. `version` is the
 /// system's `major.minor`.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "only the Apple arms describe Safari's user agent")]
 pub(crate) fn safari_application_name(version: &str, mobile: bool) -> String {
     if mobile {
         format!("Version/{version} Mobile/15E148 Safari/604.1")
@@ -944,7 +959,6 @@ impl Handlers {
 /// Whether a navigation to `url` is one a web engine loads itself. Anything else (`mailto:`,
 /// `tel:`, an app's own scheme, Android's `intent:`) is another program's to open, and a view
 /// reports it like a link out of a bundled site ([`crate::WebView::on_external_link`]).
-#[allow(dead_code)]
 pub(crate) fn engine_scheme(url: &str) -> bool {
     let scheme = url
         .split_once(':')

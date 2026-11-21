@@ -7,6 +7,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 ## Unreleased
 
+- The Servo renderer reads Day's typed keys (`Key`, `Modifiers`): a key the toolkit repeats
+  reaches the page as a repeat, and a reported release adds no second keystroke.
 - Fix: web builds exclude native file-URL conversion in `open_download`, which returns `false`
   on the web where opening native downloaded files is unsupported.
 - New: `WebView::user_agent(UserAgent::Browser)` sends the platform browser's user agent

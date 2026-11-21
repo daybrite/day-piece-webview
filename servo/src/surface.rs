@@ -5,7 +5,7 @@
 use crate::engine::{self, State, Waker};
 use day_core::{Bitmap, BuildCx, RNode, rnode_to_id, with_tree};
 use day_piece_webview::{WebPatch, WebProps, WebRenderer, renderer};
-use day_spec::{DrawOp, Event, GestureKind, KeyEvent, Point, Rect, Size, Support};
+use day_spec::{DrawOp, Event, GestureKind, Key, KeyEvent, Point, Rect, Size, Support};
 use dpi::PhysicalSize;
 use image::{
     ImageEncoder,
@@ -295,29 +295,34 @@ impl View {
         });
     }
     fn key(&self, event: &KeyEvent) {
-        let named = match event.key.as_str() {
-            "Enter" => Some(servo::NamedKey::Enter),
-            "Tab" => Some(servo::NamedKey::Tab),
-            "Backspace" => Some(servo::NamedKey::Backspace),
-            "Delete" => Some(servo::NamedKey::Delete),
-            "Escape" => Some(servo::NamedKey::Escape),
-            "ArrowLeft" => Some(servo::NamedKey::ArrowLeft),
-            "ArrowRight" => Some(servo::NamedKey::ArrowRight),
-            "ArrowUp" => Some(servo::NamedKey::ArrowUp),
-            "ArrowDown" => Some(servo::NamedKey::ArrowDown),
+        // Each press below sends its own release, so the page sees a whole keystroke whether
+        // or not the toolkit reports releases; a reported release adds nothing.
+        if event.is_release() {
+            return;
+        }
+        let named = match event.key {
+            Key::Enter => Some(servo::NamedKey::Enter),
+            Key::Tab => Some(servo::NamedKey::Tab),
+            Key::Backspace => Some(servo::NamedKey::Backspace),
+            Key::Delete => Some(servo::NamedKey::Delete),
+            Key::Escape => Some(servo::NamedKey::Escape),
+            Key::ArrowLeft => Some(servo::NamedKey::ArrowLeft),
+            Key::ArrowRight => Some(servo::NamedKey::ArrowRight),
+            Key::ArrowUp => Some(servo::NamedKey::ArrowUp),
+            Key::ArrowDown => Some(servo::NamedKey::ArrowDown),
             _ => None,
         };
         let key = named
             .map(servo::Key::Named)
-            .unwrap_or_else(|| servo::Key::Character(event.key.clone()));
+            .unwrap_or_else(|| servo::Key::Character(event.key.name()));
         let mut modifiers = servo::Modifiers::empty();
-        if event.modifiers & KeyEvent::SHIFT != 0 {
+        if event.shift() {
             modifiers |= servo::Modifiers::SHIFT;
         }
-        if event.modifiers & KeyEvent::ALT != 0 {
+        if event.alt() {
             modifiers |= servo::Modifiers::ALT;
         }
-        if event.modifiers & KeyEvent::PRIMARY != 0 {
+        if event.primary() {
             modifiers |= if cfg!(target_os = "macos") {
                 servo::Modifiers::META
             } else {
@@ -333,7 +338,7 @@ impl View {
                         servo::Code::Unidentified,
                         servo::Location::Standard,
                         modifiers,
-                        false,
+                        event.is_repeat(),
                         false,
                     ),
                 ));
