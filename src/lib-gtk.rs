@@ -315,6 +315,49 @@ fn make(_backend: &mut Gtk, p: &WebProps, id: NodeId) -> gtk4::Widget {
             false
         });
     }
+    if !p.context_menu.is_empty() {
+        let entries = p.context_menu.clone();
+        wv.connect_context_menu(move |web, menu, hit| {
+            use webkit6::ContextMenuAction as Stock;
+            let document = web.uri().unwrap_or_default().to_string();
+            for item in menu.items() {
+                let kind = match item.stock_action() {
+                    Stock::OpenLinkInNewWindow => WebMenuTarget::Link,
+                    Stock::OpenImageInNewWindow => WebMenuTarget::Image,
+                    _ => continue,
+                };
+                if entries.iter().any(|e| e.target == kind) {
+                    menu.remove(&item);
+                }
+            }
+            for (i, entry) in entries.iter().enumerate().rev() {
+                let url = match entry.target {
+                    WebMenuTarget::Link => hit.link_uri(),
+                    WebMenuTarget::Image => hit.image_uri(),
+                    // WebKitGTK owns the stock save command and its Downloads destination.
+                    WebMenuTarget::DownloadImage => continue,
+                };
+                let Some(url) = url.filter(|url| context_menu::web_address(url)) else {
+                    continue;
+                };
+                let action = gtk4::gio::SimpleAction::new(&format!("day-web-context-{i}"), None);
+                let document = document.clone();
+                let weak = web.downgrade();
+                let command = entry.id.clone();
+                action.connect_activate(move |_, _| {
+                    if weak.upgrade().and_then(|w| w.uri()).as_deref() == Some(document.as_str()) {
+                        day_toolkit_gtk::emit(id, context_menu::event(&command, &url, &document));
+                    }
+                });
+                menu.prepend(&webkit6::ContextMenuItem::from_gaction(
+                    &action,
+                    &entry.label,
+                    None,
+                ));
+            }
+            false
+        });
+    }
     let mut first: Option<String> = None;
     if !p.inline_root.is_empty() {
         // Inline mode (docs/webview.md): extract-to-cache (above), then a file URL; WebKit

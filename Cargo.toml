@@ -1,6 +1,6 @@
 [package]
 name = "day-piece-webview"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2024"
 rust-version = "1.100"
 description = "An embedded native web view for Day apps: remote pages and bundled sites"
@@ -48,6 +48,9 @@ compat = "0.*"
 backends = ["appkit", "gtk", "qt", "uikit", "material", "xaml", "winui", "arkui", "dom"]
 assets = ["web"]
 
+[target.'cfg(target_os = "ios")'.dependencies]
+day-localization-ui = "0.*"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 psl = "2.1"
@@ -89,6 +92,12 @@ cc = "1"
 day-mock = "0.*"
 
 # WebKit answers on the main thread's run loop, so this test runs its own `main`.
+[[test]]
+name = "context-menu-appkit"
+path = "tests/context-menu-appkit.rs"
+harness = false
+required-features = ["appkit"]
+
 [[test]]
 name = "content-rules-macos"
 harness = false

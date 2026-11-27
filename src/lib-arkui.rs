@@ -13,8 +13,8 @@
 // ---------------------------------------------------------------------------
 
 use super::*;
-use day_toolkit_arkui::{AHandle, ArkUi, piece};
 use day_spec::NodeId;
+use day_toolkit_arkui::{AHandle, ArkUi, piece};
 
 fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
     // `props` is one string: the initial URL, or the inline-site marker the ArkTS side parses
@@ -58,6 +58,15 @@ fn make(_backend: &mut ArkUi, p: &WebProps, id: NodeId) -> AHandle {
         )
     } else {
         props
+    };
+    let props = if p.context_menu.is_empty() {
+        props
+    } else {
+        format!(
+            "day-menu{SEP}{}{SEP}{props}",
+            serde_json::to_string(&p.context_menu).unwrap_or_default(),
+            SEP = super::SEP
+        )
     };
     // Settings other than the defaults lead with their own marker, outermost:
     // `day-settings<US><text zoom percent><US><desktop 0/1><US><scripts 0/1><US>`.
@@ -108,7 +117,10 @@ fn zoom_percent(zoom: f64) -> u32 {
     (zoom * 100.0).round() as u32
 }
 
-#[expect(clippy::trivially_copy_pass_by_ref, reason = "the renderer table fixes this signature")]
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "the renderer table fixes this signature"
+)]
 #[expect(
     clippy::match_same_arms,
     reason = "the arms carry separate comments on why each patch has no command here"
@@ -136,7 +148,11 @@ fn update(_backend: &mut ArkUi, h: &AHandle, patch: &WebPatch) {
     }
     // A page message's reply, settled in the top-level document.
     if let WebPatch::ScriptReply { id, reply } = patch {
-        piece::update(h, "run", &super::content::reply_script(*id, reply.as_deref()));
+        piece::update(
+            h,
+            "run",
+            &super::content::reply_script(*id, reply.as_deref()),
+        );
         return;
     }
     let (cmd, arg) = match patch {

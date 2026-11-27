@@ -11,10 +11,10 @@
 // ---------------------------------------------------------------------------
 
 use super::*;
+use day_spec::NodeId;
 use day_toolkit_material::jni::Env;
 use day_toolkit_material::jni::objects::{JClass, JObject, JString};
 use day_toolkit_material::{AHandle, Material, java, string_of};
-use day_spec::NodeId;
 
 // This piece's Java class (src/DayWebView.java, on the app classpath at build).
 day_toolkit_material::java_class! {
@@ -39,6 +39,7 @@ day_toolkit_material::java_class! {
         static fn setZoom(view: android.view.View, zoom: jdouble),
         static fn setDesktopMode(view: android.view.View, desktop: jboolean),
         static fn setJavaScript(view: android.view.View, enabled: jboolean),
+        static fn configureContextMenu(view: android.view.View, model: JString, downloads: jboolean),
         static fn configureTabs(view: android.view.View, foreground: JString, background: JString),
         static fn setTransparent(view: android.view.View),
         static fn reportScroll(view: android.view.View),
@@ -229,6 +230,15 @@ fn make(_backend: &mut Material, p: &WebProps, id: NodeId) -> AHandle {
             let foreground = JString::from_str(env, &labels.foreground)?;
             let background = JString::from_str(env, &labels.background)?;
             DayWebView::configureTabs(env, view.0.as_obj(), &foreground, &background)
+        });
+    }
+    if !p.context_menu.is_empty() {
+        java(|env| {
+            let model = JString::from_str(
+                env,
+                &serde_json::to_string(&p.context_menu).unwrap_or_default(),
+            )?;
+            DayWebView::configureContextMenu(env, view.0.as_obj(), &model, p.browse.downloads)
         });
     }
     if p.transparent {

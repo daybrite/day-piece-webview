@@ -16,7 +16,10 @@
 // backends.
 
 import { BuilderNode, FrameNode, UIContext } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
+import { fileIo as fs, picker } from '@kit.CoreFileKit';
+import { common } from '@kit.AbilityKit';
 import nativeEntry from 'libentry.so';
 import { DayPieceModule } from '../DayPiece';
 import { Controller, evalError, messageReport } from './Controller';
@@ -56,8 +59,68 @@ class ContentProps {
   scripts: string = '';
 }
 
+interface WebMenuEntry {
+  id: string;
+  label: string;
+  target: string;
+}
+interface MenuChoice {
+  label: string;
+  run: () => void;
+}
+
+// ArkWeb writes the response using the originating controller. Export the completed
+// file through DocumentsUI so the user can reach it outside the app sandbox.
+class ImageDownloads {
+  delegate: webview.WebDownloadDelegate = new webview.WebDownloadDelegate();
+  pending: Set<string> = new Set<string>();
+  files: Map<string,string> = new Map<string,string>();
+  private ctx: common.UIAbilityContext;
+  private controller: webview.WebviewController;
+  constructor(ctx:common.UIAbilityContext, controller:webview.WebviewController) {
+    this.ctx=ctx;
+    this.controller=controller;
+    this.delegate.onBeforeDownload((item: webview.WebDownloadItem) => {
+      if (!this.pending.delete(item.getUrl())) { item.cancel(); return; }
+      const path=this.ctx.cacheDir + '/day-image-' + encodeURIComponent(item.getGuid());
+      this.files.set(item.getGuid(),path);
+      item.start(path);
+    });
+    this.delegate.onDownloadFinish((item: webview.WebDownloadItem) => { this.exportFile(item); });
+    this.delegate.onDownloadFailed((item: webview.WebDownloadItem) => { this.cleanup(item.getGuid()); });
+    this.controller.setDownloadDelegate(this.delegate);
+  }
+  start(url:string):void {
+    if (this.pending.has(url)) return;
+    this.pending.add(url);
+    try { this.controller.startDownload(url); }
+    catch (err) { this.pending.delete(url);throw new Error(String(err)); }
+  }
+  cleanup(id:string):void {
+    const path=this.files.get(id);
+    this.files.delete(id);
+    if (path) { try { fs.unlinkSync(path); } catch (_) {} }
+  }
+  async exportFile(item:webview.WebDownloadItem):Promise<void> {
+    const id=item.getGuid();
+    const path=this.files.get(id);
+    if (!path) return;
+    try {
+      const options=new picker.DocumentSaveOptions();
+      options.newFileNames=[item.getSuggestedFileName().split(/[\\/]/).pop() || 'image'];
+      const uris=await new picker.DocumentViewPicker(this.ctx).save(options);
+      if (uris.length) {
+        const file=fs.openSync(uris[0],fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+        try { fs.copyFileSync(path,file.fd); } finally { fs.closeSync(file); }
+      }
+    } finally { this.cleanup(id); }
+  }
+}
+
 class DayWebViewParams {
   id: number = 0;
+  menu: WebMenuEntry[] = [];
+  downloads: ImageDownloads | undefined = undefined;
   tabs: boolean = false;
   foregroundLabel: string = '';
   backgroundLabel: string = '';
@@ -138,14 +201,38 @@ function dayWebViewBuilder(params: DayWebViewParams) {
       }
     })
     .onContextMenuShow((event) => {
-      const url: string = event.param.getLinkUrl();
-      if (!params.tabs || url === '') return false;
-      params.ui?.getPromptAction().showActionMenu({buttons:[
-        {text:params.foregroundLabel,color:'#007DFF'},
-        {text:params.backgroundLabel,color:'#007DFF'}
-      ]}).then((result) => {
-        if(!params.state.isDisposed())nativeEntry.pieceEvent(params.id,JSON.stringify({url:url,background:result.index===1}),-4);
-      }).catch(() => {});
+      if (!event || !params.ui) return false;
+      const link=event.param.getLinkUrl();
+      const image=event.param.getMediaType()===ContextMenuMediaType.Image ? event.param.getSourceUrl() : '';
+      const document=params.controller.getUrl();
+      const choices: MenuChoice[]=[];
+      for (const entry of params.menu) {
+        const url=entry.target==='link' ? link : image;
+        if (!/^https?:\/\//i.test(url)) continue;
+        if (entry.target==='download-image') {
+          choices.push({label:entry.label, run:()=>{
+            const ctx=params.ui?.getHostContext() as common.UIAbilityContext;
+            if (!params.downloads) params.downloads=new ImageDownloads(ctx,params.controller);
+            params.downloads.start(url);
+          }});
+        } else {
+          choices.push({label:entry.label,run:()=>{
+            nativeEntry.pieceEvent(params.id,JSON.stringify({id:entry.id,url:url,document:document}),-13);
+          }});
+        }
+      }
+      if (params.tabs && link) {
+        choices.push({label:params.foregroundLabel,run:()=>nativeEntry.pieceEvent(params.id,JSON.stringify({url:link,background:false}),-4)});
+        choices.push({label:params.backgroundLabel,run:()=>nativeEntry.pieceEvent(params.id,JSON.stringify({url:link,background:true}),-4)});
+      }
+      if (!choices.length) return false;
+      const buttons:[promptAction.Button,promptAction.Button?,promptAction.Button?,promptAction.Button?,promptAction.Button?,promptAction.Button?]=[
+        {text:choices[0].label,color:'#007DFF'}
+      ];
+      choices.slice(1,6).forEach((choice:MenuChoice)=>{ buttons.push({text:choice.label,color:'#007DFF'}); });
+      params.ui.getPromptAction().showActionMenu({buttons:buttons}).then((result)=>{
+        if (!params.state.isDisposed() && params.controller.getUrl()===document) choices[result.index]?.run();
+      }).catch(()=>{});
       return true;
     })
     .onControllerAttached(() => {
@@ -262,6 +349,11 @@ function make(ui: UIContext, id: number, props: string): FrameNode | undefined {
     desktop = settings[2] === '1';
     params.scripts = settings[3] !== '0';
     rest = settings.slice(4).join(SEP);
+  }
+  if (rest.startsWith('day-menu'+SEP)) {
+    const parts=rest.split(SEP);
+    params.menu=JSON.parse(parts[1]) as WebMenuEntry[];
+    rest=parts.slice(2).join(SEP);
   }
   if (rest.startsWith('day-tabs'+SEP)) {
     const labels: string[] = rest.split(SEP);

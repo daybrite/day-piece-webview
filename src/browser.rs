@@ -9,6 +9,7 @@ day_bridge::bridge! {
         fn attach_browser(id: i32, base: &str);
         fn observe_browser_load(id: i32);
         fn attach_tabs(id: i32, foreground: &str, background: &str);
+        fn attach_menu(id:i32, model:&str, foreground:&str, background:&str);
         fn resource_namespace() -> Result<f64, day_bridge::Error>;
         fn attach_resources(id: i32, base: &str, start: &str);
         fn resource_reply(token: i32, status: i32, headers: &str, body: &[u8]);
@@ -115,6 +116,94 @@ day_bridge::bridge! {
             frame.addEventListener('load', loaded);
             dayHost.dom.onRelease(id, () => frame.removeEventListener('load', loaded));
         }
+        function attach_menu(id, model, foreground, background) {
+            const entries=JSON.parse(model);
+            const frame=dayHost.dom.element(id);
+            let cleanup=()=>{};
+            function loaded() {
+                cleanup();
+                let doc;
+                try { doc=frame.contentDocument; } catch { return; }
+                if (!doc) return;
+                let panel=null, previous=null;
+                function close(restore) {
+                    if (!panel) return;
+                    panel.remove(); panel=null;
+                    document.removeEventListener('pointerdown',outside,true);
+                    doc.removeEventListener('pointerdown',outside,true);
+                    if (restore && previous?.isConnected) previous.focus({preventScroll:true});
+                }
+                const outside=e=>{if (!panel?.contains(e.target)) close(false);};
+                function show(e) {
+                    if (!e.isTrusted || e.shiftKey || !frame.isConnected) return;
+                    const el=e.target;
+                    if (el?.isContentEditable || el?.closest?.('input,textarea') || !doc.getSelection()?.isCollapsed) return;
+                    const link=el?.closest?.('a[href]')?.href;
+                    const image=el?.closest?.('img') || (el===doc.activeElement && el.querySelector?.('img'));
+                    const source=image?.currentSrc||image?.src;
+                    const allowed=value=>{
+                        if (!value) return false;
+                        try { const u=new URL(value);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password&&!['day-resource.invalid','day-assets.example'].includes(u.hostname)&&!(u.origin===doc.location.origin && u.pathname.includes('/assets/data/day-piece-webview/')); }
+                        catch {return false;}
+                    };
+                    // Only the browser's own menu can reliably save a cross-origin image.
+                    if (allowed(source) && new URL(source).origin!==doc.location.origin &&
+                        entries.some(item=>item.target==='download-image')) return;
+                    const documentUrl=doc.location.href;
+                    const actions=[];
+                    for (const item of entries) {
+                        const url=item.target==='link'?link:source;
+                        if (!allowed(url)) continue;
+                        if (item.target==='download-image') {
+                            // A cross-origin download attribute can navigate instead of saving.
+                            if (new URL(url).origin!==doc.location.origin) continue;
+                            actions.push([item.label,()=>{const a=doc.createElement('a'); a.href=url;a.download='';a.click();}]);
+                        } else if (item.browser_on_web) {
+                            actions.push([item.label,()=>window.open(url,'_blank','noopener,noreferrer')]);
+                        } else {
+                            actions.push([item.label,()=>dayHost.dom.emit(id,-13,JSON.stringify({id:item.id,url,document:documentUrl}))]);
+                        }
+                    }
+                    if (foreground && allowed(link)) for (const [title,bg] of [[foreground,false],[background,true]]) {
+                        actions.push([title,()=>dayHost.dom.emit(id,-4,JSON.stringify({url:link,background:bg}))]);
+                    }
+                    if (!actions.length) return;
+                    e.preventDefault();e.stopImmediatePropagation();
+                    close(false);previous=doc.activeElement;
+                    panel=document.createElement('div');
+                    panel.setAttribute('role','menu');
+                    Object.assign(panel.style,{position:'fixed',zIndex:2147483647,background:'Canvas',color:'CanvasText',border:'1px solid GrayText',borderRadius:'6px',padding:'4px',boxShadow:'0 2px 10px #0004'});
+                    for (const [label,run] of actions) {
+                        const row=document.createElement('button');
+                        row.type='button'; row.textContent=label; row.setAttribute('role','menuitem');
+                        Object.assign(row.style,{display:'block',textAlign:'start',width:'100%',color:'inherit',background:'transparent',font:'menu',border:0,padding:'5px 12px'});
+                        row.addEventListener('click',pressed=>{
+                            if (!pressed.isTrusted) return;
+                            close(true);
+                            if (frame.contentDocument===doc && doc.location.href===documentUrl) run();
+                        });
+                        panel.append(row);
+                    }
+                    const origin=frame.getBoundingClientRect(), fallback=el.getBoundingClientRect();
+                    document.body.append(panel);
+                    const x=origin.left+(e.clientX || fallback.left),y=origin.top+(e.clientY || fallback.bottom);
+                    panel.style.left=Math.max(0,Math.min(x,innerWidth-panel.offsetWidth))+'px';
+                    panel.style.top=Math.max(0,Math.min(y,innerHeight-panel.offsetHeight))+'px';
+                    panel.addEventListener('keydown',key=>{
+                        if (key.key==='Escape' || key.key==='Tab') {key.preventDefault();close(true);return;}
+                        const rows=Array.from(panel.children),index=rows.indexOf(document.activeElement);
+                        if (key.key==='ArrowDown'||key.key==='ArrowUp') {key.preventDefault();rows[(index+(key.key==='ArrowDown'?1:rows.length-1))%rows.length].focus();}
+                    });
+                    document.addEventListener('pointerdown',outside,true);
+                    doc.addEventListener('pointerdown',outside,true);
+                    panel.firstChild.focus();
+                }
+                doc.addEventListener('contextmenu',show,true);
+                cleanup=()=>{close(false);doc.removeEventListener('contextmenu',show,true);};
+            }
+            frame.addEventListener('load',loaded);
+            dayHost.dom.onRelease(id,()=>{cleanup();frame.removeEventListener('load',loaded);});
+        }
         function attach_tabs(id, foreground, background) {
             const frame=dayHost.dom.element(id);
             const open=(url,background)=>dayHost.dom.emit(id,-4,JSON.stringify({url,background}));
@@ -182,6 +271,8 @@ day_bridge::bridge! {
     #[day_bridge::impl(rust, platforms = [other])]
     fn observe_browser_load(id: i32) { let _ = id; }
     #[day_bridge::impl(rust, platforms = [other])]
+    fn attach_menu(id:i32,model:&str,foreground:&str,background:&str) {let _=(id,model,foreground,background);}
+    #[day_bridge::impl(rust, platforms = [other])]
     fn attach_tabs(id:i32,foreground:&str,background:&str) {let _=(id,foreground,background);}
     #[day_bridge::impl(rust, platforms = [other])]
     fn attach_browser(id: i32, base: &str) { let _ = (id, base); }
@@ -197,6 +288,15 @@ pub(crate) fn observe_load(id: i32) {
     observe_browser_load(id);
 }
 
+pub(crate) fn menu(id: i32, items: &[crate::WebMenuItem], tabs: Option<&crate::TabLinkLabels>) {
+    let (fg, bg) = tabs.map_or(("", ""), |t| (t.foreground.as_str(), t.background.as_str()));
+    attach_menu(
+        id,
+        &serde_json::to_string(items).unwrap_or_default(),
+        fg,
+        bg,
+    );
+}
 pub(crate) fn tabs(id: i32, labels: &crate::TabLinkLabels) {
     attach_tabs(id, &labels.foreground, &labels.background);
 }

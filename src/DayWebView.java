@@ -1116,15 +1116,86 @@ public final class DayWebView {
         }
         web.evaluateJavascript(TAB_MODIFIERS,null);
 
-        web.setOnLongClickListener(v -> {
-            WebView.HitTestResult hit=web.getHitTestResult();
-            if(hit==null || (hit.getType()!=WebView.HitTestResult.SRC_ANCHOR_TYPE && hit.getType()!=WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE)) return false;
-            String url=hit.getExtra(); if(url==null) return false;
-            android.widget.PopupMenu menu=new android.widget.PopupMenu(web.getContext(),web);
-            menu.getMenu().add(foreground).setOnMenuItemClickListener(item -> {newTab(web,url,false);return true;});
-            menu.getMenu().add(background).setOnMenuItemClickListener(item -> {newTab(web,url,true);return true;});
-            menu.show();return true;
-        });
+        web.setOnLongClickListener(v -> contextPress(web, null, false));
+    }
+
+    public static void configureContextMenu(View view, String model, boolean downloads) {
+        if (!(view instanceof WebView)) return;
+        WebView web = (WebView)view;
+        try {
+            org.json.JSONArray items = new org.json.JSONArray(model);
+            web.setOnLongClickListener(v -> contextPress(web, items, downloads));
+        } catch (JSONException error) { throw new IllegalArgumentException(error); }
+    }
+
+    private static boolean contextPress(WebView web, org.json.JSONArray items, boolean downloads) {
+        WebView.HitTestResult hit = web.getHitTestResult();
+        if (hit == null) return false;
+        int type = hit.getType();
+        boolean linkedImage = type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE;
+        boolean link = type == WebView.HitTestResult.SRC_ANCHOR_TYPE;
+        boolean image = type == WebView.HitTestResult.IMAGE_TYPE;
+        if (!link && !linkedImage && !image) return false;
+        final String document = web.getUrl();
+        final String[] tabs = TAB_LABELS.get(web);
+        if (items == null && (tabs == null || image)) return false;
+        if (linkedImage) {
+            android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper(), message -> {
+                android.os.Bundle data = message.getData();
+                showContext(web, document, data.getString("url"), data.getString("src"), items, downloads, tabs);
+                return true;
+            });
+            web.requestFocusNodeHref(handler.obtainMessage());
+        } else {
+            return showContext(web, document, link ? hit.getExtra() : null, image ? hit.getExtra() : null, items, downloads, tabs);
+        }
+        return true;
+    }
+
+    private static boolean webAddress(String value) {
+        if (value == null) return false;
+        android.net.Uri uri = android.net.Uri.parse(value);
+        return ("https".equals(uri.getScheme()) || "http".equals(uri.getScheme())) &&
+            uri.getHost() != null && uri.getUserInfo() == null &&
+            !"day-resource.invalid".equals(uri.getHost()) && !"day-assets.example".equals(uri.getHost());
+    }
+
+    private static boolean showContext(WebView web, String document, String link, String image,
+            org.json.JSONArray items, boolean downloads, String[] tabs) {
+        if (document == null || !document.equals(web.getUrl()) || !IDS.containsKey(web)) return false;
+        android.widget.PopupMenu menu = new android.widget.PopupMenu(web.getContext(), web);
+        if (items != null) for (int index = 0; index < items.length(); index++) {
+            JSONObject entry = items.optJSONObject(index);
+            if (entry == null) continue;
+            String target = entry.optString("target");
+            String url = "link".equals(target) ? link : image;
+            boolean save = "download-image".equals(target);
+            if (!webAddress(url) || (save && !downloads)) continue;
+            menu.getMenu().add(entry.optString("label")).setOnMenuItemClickListener(item -> {
+                Long node = IDS.get(web);
+                if (node == null || !document.equals(web.getUrl())) return true;
+                if (save) offerDownload(web, 0, url, web.getSettings().getUserAgentString(), null, "", -1);
+                else {
+                    try {
+                        JSONObject choice = new JSONObject().put("id",entry.getString("id")).put("url",url).put("document",document);
+                        DayBridge.nativeOnEvent(node,12,-13.0,choice.toString());
+                    } catch (JSONException error) { throw new IllegalStateException(error); }
+                }
+                return true;
+            });
+        }
+        if (tabs != null && link != null) {
+            for (int index=0; index<tabs.length; index++) {
+                boolean background = index == 1;
+                menu.getMenu().add(tabs[index]).setOnMenuItemClickListener(item -> {
+                    if (document.equals(web.getUrl())) newTab(web,link,background);
+                    return true;
+                });
+            }
+        }
+        if (menu.getMenu().size() == 0) return false;
+        menu.show();
+        return true;
     }
 
     public static void release(View view) {

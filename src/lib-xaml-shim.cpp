@@ -166,6 +166,8 @@ struct WebViewCtx {
     void (*link_cb)(uint64_t, const char *){};
     void (*tab_cb)(uint64_t, const char *, bool){};
     std::wstring tab_foreground, tab_background;
+    winrt::Windows::Data::Json::JsonArray context_items{nullptr};
+    void (*context_cb)(uint64_t,const char *,const char *,const char *){};
     // WebView::transparent: the engine's default background is cleared once the controller is
     // up, and the URL label under the render visual is blanked so it cannot show through.
     bool transparent{};
@@ -913,7 +915,59 @@ static void on_engine_ready(void *handle, WebViewCtx *c2) {
         if(environment && SUCCEEDED(c2->webview.As(&menus)) && SUCCEEDED(environment->QueryInterface(IID_PPV_ARGS(&menuEnvironment)))) {
             menus->add_ContextMenuRequested(wrl::Callback<ICoreWebView2ContextMenuRequestedEventHandler>(
                 [handle,menuEnvironment](ICoreWebView2 *,ICoreWebView2ContextMenuRequestedEventArgs *args)->HRESULT {
-                    auto c=find_ctx(handle);if(!c||!c->tab_cb)return S_OK;
+                    auto c=find_ctx(handle);if(!c)return S_OK;
+                    if (c->context_items && c->context_items.Size()) {
+                        wrl::ComPtr<ICoreWebView2ContextMenuTarget> hit;
+                        wrl::ComPtr<ICoreWebView2ContextMenuItemCollection> items;
+                        if (FAILED(args->get_ContextMenuTarget(&hit)) || FAILED(args->get_MenuItems(&items))) return S_OK;
+                        LPWSTR page=nullptr;
+                        hit->get_PageUri(&page);
+                        std::wstring document=page ? page : L"";
+                        CoTaskMemFree(page);
+                        COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND kind{};
+                        hit->get_Kind(&kind);
+                        UINT32 position = 0;
+                        for (uint32_t index = 0; index < c->context_items.Size(); ++index) {
+                            auto entry = c->context_items.GetObjectAt(index);
+                            auto target=entry.GetNamedString(L"target");
+                            if (target==L"download-image") continue; // WebView2 supplies Save image as.
+                            bool link=target==L"link";
+                            UINT32 count=0;items->get_Count(&count);
+                            for (UINT32 i=count;i>0;--i) {
+                                wrl::ComPtr<ICoreWebView2ContextMenuItem> original;
+                                if (FAILED(items->GetValueAtIndex(i-1,&original))) continue;
+                                LPWSTR name=nullptr;original->get_Name(&name);
+                                std::wstring role=name ? name : L"";CoTaskMemFree(name);
+                                if ((link && (role==L"openLinkInNewWindow" || role==L"openLinkInNewTab")) ||
+                                    (!link && role==L"openImageInNewTab")) items->RemoveValueAtIndex(i-1);
+                            }
+                            BOOL has=FALSE;
+                            if (link) hit->get_HasLinkUri(&has);
+                            else if (kind==COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND_IMAGE) hit->get_HasSourceUri(&has);
+                            if (!has) continue;
+                            LPWSTR raw=nullptr;
+                            if (link) hit->get_LinkUri(&raw); else hit->get_SourceUri(&raw);
+                            std::wstring address=raw ? raw : L"";CoTaskMemFree(raw);
+                            if (address.rfind(L"https://",0)!=0 && address.rfind(L"http://",0)!=0) continue;
+                            auto command=to_utf8(entry.GetNamedString(L"id"));
+                            wrl::ComPtr<ICoreWebView2ContextMenuItem> item;
+                            auto label=entry.GetNamedString(L"label");
+                            if (FAILED(menuEnvironment->CreateContextMenuItem(label.c_str(),nullptr,COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_COMMAND,&item))) continue;
+                            EventRegistrationToken selected{};
+                            item->add_CustomItemSelected(wrl::Callback<ICoreWebView2CustomItemSelectedEventHandler>(
+                                [handle,command,address,document](ICoreWebView2ContextMenuItem *,IUnknown *)->HRESULT {
+                                    auto c=find_ctx(handle);
+                                    if (c && c->context_cb && c->webview) {
+                                        LPWSTR current=nullptr;c->webview->get_Source(&current);
+                                        bool matches=current && document==current;CoTaskMemFree(current);
+                                        if (matches) c->context_cb(c->id,command.c_str(),to_string(address).c_str(),to_string(document).c_str());
+                                    }
+                                    return S_OK;
+                                }).Get(),&selected);
+                            items->InsertValueAtIndex(position++,item.Get());
+                        }
+                    }
+                    if(!c->tab_cb)return S_OK;
                     wrl::ComPtr<ICoreWebView2ContextMenuTarget> target;args->get_ContextMenuTarget(&target);
                     BOOL hasLink=FALSE;if(!target||FAILED(target->get_HasLinkUri(&hasLink))||!hasLink)return S_OK;
                     LPWSTR uri=nullptr;if(FAILED(target->get_LinkUri(&uri))||!uri)return S_OK;
@@ -1382,6 +1436,12 @@ void *day_webview_xaml_new(const char *url, uint64_t id, void (*cb)(uint64_t, co
     return mounted;
 }
 
+void day_webview_xaml_context_menu(void *handle,const char *items,void (*callback)(uint64_t,const char *,const char *,const char *)) {
+    if (auto c=find_ctx(handle)) {
+        c->context_items=winrt::Windows::Data::Json::JsonArray::Parse(hs(items));
+        c->context_cb=callback;
+    }
+}
 void day_webview_xaml_tabs(void *handle,const char *foreground,const char *background,void (*callback)(uint64_t,const char *,bool)) {
     if(auto c=find_ctx(handle)) {c->tab_cb=callback;c->tab_foreground=hs(foreground).c_str();c->tab_background=hs(background).c_str();}
 }

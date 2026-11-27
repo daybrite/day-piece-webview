@@ -492,7 +492,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// [`crate::ResourceProvider::base_url`] gives it: `day-resource://p<id>/`,
 /// `https://day-resource.invalid/<id>/`, and `http://day-resource.p<id>/` on Windows without
 /// WebView2.
-fn is_internal(url: &str) -> bool {
+pub(crate) fn is_internal(url: &str) -> bool {
     url.starts_with("day-resource:")
         || url.starts_with("https://day-resource.invalid/")
         || url

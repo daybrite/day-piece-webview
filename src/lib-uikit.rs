@@ -18,7 +18,9 @@ use day_spec::NodeId;
 use day_toolkit_uikit::Uikit;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, extern_class, msg_send};
+use objc2::{
+    DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, extern_class, msg_send,
+};
 use objc2_foundation::{NSError, NSString, NSURL, NSURLRequest};
 use objc2_ui_kit::{UIResponder, UIView};
 
@@ -46,6 +48,7 @@ struct NavIvars {
     inline_base: RefCell<Option<String>>,
     external_links: Cell<bool>,
     tabs: RefCell<Option<TabLinkLabels>>,
+    menu: RefCell<Vec<WebMenuItem>>,
     /// The last page-state report sent (see the AppKit arm's `report_state`).
     last_state: RefCell<String>,
     /// The node showing the view binds its scroll position (`WebProps::scroll_reports`).
@@ -90,8 +93,35 @@ define_class!(
             std::ptr::null_mut()
         }
         #[unsafe(method(webView:contextMenuConfigurationForElement:completionHandler:))]
-        fn link_menu(&self, _web: &WKWebView, element: &AnyObject, done: &block2::DynBlock<dyn Fn(*mut AnyObject)>) {
+        fn link_menu(&self, web: &WKWebView, element: &AnyObject, done: &block2::DynBlock<dyn Fn(*mut AnyObject)>) {
             let url: Option<Retained<NSURL>> = unsafe { msg_send![element, linkURL] };
+            if !self.ivars().menu.borrow().is_empty()
+                && let Some(link) = url.as_ref().and_then(|u|u.absoluteString()).map(|u|u.to_string())
+                && context_menu::web_address(&link) {
+                let node = self.ivars().node.get();
+                let mut entries = self.ivars().menu.borrow().clone();
+                entries.retain(|item| item.target!=WebMenuTarget::DownloadImage || self.ivars().browse.get().downloads);
+                let document = current_url(web).unwrap_or_default();
+                let view = web.retain();
+                let completion = done.copy();
+                context_apple::hit(web,None,move |candidate| {
+                    let hit = candidate.filter(|h|h.link == link && h.document == document)
+                        .unwrap_or_else(|| context_apple::Hit { document:document.clone(),link:link.clone(),image:String::new() });
+                    let actions = image_menu_actions(&view,node,&entries,&hit);
+                    let provider=RcBlock::new(move |suggested: *mut AnyObject| -> *mut AnyObject {
+                        let mut children=actions.clone();
+                        if let Some(native) = unsafe { suggested.as_ref() }.and_then(|v|v.downcast_ref::<objc2_foundation::NSArray<AnyObject>>()) {
+                            children.extend(native.iter());
+                        }
+                        let list=objc2_foundation::NSArray::from_retained_slice(&children);
+                        let menu:Retained<AnyObject>=unsafe { msg_send![objc2::class!(UIMenu),menuWithTitle:&*NSString::new(),children:&*list] };
+                        Retained::autorelease_ptr(menu)
+                    });
+                    let config:Retained<AnyObject>=unsafe { msg_send![objc2::class!(UIContextMenuConfiguration),configurationWithIdentifier:std::ptr::null::<AnyObject>(),previewProvider:std::ptr::null::<AnyObject>(),actionProvider:&*provider] };
+                    completion.call((Retained::as_ptr(&config).cast_mut(),));
+                });
+                return;
+            }
             let labels=self.ivars().tabs.borrow().clone();
             let (Some(url),Some(labels))=(url.and_then(|u|u.absoluteString()),labels) else { done.call((std::ptr::null_mut(),)); return; };
             let url=url.to_string(); let id=self.ivars().node.get();
@@ -114,6 +144,39 @@ define_class!(
             let config:Retained<AnyObject>=unsafe { msg_send![objc2::class!(UIContextMenuConfiguration), configurationWithIdentifier:std::ptr::null::<AnyObject>(), previewProvider:std::ptr::null::<AnyObject>(), actionProvider:&*provider] };
             done.call((Retained::as_ptr(&config).cast_mut(),));
         }
+        #[unsafe(method(dayImagePress:))]
+        fn image_press(&self, press: &AnyObject) {
+            let state: isize = unsafe { msg_send![press,state] };
+            if state != 1 { return; }
+            let Some(view): Option<Retained<WKWebView>> = (unsafe { msg_send![press,view] }) else { return };
+            let bounds = view.bounds();
+            let point: objc2_core_foundation::CGPoint = unsafe { msg_send![press,locationInView:&*view] };
+            let entries = self.ivars().menu.borrow().clone();
+            let downloads=self.ivars().browse.get().downloads;
+            let id=self.ivars().node.get();
+            let web=view.clone();
+            context_apple::hit(&view,Some(((point.x-bounds.origin.x)/bounds.size.width,(point.y-bounds.origin.y)/bounds.size.height)),move |hit|{
+                let Some(hit)=hit.filter(|h|h.link.is_empty() && context_menu::web_address(&h.image)) else { return };
+                let mut choices=Vec::new();
+                for item in &entries {
+                    if (item.target!=WebMenuTarget::DownloadImage || downloads) && let Some(action)=hit.action(item) {
+                        choices.push((item.clone(),action));
+                    }
+                }
+                if choices.is_empty() { return; }
+                let mut sheet=day_pieces::Alert::new(String::new()).sheet();
+                for (item,action) in choices {sheet=sheet.button(item.label,(item.target,action));}
+                let sheet=sheet.cancel(day_localization_ui::res::str::day_cancel());
+                let web=web.clone();
+                day_core::task(async move {
+                    if let Some((target,action))=sheet.present().await {
+                        context_apple::select(&web,id,day_toolkit_uikit::emit,target,&action);
+                    }
+                });
+            });
+        }
+        #[unsafe(method(gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:))]
+        fn simultaneous(&self, _first:&AnyObject, _second:&AnyObject) -> bool { true }
         // UIScrollViewDelegate, as the web view's scroll view's external delegate (WebKit keeps its
         // own and forwards to this one). The adjusted inset changes when WebKit learns whether the
         // page covers the safe areas; see `refresh_viewport`.
@@ -254,35 +317,61 @@ impl WebNav {
         let frame: *mut AnyObject = unsafe { msg_send![action, targetFrame] };
         let subframe = !frame.is_null() && !unsafe { msg_send![&*frame, isMainFrame] };
         let req: Retained<NSURLRequest> = unsafe { msg_send![action, request] };
-        let url = req.URL().and_then(|u| u.absoluteString()).map_or_default(|s| s.to_string());
-        if self.ivars().tabs.borrow().is_some() && let Some(request)=tab_scheme_request(&url) {
-            day_toolkit_uikit::emit(self.ivars().node.get(), new_tab_event(request.url,request.background));
+        let url = req
+            .URL()
+            .and_then(|u| u.absoluteString())
+            .map_or_default(|s| s.to_string());
+        if self.ivars().tabs.borrow().is_some()
+            && let Some(request) = tab_scheme_request(&url)
+        {
+            day_toolkit_uikit::emit(
+                self.ivars().node.get(),
+                new_tab_event(request.url, request.background),
+            );
             return POLICY_CANCEL;
         }
         let kind: isize = unsafe { msg_send![action, navigationType] };
         let activated = kind == 0; // WKNavigationTypeLinkActivated
         if self.ivars().tabs.borrow().is_some() && frame.is_null() {
-            day_toolkit_uikit::emit(self.ivars().node.get(),new_tab_event(url,false));
+            day_toolkit_uikit::emit(self.ivars().node.get(), new_tab_event(url, false));
             return POLICY_CANCEL;
         }
         // An address no engine loads (mailto:, tel:, an app's scheme) is another program's:
         // cancel and report it from any page. A bundled site reports every address outside
         // it below.
         if self.ivars().inline_base.borrow().is_none() && !super::browsing::engine_scheme(&url) {
-            day_toolkit_uikit::emit(self.ivars().node.get(), Event::Custom {
-                tag: "webview:link", num: super::LINK_REPORT, text: url,
-            });
+            day_toolkit_uikit::emit(
+                self.ivars().node.get(),
+                Event::Custom {
+                    tag: "webview:link",
+                    num: super::LINK_REPORT,
+                    text: url,
+                },
+            );
             return POLICY_CANCEL;
         }
         let external = match &*self.ivars().inline_base.borrow() {
             Some(base) => !subframe && !url.starts_with(base.as_str()) && url != "about:blank",
-            None => self.ivars().external_links.get() && super::external_document_link(
-                current_url(web_view).as_deref(), &url, activated, frame.is_null(), subframe),
+            None => {
+                self.ivars().external_links.get()
+                    && super::external_document_link(
+                        current_url(web_view).as_deref(),
+                        &url,
+                        activated,
+                        frame.is_null(),
+                        subframe,
+                    )
+            }
         };
         if external {
-            day_toolkit_uikit::emit(self.ivars().node.get(), Event::Custom {
-                tag: "webview:link", num: super::LINK_REPORT, text: url,
-            });
+            day_toolkit_uikit::emit(
+                self.ivars().node.get(),
+                Event::Custom {
+                    tag: "webview:link",
+                    num: super::LINK_REPORT,
+                    text: url,
+                },
+            );
             POLICY_CANCEL
         } else {
             POLICY_ALLOW
@@ -336,6 +425,7 @@ impl WebNav {
             inline_base: RefCell::new(None),
             external_links: Cell::new(false),
             tabs: RefCell::new(None),
+            menu: RefCell::default(),
             last_state: RefCell::new(String::new()),
             scroll_reports: Cell::new(false),
             desktop_mode: Cell::new(false),
@@ -378,6 +468,21 @@ fn refresh_viewport(web: &WKWebView) {
     REFRESHING.set(false);
 }
 
+fn image_menu_actions(
+    web: &WKWebView,
+    id: NodeId,
+    entries: &[WebMenuItem],
+    hit: &context_apple::Hit,
+) -> Vec<Retained<AnyObject>> {
+    entries.iter().filter_map(|item| {
+        let action=hit.action(item)?;
+        let web=web.retain();
+        let target=item.target;
+        let handler=RcBlock::new(move |_item:*mut AnyObject| context_apple::select(&web,id,day_toolkit_uikit::emit,target,&action));
+        Some(unsafe {msg_send![objc2::class!(UIAction),actionWithTitle:&*NSString::from_str(&item.label),image:std::ptr::null::<AnyObject>(),identifier:std::ptr::null::<AnyObject>(),handler:&*handler]})
+    }).collect()
+}
+
 fn current_url(web: &WKWebView) -> Option<String> {
     let url: Option<Retained<NSURL>> = unsafe { msg_send![web, URL] };
     let s = url?.absoluteString()?;
@@ -411,7 +516,10 @@ fn page_url(dir: &std::path::Path, page: &str) -> objc2::rc::Retained<NSURL> {
 /// A new view's first page, held until its content rule lists are attached.
 type FirstLoad = Box<dyn FnOnce(&WKWebView)>;
 
-#[expect(clippy::float_cmp, reason = "a zoom of exactly 1 is the default that needs no call")]
+#[expect(
+    clippy::float_cmp,
+    reason = "a zoom of exactly 1 is the default that needs no call"
+)]
 fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
     // A session already holding a view: re-attach it rather than build a new one. Only the node
     // changes: point the delegate at the node now showing it, and do not reload, since the whole
@@ -426,6 +534,7 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
                 nav.ivars().external_links.set(p.external_links);
                 nav.ivars().scroll_reports.set(p.scroll_reports);
                 nav.ivars().browse.set(p.browse);
+                nav.ivars().menu.replace(p.context_menu.clone());
                 (*nav.ivars().tabs.borrow_mut()).clone_from(&p.tabs);
                 // The node's settings: zoom at once, the rest from the next navigation on.
                 nav.ivars().desktop_mode.set(p.settings.desktop_mode);
@@ -457,6 +566,14 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
         }
     }
 
+    let image_menu = p.context_menu.iter().any(|entry| match entry.target {
+        WebMenuTarget::Image => true,
+        WebMenuTarget::DownloadImage => p.browse.downloads,
+        WebMenuTarget::Link => false,
+    });
+    if !p.context_menu.is_empty() {
+        context_apple::install(&config, image_menu);
+    }
     let web: Retained<WKWebView> = unsafe {
         msg_send![WKWebView::alloc(mtm), initWithFrame: objc2_foundation::NSRect::ZERO, configuration: &*config]
     };
@@ -473,17 +590,31 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
         }
     }
     let nav = WebNav::new(mtm, id);
+    if image_menu {
+        unsafe {
+            let raw: *mut AnyObject = msg_send![objc2::class!(UILongPressGestureRecognizer), alloc];
+            let press: *mut AnyObject =
+                msg_send![raw,initWithTarget:&*nav,action:objc2::sel!(dayImagePress:)];
+            let press = Retained::from_raw(press).expect("UILongPressGestureRecognizer init");
+            let _: () = msg_send![&*press,setCancelsTouchesInView:false];
+            let _: () = msg_send![&*press,setDelegate:&*nav];
+            let _: () = msg_send![&*web,addGestureRecognizer:&*press];
+        }
+    }
     unsafe {
         let _: () = msg_send![&*web, setUIDelegate: &*nav];
     }
     nav.ivars().external_links.set(p.external_links);
     nav.ivars().scroll_reports.set(p.scroll_reports);
     nav.ivars().browse.set(p.browse);
-    nav.ivars().provider.set(p.resources.as_ref().map_or(0, ResourceProvider::id));
+    nav.ivars()
+        .provider
+        .set(p.resources.as_ref().map_or(0, ResourceProvider::id));
     if p.browse.swipe_navigation {
         // Safari's edge swipes through the view's own history (`WebView::swipe_navigation`).
         let _: () = unsafe { msg_send![&*web, setAllowsBackForwardNavigationGestures: true] };
     }
+    nav.ivars().menu.replace(p.context_menu.clone());
     (*nav.ivars().tabs.borrow_mut()).clone_from(&p.tabs);
     // Set before the first load, whose policy decision already reads them.
     nav.ivars().desktop_mode.set(p.settings.desktop_mode);
@@ -525,8 +656,9 @@ fn make(_backend: &mut Uikit, p: &WebProps, id: NodeId) -> Retained<UIView> {
                 *nav.ivars().inline_base.borrow_mut() = Some(base.to_string());
             }
             first = Some(Box::new(move |web: &WKWebView| {
-                let _: *mut AnyObject =
-                    unsafe { msg_send![web, loadFileURL: &*index, allowingReadAccessToURL: &*read] };
+                let _: *mut AnyObject = unsafe {
+                    msg_send![web, loadFileURL: &*index, allowingReadAccessToURL: &*read]
+                };
             }));
         } else {
             log::warn!(
@@ -596,8 +728,10 @@ fn eval(web: &WKWebView, node: NodeId, req: u64, script: &str) {
     let handler = RcBlock::new(move |result: *mut AnyObject, error: *mut NSError| {
         let payload = if !result.is_null() {
             // SAFETY: non-null result from WebKit; the wrapper guarantees an NSString.
-            unsafe { &*result }
-                .downcast_ref::<NSString>().map_or_else(|| engine_error("WebKitError", "non-string reply"), std::string::ToString::to_string)
+            unsafe { &*result }.downcast_ref::<NSString>().map_or_else(
+                || engine_error("WebKitError", "non-string reply"),
+                std::string::ToString::to_string,
+            )
         } else if !error.is_null() {
             // SAFETY: non-null NSError from WebKit.
             engine_error(

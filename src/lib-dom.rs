@@ -30,8 +30,8 @@
 // ---------------------------------------------------------------------------
 
 use super::*;
-use day_toolkit_dom::{Dom, DomHandle};
 use day_spec::{NodeId, Proposal, Size};
+use day_toolkit_dom::{Dom, DomHandle};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -55,13 +55,19 @@ fn load(backend: &mut Dom, h: &DomHandle, url: &str) {
     LAST_SRC.with(|m| m.borrow_mut().insert(*h, url.to_string()));
 }
 
-#[expect(clippy::float_cmp, reason = "a zoom of exactly 1 is the default that needs no call")]
+#[expect(
+    clippy::float_cmp,
+    reason = "a zoom of exactly 1 is the default that needs no call"
+)]
 fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
     if p.profile.private {
         return backend.element("div");
     }
     let h = backend.element("iframe");
     super::browser::observe_load(h.0 as i32);
+    if !p.context_menu.is_empty() {
+        super::browser::menu(h.0 as i32, &p.context_menu, p.tabs.as_ref());
+    }
     if let Some(labels) = &p.tabs {
         super::browser::tabs(h.0 as i32, labels);
     }
@@ -89,7 +95,11 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
         backend.set_attr(
             &h,
             "data-day-site-root",
-            if p.inline_assets { "assets/data/" } else { &base },
+            if p.inline_assets {
+                "assets/data/"
+            } else {
+                &base
+            },
         );
         super::browser::attach(h.0 as i32, &base);
         load(backend, &h, &format!("{base}{}", p.inline_start));
@@ -118,7 +128,10 @@ fn make(backend: &mut Dom, p: &WebProps, _id: NodeId) -> DomHandle {
     h
 }
 
-#[expect(clippy::trivially_copy_pass_by_ref, reason = "the renderer table fixes this signature")]
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "the renderer table fixes this signature"
+)]
 #[expect(
     clippy::match_same_arms,
     reason = "the arms carry separate comments on why each patch does nothing here"
@@ -162,12 +175,18 @@ fn update(backend: &mut Dom, h: &DomHandle, patch: &WebPatch) {
 
 /// A growing leaf: take whatever the layout proposes, with a modest default when it proposes
 /// nothing, the same posture as the native arms, which report their web view's intrinsic size.
-#[expect(clippy::trivially_copy_pass_by_ref, reason = "the renderer table fixes this signature")]
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "the renderer table fixes this signature"
+)]
 fn measure(_backend: &mut Dom, _h: &DomHandle, p: Proposal) -> Size {
     Size::new(p.width.unwrap_or(320.0), p.height.unwrap_or(240.0))
 }
 
-#[expect(clippy::trivially_copy_pass_by_ref, reason = "the renderer table fixes this signature")]
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "the renderer table fixes this signature"
+)]
 fn release(_backend: &mut Dom, h: &DomHandle) {
     LAST_SRC.with(|m| m.borrow_mut().remove(h));
 }

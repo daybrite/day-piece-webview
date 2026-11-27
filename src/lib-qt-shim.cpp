@@ -52,6 +52,9 @@ static void (*g_message_cb)(uint64_t, const char *) = nullptr;
 #include <QWebEngineContextMenuRequest>
 #include <QContextMenuEvent>
 #include <QMenu>
+#include <QWebEngineDownloadRequest>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QWebEngineHistory>
 #include <QWebEngineSettings>
 #include <QWebEngineFullScreenRequest>
@@ -243,6 +246,24 @@ public:
     void (*tabCb)(uint64_t, const char *, bool) = nullptr;
     uint64_t tabId = 0;
     QString foregroundLabel, backgroundLabel;
+    QJsonArray contextItems;
+    void (*contextCallback)(uint64_t,const char *,const char *,const char *) = nullptr;
+    QUrl requestedImage;
+    QMetaObject::Connection downloadConnection;
+    void configureImageDownloads() {
+        QObject::disconnect(downloadConnection);
+        downloadConnection = connect(page()->profile(), &QWebEngineProfile::downloadRequested, this,
+            [this](QWebEngineDownloadRequest *request) {
+                if (requestedImage.isEmpty() || request->page() != page() || request->url() != requestedImage) return;
+                requestedImage.clear();
+                auto name = QFileDialog::getSaveFileName(this, {}, QDir(request->downloadDirectory()).filePath(request->downloadFileName()));
+                if (name.isEmpty()) { request->cancel(); return; }
+                QFileInfo file(name);
+                request->setDownloadDirectory(file.absolutePath());
+                request->setDownloadFileName(file.fileName());
+                request->accept();
+            });
+    }
     // WebView::zoom and WebView::javascript. Both are per page in QtWebEngine, so they are kept
     // here and applied again to a page the view is given later (profile clearing swaps pages).
     double zoom = 1.0;
@@ -281,10 +302,41 @@ public:
     }
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override {
-        if (!tabCb) { QWebEngineView::contextMenuEvent(event); return; }
+        if (!tabCb && contextItems.isEmpty()) { QWebEngineView::contextMenuEvent(event); return; }
         auto request = lastContextMenuRequest();
         auto menu = createStandardContextMenu();
-        if (request && !request->linkUrl().isEmpty()) {
+        if (request && !contextItems.isEmpty()) {
+            const auto document = url();
+            for (const auto value : contextItems) {
+                auto entry = value.toObject();
+                auto target = entry.value("target").toString();
+                bool link = target == "link", save = target == "download-image";
+                auto address = link ? request->linkUrl() : request->mediaUrl();
+                auto stock = link ? QWebEnginePage::OpenLinkInNewWindow :
+                    QWebEnginePage::DownloadImageToDisk;
+                if (link || save) menu->removeAction(pageAction(stock));
+                if (link) {
+                    menu->removeAction(pageAction(QWebEnginePage::OpenLinkInNewTab));
+                    menu->removeAction(pageAction(QWebEnginePage::OpenLinkInNewBackgroundTab));
+                }
+                if ((!link && request->mediaType() != QWebEngineContextMenuRequest::MediaTypeImage) ||
+                    (address.scheme() != "http" && address.scheme() != "https") || !address.userInfo().isEmpty() ||
+                    address.host()=="day-resource.invalid" || address.host()=="day-assets.example") continue;
+                auto action = menu->addAction(entry.value("label").toString());
+                auto command = entry.value("id").toString();
+                connect(action,&QAction::triggered,this,[this,address,document,command,save] {
+                    if (url()!=document) return;
+                    if (save) {
+                        configureImageDownloads();
+                        requestedImage=address;
+                        page()->download(address);
+                    } else {
+                        contextCallback(tabId,command.toUtf8().constData(),address.toEncoded().constData(),document.toEncoded().constData());
+                    }
+                });
+            }
+        }
+        if (tabCb && request && !request->linkUrl().isEmpty()) {
             const auto url = request->linkUrl().toEncoded();
             auto first = menu->actions().isEmpty() ? nullptr : menu->actions().first();
             auto foreground = new QAction(foregroundLabel, menu);
@@ -515,6 +567,15 @@ void *day_webview_new(const char *url, uint64_t id, void (*cb)(uint64_t, const c
     if (!defer_load)
         w->load(QString::fromUtf8(url));
     return w;
+}
+
+void day_webview_context_menu(void *w, const char *items, void (*callback)(uint64_t,const char *,const char *,const char *)) {
+    auto self = static_cast<DayWebView *>(w);
+    if (auto view = dynamic_cast<TabWebEngineView *>(self->view)) {
+        view->tabId = self->id;
+        view->contextCallback = callback;
+        view->contextItems = QJsonDocument::fromJson(items).array();
+    }
 }
 
 void day_webview_tabs(void *w, const char *foreground, const char *background,
@@ -788,6 +849,7 @@ void day_webview_reload(void *) {}
 void day_webview_force_reload(void *) {}
 void day_webview_report_state_now(void *) {}
 
+void day_webview_context_menu(void *,const char *,void (*)(uint64_t,const char *,const char *,const char *)) {}
 void day_webview_tabs(void *, const char *, const char *, void (*)(uint64_t,const char *,bool)) {}
 void day_webview_set_state_cb(void (*cb)(uint64_t, const char *)) { g_state_cb = cb; }
 void day_webview_set_eval_cb(void (*cb)(uint64_t, uint64_t, const char *)) { g_eval_cb = cb; }

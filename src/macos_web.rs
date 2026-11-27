@@ -35,6 +35,7 @@ struct NavIvars {
     inline_base: RefCell<Option<String>>,
     external_links: Cell<bool>,
     tabs: RefCell<Option<TabLinkLabels>>,
+    menu: RefCell<Vec<WebMenuItem>>,
     background: Cell<bool>,
     link_item: RefCell<Option<Retained<NSMenuItem>>>,
     /// The last page-state report sent, so a KVO change that leaves the reported state as it
@@ -182,11 +183,68 @@ define_class!(
     struct TabWebView;
     unsafe impl NSObjectProtocol for TabWebView {}
     impl TabWebView {
+        #[unsafe(method(daySelectContextItem:))]
+        fn context_item(&self, item: &NSMenuItem) {
+            let Some(value) = item.representedObject() else { return };
+            let Some(action) = value.downcast_ref::<NSString>().and_then(|v|serde_json::from_str::<WebMenuAction>(&v.to_string()).ok()) else { return };
+            DELEGATES.with(|all| {
+                let all = all.borrow();
+                if let Some(nav) = all.get(&(std::ptr::from_ref(self) as usize))
+                    && let Some(entry) = nav.ivars().menu.borrow().iter().find(|e| e.id == action.id) {
+                    context_apple::select(self, nav.ivars().node.get(), nav.ivars().emit, entry.target, &action);
+                }
+            });
+        }
         #[unsafe(method(willOpenMenu:withEvent:))]
         fn will_open_menu(&self, menu: &NSMenu, event: &NSEvent) {
             unsafe { let _: () = msg_send![super(self), willOpenMenu: menu, withEvent: event]; }
             let delegate = DELEGATES.with(|m|m.borrow().get(&(std::ptr::from_ref::<Self>(self) as usize)).cloned());
             let Some(nav) = delegate else { return; };
+            let entries = nav.ivars().menu.borrow();
+            if !entries.is_empty() {
+                let original = menu.itemArray();
+                let link = original.iter().any(|i| i.tag() == 1);
+                let image = original.iter().any(|i| i.tag() == 4);
+                let mut custom = Vec::new();
+                for entry in entries.iter().rev() {
+                    let present = match entry.target {
+                        WebMenuTarget::Link => link,
+                        WebMenuTarget::Image => image,
+                        WebMenuTarget::DownloadImage => image && nav.ivars().browse.get().downloads && duties::downloads_available(),
+                    };
+                    if !present { continue; }
+                    let item = NSMenuItem::new(self.mtm());
+                    item.setTitle(&NSString::from_str(&entry.label));
+                    item.setHidden(true);
+                    unsafe {
+                        item.setTarget(Some(self));
+                        item.setAction(Some(objc2::sel!(daySelectContextItem:)));
+                    }
+                    menu.insertItem_atIndex(&item, 0);
+                    custom.push((item,entry.clone()));
+                }
+                for item in &original {
+                    let kind = match item.tag() {
+                        1 => WebMenuTarget::Link, 4 => WebMenuTarget::Image, 5 => WebMenuTarget::DownloadImage, _ => continue,
+                    };
+                    if entries.iter().any(|e| e.target == kind) { menu.removeItem(&item); }
+                }
+                if !custom.is_empty() {
+                    let pt = self.convertPoint_fromView(event.locationInWindow(), None);
+                    let bounds = self.bounds();
+                    let y = (pt.y - bounds.origin.y) / bounds.size.height;
+                    let point = (event.r#type() != objc2_app_kit::NSEventType::KeyDown).then(|| ((pt.x-bounds.origin.x)/bounds.size.width,if self.isFlipped(){ y }else{1.0-y}));
+                    context_apple::hit(self, point, move |hit| {
+                        for (item, entry) in &custom {
+                            if let Some(action) = hit.as_ref().and_then(|h|h.action(entry))
+                                && let Ok(encoded) = serde_json::to_string(&action) {
+                                unsafe { item.setRepresentedObject(Some(&NSString::from_str(&encoded))); }
+                                item.setHidden(false);
+                            }
+                        }
+                    });
+                }
+            }
             let labels = nav.ivars().tabs.borrow().clone();
             let Some(labels) = labels else { return; };
             // WebKit assigns its public context-menu tags to the native menu. Preserve
@@ -320,6 +378,7 @@ impl WebNav {
             inline_base: RefCell::new(None),
             external_links: Cell::new(false),
             tabs: RefCell::new(None),
+            menu: RefCell::default(),
             background: Cell::new(false),
             link_item: RefCell::new(None),
             last_state: RefCell::new(String::new()),
@@ -413,6 +472,7 @@ pub(crate) fn make(
                 nav.ivars().node.set(id);
                 nav.ivars().external_links.set(p.external_links);
                 nav.ivars().browse.set(p.browse);
+                nav.ivars().menu.replace(p.context_menu.clone());
                 (*nav.ivars().tabs.borrow_mut()).clone_from(&p.tabs);
                 // The node's settings: zoom at once, the rest from the next navigation on.
                 nav.ivars().desktop_mode.set(p.settings.desktop_mode);
@@ -432,6 +492,9 @@ pub(crate) fn make(
     // SAFETY: creates a WKWebView with a default configuration on the main thread.
     let config =
         super::resources_apple::configuration(p.resources.as_ref().map(ResourceProvider::id), mtm);
+    if !p.context_menu.is_empty() {
+        context_apple::install(&config, false);
+    }
     super::storage_apple::configure(&config, &p.profile);
     duties::configure_user_agent(&config, &p.user_agent);
     let this = TabWebView::alloc(mtm).set_ivars(());
@@ -461,6 +524,7 @@ pub(crate) fn make(
         // (`WebView::swipe_navigation`).
         unsafe { web.setAllowsBackForwardNavigationGestures(true) };
     }
+    nav.ivars().menu.replace(p.context_menu.clone());
     (*nav.ivars().tabs.borrow_mut()).clone_from(&p.tabs);
     // Set before the first load, whose policy decision already reads them.
     nav.ivars().desktop_mode.set(p.settings.desktop_mode);

@@ -11,8 +11,8 @@ use super::*;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 
-use day_toolkit_qt::{Qt, QtHandle};
 use day_spec::NodeId;
+use day_toolkit_qt::{Qt, QtHandle};
 
 unsafe extern "C" {
     fn day_webview_new(
@@ -36,6 +36,11 @@ unsafe extern "C" {
     fn day_webview_content(w: *mut c_void, hooks: u64, scripts: *const c_char);
     fn day_webview_run(w: *mut c_void, script: *const c_char);
     fn day_webview_load_initial(w: *mut c_void, url: *const c_char);
+    fn day_webview_context_menu(
+        handle: *mut c_void,
+        items: *const c_char,
+        callback: extern "C" fn(u64, *const c_char, *const c_char, *const c_char),
+    );
     fn day_webview_tabs(
         w: *mut c_void,
         foreground: *const c_char,
@@ -120,6 +125,13 @@ extern "C" fn on_link(id: u64, url: *const c_char) {
             num: super::LINK_REPORT,
             text: s,
         },
+    );
+}
+
+extern "C" fn on_context(id: u64, cmd: *const c_char, url: *const c_char, document: *const c_char) {
+    day_toolkit_qt::emit(
+        NodeId(id),
+        context_menu::event(&text(cmd), &text(url), &text(document)),
     );
 }
 
@@ -280,6 +292,13 @@ fn make(_backend: &mut Qt, p: &WebProps, id: NodeId) -> QtHandle {
     }
     if p.session != 0 {
         RETAINED.with(|r| r.borrow_mut().insert(p.session));
+    }
+    unsafe {
+        day_webview_context_menu(
+            handle.0,
+            cstr(&serde_json::to_string(&p.context_menu).unwrap_or_default()).as_ptr(),
+            on_context,
+        );
     }
     if let Some(labels) = &p.tabs {
         unsafe {

@@ -30,6 +30,13 @@ use day_spec::Event;
 
 mod browsing;
 mod content;
+#[cfg(any(
+    all(target_os = "macos", any(feature = "appkit", feature = "gtk")),
+    all(target_os = "ios", feature = "uikit")
+))]
+mod context_apple;
+mod context_menu;
+pub use context_menu::{WebMenuAction, WebMenuItem, WebMenuTarget};
 pub mod renderer;
 mod resources;
 pub use browsing::{
@@ -283,6 +290,7 @@ pub struct WebProps {
     /// On Apple backends, report user-activated links in ordinary documents as well.
     pub external_links: bool,
     pub tabs: Option<TabLinkLabels>,
+    pub context_menu: Vec<WebMenuItem>,
     pub url: String,
     /// The [`WebSession`] this view belongs to, or `0` for none. A non-zero id asks the backend to
     /// hand back the session's existing native view instead of creating one, so the loaded page
@@ -1521,6 +1529,7 @@ pub struct WebView {
     transparent: bool,
     on_link: Option<LinkDecider>,
     tabs: Option<NewTabHandler>,
+    context_menu: Option<context_menu::MenuHandler>,
     on_load: Option<Rc<dyn Fn()>>,
     zoom: Option<Reactive<f64>>,
     desktop_mode: Option<Reactive<bool>>,
@@ -1567,6 +1576,7 @@ pub fn web_view(url: impl Binding<String>) -> WebView {
         transparent: false,
         on_link: None,
         tabs: None,
+        context_menu: None,
         on_load: None,
         resources: None,
         resource_site: false,
@@ -1875,6 +1885,19 @@ impl WebView {
         self.on_link = Some(Rc::new(f));
         self
     }
+    /// Customize link and image context menus. The engine keeps its other native commands.
+    /// Only a user selection in this view delivers an action. The selected URL and the
+    /// document containing it are captured together. Download entries use `on_download`
+    /// on hosts with managed downloads, or a platform save command where available.
+    pub fn web_context_menu(
+        mut self,
+        items: impl IntoIterator<Item = WebMenuItem>,
+        selected: impl Fn(&WebMenuAction) + 'static,
+    ) -> Self {
+        self.context_menu = Some((items.into_iter().collect(), Rc::new(selected)));
+        self
+    }
+
     /// Decide what happens to a navigation whose address another program opens: `mailto:`,
     /// `tel:`, an app's own scheme, Android's `intent:`. The view never loads such an address;
     /// without this (and without [`WebView::on_external_link`]) each goes to the system, which
@@ -2052,6 +2075,7 @@ impl Piece for WebView {
             transparent,
             on_link,
             tabs,
+            context_menu,
             on_load,
             mut resources,
             resource_site,
@@ -2147,6 +2171,9 @@ impl Piece for WebView {
             },
             resource_site: resource_site && resources.is_some() && !blocked_private,
             external_links: on_link.is_some(),
+            context_menu: context_menu
+                .as_ref()
+                .map_or_else(Vec::new, |(items, _)| items.clone()),
             tabs: tabs.as_ref().map(|(labels, _)| labels.clone()),
             url: if blocked_private {
                 "about:blank".into()
@@ -2416,6 +2443,14 @@ impl Piece for WebView {
                     });
                 } else if *num == browsing::PAGE_NOTICE {
                     browse.notice(text);
+                } else if *num == context_menu::REPORT {
+                    if let Some((items, callback)) = &context_menu
+                        && let Ok(action) = serde_json::from_str::<WebMenuAction>(text)
+                        && items.iter().any(|item| item.id == action.id && item.target != WebMenuTarget::DownloadImage)
+                        && context_menu::web_address(&action.url)
+                    {
+                        callback(&action);
+                    }
                 } else if *num == NEW_TAB_REPORT {
                     if let Some((_, callback)) = &tabs
                         && let Ok(request) = serde_json::from_str::<NewTabRequest>(text)
@@ -2504,6 +2539,19 @@ impl WebRenderer {
             Self::Servo => renderer::capabilities(self).is_some(),
         }
     }
+    /// Whether this renderer can present app commands on a web content hit.
+    /// The browser frame can customize accessible documents. The host browser owns
+    /// cross-origin frames. Native engines check the available actions at invocation.
+    pub fn context_menu_support(self) -> day_spec::Support {
+        match self {
+            Self::Servo => day_spec::Support::Unsupported,
+            Self::WebView if cfg!(all(feature = "qt", not(day_qt_webengine))) => {
+                day_spec::Support::Unsupported
+            }
+            Self::WebView => support(),
+        }
+    }
+
     /// Whether isolated private browsing contexts are supported.
     pub fn private_browsing_support(self) -> day_spec::Support {
         match self {

@@ -32,6 +32,11 @@ unsafe extern "C" {
         resource_provider: u64,
         resource_prefix: *const c_char,
     ) -> *mut c_void;
+    fn day_webview_xaml_context_menu(
+        handle: *mut c_void,
+        items: *const c_char,
+        callback: extern "C" fn(u64, *const c_char, *const c_char, *const c_char),
+    );
     fn day_webview_xaml_tabs(
         handle: *mut c_void,
         foreground: *const c_char,
@@ -103,8 +108,8 @@ extern "C" fn on_message(id: u64, envelope: *const c_char, source: *const c_char
     let Some((name, message, payload)) = super::content::parse_envelope(&text(envelope)) else {
         return;
     };
-    let origin = url::Url::parse(&text(source))
-        .map_or_default(|url| url.origin().ascii_serialization());
+    let origin =
+        url::Url::parse(&text(source)).map_or_default(|url| url.origin().ascii_serialization());
     day_toolkit_winui::emit(
         NodeId(id),
         super::script_message_event(
@@ -195,6 +200,13 @@ extern "C" fn on_link(id: u64, url: *const c_char) {
             num: super::LINK_REPORT,
             text: s,
         },
+    );
+}
+
+extern "C" fn on_context(id: u64, cmd: *const c_char, url: *const c_char, document: *const c_char) {
+    day_toolkit_winui::emit(
+        NodeId(id),
+        context_menu::event(&text(cmd), &text(url), &text(document)),
     );
 }
 
@@ -308,6 +320,13 @@ fn make(_backend: &mut Xaml, p: &WebProps, id: NodeId) -> WinHandle {
         unsafe {
             day_webview_xaml_content(handle.0, hooks, cstr(&scripts_json(&p.content)).as_ptr());
         }
+    }
+    unsafe {
+        day_webview_xaml_context_menu(
+            handle.0,
+            cstr(&serde_json::to_string(&p.context_menu).unwrap_or_default()).as_ptr(),
+            on_context,
+        );
     }
     if let Some(labels) = &p.tabs {
         unsafe {

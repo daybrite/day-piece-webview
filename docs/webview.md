@@ -740,6 +740,55 @@ and restores its previous mode after completion or Stop. ArkWeb must evict the a
 shared resource cache before refreshing; other WebViews may consequently refetch resources.
 The iframe backend reports Unsupported because it cannot guarantee cache bypass.
 
+## Web content context menus
+
+Use `web_context_menu(items, selected)` to give an embedded web view application commands
+for links and images. A linked image exposes two distinct targets. The link command gets
+the enclosing anchor's address. The image command gets the displayed image, including the
+selected candidate in a responsive picture wherever the engine exposes it.
+
+```rust,ignore
+use day_piece_webview::{WebMenuItem, WebMenuTarget};
+
+web.web_context_menu([
+    WebMenuItem::new("open-link", res::str::open_link().format(), WebMenuTarget::Link),
+    WebMenuItem::new("open-image", res::str::view_image().format(), WebMenuTarget::Image),
+    WebMenuItem::new("save-image", res::str::save_image().format(), WebMenuTarget::DownloadImage),
+], move |choice| {
+    open_from_document(&choice.id, &choice.url, &choice.document);
+})
+```
+
+Give each command a unique ID and an app-localized label. Open commands accept HTTP(S)
+targets. For apps that open an external browser, `WebMenuItem::browser_on_web()` opens a
+new browser context directly from the web menu selection, while the browser still grants
+user activation. On native hosts the selection reaches the app callback. Existing ordinary
+navigation and `on_new_tab` handlers still serve their original purposes. A callback that
+opens a new window should initialize it with the selected URL and the originating profile.
+
+| Platform and toolkit | Menu and image save behavior |
+|---|---|
+| macos-appkit, macos-gtk | The shared WKWebView subclass amends the native NSMenu, keeping WebKit's Copy Image, selection and sharing actions. An isolated content world records the actual gesture target because WebKit can pass a synthesized event when opening the menu. A save starts a public WKDownload on the same view and reaches the app's download responder. |
+| ios-uikit | WK link previews combine app commands with the suggested UIKit actions. A long press on a standalone image presents an action sheet. Managed image downloads use the same public WKDownload route. |
+| linux-gtk | WebKitGTK supplies link and image URIs with its proposed context menu. Application open commands use GActions. The engine owns its stock file-save command. |
+| macos-qt, linux-qt | Qt WebEngine supplies the hit and standard QMenu. Saving an image uses the originating page, profile download request and file picker. The Qt URL-label fallback has no web content. |
+| windows-winui, windows-xaml | WebView2 supplies the context target and native menu. Application actions use the runtime's custom-item API, and WebView2 owns Save image as. Older runtimes without the context-menu interface keep their system menu. |
+| android-material | Android's long-press hit test identifies the target. For a linked image, the focus-node reply distinguishes the image source from the link. Managed saves use the webview downloader and the app's download destination. |
+| harmony-arkui | ArkWeb provides the link and image through its context-menu event. A selected download uses the originating controller and exports the completed bytes through the system document picker. |
+| web-dom | A same-origin frame presents an accessible menu with keyboard navigation and Escape. Direct image downloads are offered for same-origin resources. Cross-origin images use the browser menu when saving is configured, including on touch devices. Shift-right-click also requests the browser menu. Cross-origin and opaque frames retain their browser menus. |
+
+Register `on_download` to choose the destination for managed downloads and receive progress,
+completion and failure events. Other engines can offer their own save UI. See
+[downloads](#downloads). `WebRenderer::context_menu_support()` describes the renderer tier.
+The optional Servo renderer and headless builds currently report unsupported.
+
+On AppKit, WebKit's stock new-window commands ask the host for a new view. Its stock
+context-menu image download goes through a private WebKit delegate path. Adopting the
+download returned by the public API gives the app a destination callback. The native
+regression opens the menu three times, checks the enclosing link and displayed image
+and verifies the downloaded bytes from a cookie-protected endpoint.
+[AppKit regression](../tests/context-menu-appkit.rs) · [Apple download API](https://developer.apple.com/documentation/webkit/wkwebview/startdownload%28using%3Acompletionhandler%3A%29)
+
 ## Document tabs
 
 The demo uses Day's `TabSet` and `document_tabs`. Each document owns its browser,
