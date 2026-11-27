@@ -195,7 +195,7 @@ jobs:
           java: ${{ matrix.target == 'android-material' || matrix.target == 'harmony-arkui' }}
           packages: >-
             ${{ runner.os == 'macOS' && 'python@3.12 llvm'
-            || runner.os == 'Windows' && 'webview2-runtime llvm cmake ninja'
+            || runner.os == 'Windows' && 'webview2-runtime cmake ninja'
             || runner.os == 'Linux' && 'clang-19 libclang-19-dev llvm-19-dev cmake ninja-build
             pkg-config libudev-dev libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dev
             libfontconfig1-dev libfreetype6-dev libx11-dev libxrandr-dev libxcursor-dev libxi-dev xvfb'
@@ -237,21 +237,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # The image's Visual Studio 18 STL refuses Clang older than 22 (STL1000), and mozangle's
-          # bindgen parses those headers with the image's preinstalled LLVM, which trails it
-          # (`choco install llvm` above keeps what is installed). Upgrade it, and say so plainly
-          # if the package still lags.
-          choco upgrade -y --no-progress llvm
-          if ($LASTEXITCODE -ne 0) { throw 'Upgrading LLVM failed' }
-          $clangMajor = [int]((& 'C:/Program Files/LLVM/bin/clang.exe' --version | Select-Object -First 1) -replace '.*version (\d+)\..*', '$1')
-          if ($clangMajor -lt 22) { throw "Clang $clangMajor is older than the 22 that MSVC's STL requires" }
-          'C:/Program Files/LLVM/bin' >> $env:GITHUB_PATH
-          'LIBCLANG_PATH=C:/Program Files/LLVM/bin' >> $env:GITHUB_ENV
+          $clangBin = & ./scripts/windows-servo-llvm.ps1
+          $clangBin >> $env:GITHUB_PATH
+          "LIBCLANG_PATH=$clangBin" >> $env:GITHUB_ENV
           # Git Bash prepends its own link.exe, even after msvc-dev-cmd sets PATH.
           $linker = Join-Path $env:VCToolsInstallDir 'bin/Hostx64/x64/link.exe'
           if (!(Test-Path $linker)) { throw "MSVC linker missing: $linker" }
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" >> $env:GITHUB_ENV
-          clang --version
+          & "$clangBin/clang.exe" --version
           # mozangle 0.7.1's build script links libGLESv2.dll by passing all 196 object paths to
           # cl.exe on one command line. Under the runner's D:\a\<repo>\<repo>\demo\build\day\
           # flavors\servo\cargo\<target>\debug\debug\build\mozangle-<hash>\out prefix that is

@@ -236,7 +236,7 @@ fn make(_backend: &mut Material, p: &WebProps, id: NodeId) -> AHandle {
         java(|env| {
             let model = JString::from_str(
                 env,
-                &serde_json::to_string(&p.context_menu).unwrap_or_default(),
+                serde_json::to_string(&p.context_menu).unwrap_or_default(),
             )?;
             DayWebView::configureContextMenu(env, view.0.as_obj(), &model, p.browse.downloads)
         });
